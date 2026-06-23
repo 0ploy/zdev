@@ -124,14 +124,30 @@ func defaultProjectShared() ProjectSharedConfig {
 
 // ServiceConfig defines a container service
 type ServiceConfig struct {
-	Image          string            `yaml:"image"`
-	Routing        *RoutingConfig    `yaml:"routing"` // Traefik routing config (requires shared.router: true)
-	WorkingDir     string            `yaml:"working_dir"`
-	Volumes        []string          `yaml:"volumes"`
-	Environment    map[string]string `yaml:"environment"`
-	Command        string            `yaml:"command"`
-	Labels         map[string]string `yaml:"labels"`
-	RegisterToDBUI bool              `yaml:"register_to_dbui"` // Register this service in the shared DB UI (Adminer)
+	Image          string                `yaml:"image"`
+	Routing        *RoutingConfig        `yaml:"routing"` // Traefik routing config (requires shared.router: true)
+	WorkingDir     string                `yaml:"working_dir"`
+	Volumes        []string              `yaml:"volumes"`
+	Environment    map[string]string     `yaml:"environment"`
+	Command        string                `yaml:"command"`
+	Labels         map[string]string     `yaml:"labels"`
+	RegisterToDBUI bool                  `yaml:"register_to_dbui"` // Register this service in the shared DB UI (Adminer)
+	Mutagen        ServiceMutagenConfig  `yaml:"mutagen"`          // Per-service Mutagen sync defaults (ownership/permissions of files synced into the container)
+}
+
+// ServiceMutagenConfig defines per-service Mutagen sync defaults applied to
+// files materialized inside the container (the beta side of the sync). These
+// map to Mutagen's `--default-*-beta` flags. Useful when the container's
+// runtime user (e.g. www-data) differs from the host user, so synced files
+// land with ownership the in-container process can read/write.
+//
+// Only stamps NEW files - changing values requires the session to be recreated
+// (zdev does this automatically when it detects drift).
+type ServiceMutagenConfig struct {
+	User          string `yaml:"user"`           // owner for new files/dirs in the container (name or numeric UID); maps to --default-owner-beta
+	Group         string `yaml:"group"`          // group for new files/dirs in the container (name or numeric GID); maps to --default-group-beta
+	FileMode      string `yaml:"file_mode"`      // octal mode for new files (e.g. "0644"); maps to --default-file-mode-beta
+	DirectoryMode string `yaml:"directory_mode"` // octal mode for new directories (e.g. "0755"); maps to --default-directory-mode-beta
 }
 
 // RoutingConfig defines how a service is exposed via the shared router

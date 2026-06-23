@@ -20,6 +20,7 @@ type RouterConfig struct {
 	TLSCertDir   string // Path to certificate directory (empty = no TLS)
 	TLSConfigDir string // Path to Traefik dynamic config directory
 	DocsDir      string // Path to docs directory for Statiq plugin (empty = no docs)
+	SocketPath   string // Host Docker socket path to mount (empty = /var/run/docker.sock)
 }
 
 // RouterContainerConfig returns the container configuration for the Traefik router
@@ -112,11 +113,17 @@ func RouterContainerConfig(cfg RouterConfig) runtime.ContainerConfig {
 		}
 	}
 
-	// Build volumes list
+	// Build volumes list. The host socket path varies by engine (Docker
+	// Desktop, OrbStack, Colima); the in-container target is always the
+	// conventional path Traefik expects.
+	socketSource := cfg.SocketPath
+	if socketSource == "" {
+		socketSource = runtime.DefaultDockerSocket
+	}
 	volumes := []runtime.VolumeMount{
 		{
-			Source:   "/var/run/docker.sock",
-			Target:   "/var/run/docker.sock",
+			Source:   socketSource,
+			Target:   runtime.DefaultDockerSocket,
 			ReadOnly: true,
 		},
 	}

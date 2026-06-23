@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
+	"time"
 
 	"golang.org/x/term"
 )
@@ -28,17 +30,76 @@ func NewDockerCLI() *DockerCLI {
 func (d *DockerCLI) CheckAvailable(ctx context.Context) error {
 	_, err := exec.LookPath(d.Binary)
 	if err != nil {
-		return fmt.Errorf("docker not found in PATH - please install Docker Desktop or Docker Engine")
+		return fmt.Errorf("docker not found in PATH - please install Docker Desktop, OrbStack, Colima, or Docker Engine")
 	}
 
 	cmd := d.command(ctx, "info", "--format", "{{.ServerVersion}}")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("Docker is not running - please start Docker Desktop or the Docker daemon")
+		return fmt.Errorf("Docker is not running - please start Docker Desktop, OrbStack, Colima, or the Docker daemon")
 	}
 
 	return nil
+}
+
+// DefaultDockerSocket is the conventional host path for the Docker daemon
+// socket. Used as the fallback when the active context's real socket can't be
+// resolved, and as the in-container target every engine expects.
+const DefaultDockerSocket = "/var/run/docker.sock"
+
+var (
+	socketPathOnce sync.Once
+	socketPathVal  string
+)
+
+// HostDockerSocketPath returns the host filesystem path of the Docker daemon
+// socket for the active docker context. Containers that need the socket (the
+// Traefik router, Dozzle) bind-mount this so they work regardless of engine:
+// Docker Desktop (~/.docker/run/docker.sock), OrbStack (~/.orbstack/run/...),
+// or Colima (~/.colima/default/...). The legacy /var/run/docker.sock symlink is
+// not guaranteed to exist (OrbStack only creates it with admin), so we resolve
+// the context's actual endpoint and fall back to /var/run/docker.sock.
+// The result is cached for the process lifetime - the active context does not
+// change mid-run.
+func HostDockerSocketPath() string {
+	socketPathOnce.Do(func() {
+		socketPathVal = resolveHostDockerSocketPath()
+	})
+	return socketPathVal
+}
+
+func resolveHostDockerSocketPath() string {
+	// An explicit DOCKER_HOST wins - it's what the docker CLI itself honors.
+	if h := os.Getenv("DOCKER_HOST"); h != "" {
+		if p, ok := unixSocketPath(h); ok {
+			return p
+		}
+		// tcp:// or npipe:// can't be bind-mounted as a path; fall back.
+		return DefaultDockerSocket
+	}
+
+	// Otherwise ask the active context for its daemon endpoint.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "docker", "context", "inspect",
+		"--format", "{{.Endpoints.docker.Host}}").Output()
+	if err == nil {
+		if p, ok := unixSocketPath(strings.TrimSpace(string(out))); ok {
+			return p
+		}
+	}
+
+	return DefaultDockerSocket
+}
+
+// unixSocketPath extracts the filesystem path from a unix:// docker host
+// string, reporting whether the host was a non-empty unix socket.
+func unixSocketPath(host string) (string, bool) {
+	if p := strings.TrimPrefix(host, "unix://"); p != host && p != "" {
+		return p, true
+	}
+	return "", false
 }
 
 // command builds an *exec.Cmd for the docker binary with Docker Desktop's

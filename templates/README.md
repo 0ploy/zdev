@@ -221,6 +221,27 @@ Add framework-specific build artifacts:
 
 **Critical:** `.setup-complete` MUST be in the ignore list. Since it's ignored, it persists in the container's Mutagen volume independently of the host. If it were synced, it could be deleted on one side and propagate to the other, breaking the setup state.
 
+### Configuring file ownership inside the container
+
+Templates whose runtime user isn't root - PHP/Apache (`www-data`), Nginx (`nginx`), Node images (`node`) - need synced files to be readable by that user. By default, Mutagen writes files as root inside the container, so the template's process can't access them.
+
+Set per-service ownership in the service's `mutagen:` block:
+
+```yaml
+services:
+  web:
+    image: my-php-apache:latest
+    volumes:
+      - ${PROJECTPATH}:/var/www/html
+    mutagen:
+      user: www-data            # owner stamped on synced files
+      group: www-data           # group stamped on synced files
+      file_mode: "0644"         # optional - mode for files
+      directory_mode: "0755"    # optional - mode for directories
+```
+
+These map to Mutagen's `--default-*-beta` flags, which apply to **new** files. zdev tracks these values per session and, when they change, terminates the session, recreates it, and runs `chown -R` inside the container so pre-existing files pick up the new ownership too.
+
 ## Commands (justfiles)
 
 Templates can include commands in `.zdev/commands/`. Each `.just` file becomes a `zdev` subcommand:

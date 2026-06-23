@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/0ploy/zdev/internal/config"
+	"github.com/0ploy/zdev/internal/runtime"
 )
 
 func TestRouterContainerConfig(t *testing.T) {
@@ -224,6 +225,25 @@ func TestRouterContainerConfig(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestRouterContainerConfig_SocketPath(t *testing.T) {
+	// Default: empty SocketPath falls back to the conventional path.
+	def := RouterContainerConfig(RouterConfig{Image: config.RouterImage, Domain: "0ploy.dev"})
+	if got := def.Volumes[0].Source; got != runtime.DefaultDockerSocket {
+		t.Errorf("default socket source = %q, want %q", got, runtime.DefaultDockerSocket)
+	}
+
+	// Explicit engine socket (e.g. OrbStack) is used as the mount source,
+	// while the in-container target stays the conventional path.
+	const orb = "/Users/me/.orbstack/run/docker.sock"
+	cfg := RouterContainerConfig(RouterConfig{Image: config.RouterImage, Domain: "0ploy.dev", SocketPath: orb})
+	if got := cfg.Volumes[0].Source; got != orb {
+		t.Errorf("socket source = %q, want %q", got, orb)
+	}
+	if got := cfg.Volumes[0].Target; got != runtime.DefaultDockerSocket {
+		t.Errorf("socket target = %q, want %q", got, runtime.DefaultDockerSocket)
 	}
 }
 

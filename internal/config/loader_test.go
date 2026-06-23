@@ -1070,3 +1070,45 @@ services:
 		t.Fatal("expected parse error from malformed local config, got nil")
 	}
 }
+
+// TestLoadProject_ServiceMutagenConfig pins the per-service mutagen block
+// (user/group/file_mode/directory_mode) onto the parsed ServiceConfig so a
+// future yaml-tag rename or struct restructure breaks loudly.
+func TestLoadProject_ServiceMutagenConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	main := `version: 1
+name: php-app
+services:
+  web:
+    image: my-php-apache:latest
+    volumes:
+      - ./src:/var/www/html
+    mutagen:
+      user: www-data
+      group: www-data
+      file_mode: "0644"
+      directory_mode: "0755"
+`
+	writeProjectConfigs(t, tmpDir, main, "")
+
+	cfg, err := LoadProject(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadProject: %v", err)
+	}
+	web, ok := cfg.Services["web"]
+	if !ok {
+		t.Fatal("expected 'web' service")
+	}
+	if got := web.Mutagen.User; got != "www-data" {
+		t.Errorf("Mutagen.User = %q, want www-data", got)
+	}
+	if got := web.Mutagen.Group; got != "www-data" {
+		t.Errorf("Mutagen.Group = %q, want www-data", got)
+	}
+	if got := web.Mutagen.FileMode; got != "0644" {
+		t.Errorf("Mutagen.FileMode = %q, want 0644", got)
+	}
+	if got := web.Mutagen.DirectoryMode; got != "0755" {
+		t.Errorf("Mutagen.DirectoryMode = %q, want 0755", got)
+	}
+}

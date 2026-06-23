@@ -18,6 +18,7 @@ type LogsServiceConfig struct {
 	Image      string
 	Domain     string
 	TLSEnabled bool
+	SocketPath string // Host Docker socket path to mount (empty = /var/run/docker.sock)
 }
 
 // LogsContainerConfig returns the container configuration for Dozzle.
@@ -26,6 +27,13 @@ type LogsServiceConfig struct {
 // per-project in the UI.
 func LogsContainerConfig(cfg LogsServiceConfig) runtime.ContainerConfig {
 	logsHost := fmt.Sprintf("logs.shared.%s", cfg.Domain)
+
+	// Host socket path varies by engine (Docker Desktop, OrbStack, Colima);
+	// the in-container target is the conventional path Dozzle expects.
+	socketSource := cfg.SocketPath
+	if socketSource == "" {
+		socketSource = runtime.DefaultDockerSocket
+	}
 
 	labels := map[string]string{
 		"zdev.managed":       "true",
@@ -73,8 +81,8 @@ func LogsContainerConfig(cfg LogsServiceConfig) runtime.ContainerConfig {
 		},
 		Volumes: []runtime.VolumeMount{
 			{
-				Source:   "/var/run/docker.sock",
-				Target:   "/var/run/docker.sock",
+				Source:   socketSource,
+				Target:   runtime.DefaultDockerSocket,
 				ReadOnly: true,
 			},
 			// Persist Dozzle's own state (notification settings, user data,

@@ -139,6 +139,8 @@ The rename process: stop containers, migrate volumes (create new + copy data via
 
 Enables future Podman support. The `Runtime` interface (`internal/runtime/runtime.go`) abstracts all container operations. The `DockerCLI` implementation shells out to `docker`. Swapping to Podman means implementing the same interface with `podman` commands.
 
+A side benefit: because zdev only ever uses the `docker` CLI and the active docker context, it is engine-agnostic across Docker Desktop, OrbStack, and Colima with no per-engine code. The one place that needs care is the Docker socket bind-mount for the Traefik router and Dozzle: never hardcode `/var/run/docker.sock` as the host source (that symlink isn't guaranteed on OrbStack-without-admin or Colima). Use `runtime.HostDockerSocketPath()`, which resolves the active context's real socket and falls back to the conventional path. See `ALTERNATIVE_BACKENDS.md` for the compatibility analysis and a cross-engine filesystem benchmark.
+
 ### Why justfiles for custom commands?
 
 Each `.zdev/commands/<name>.just` file becomes a `zdev <name>` command. We chose [just](https://github.com/casey/just) over Makefiles because:

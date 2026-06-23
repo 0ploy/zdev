@@ -1,3 +1,14 @@
+## v0.7.7
+
+### Features
+
+- **Per-service Mutagen ownership** via `services.<name>.mutagen.{user,group,file_mode,directory_mode}` in `.zdev/config.yaml`. Maps to Mutagen's `--default-*-beta` flags. Fixes the "files synced as root, but apache/nginx/node runs as a non-root user and can't read them" class of bugs for custom images. Example for PHP/Apache: `mutagen: { user: www-data, group: www-data }`. zdev tracks the values per session at `~/.zdev/mutagen/sessions/<session>` and, when they change, terminates the session, recreates it, and runs `chown -R` inside the container so PRE-EXISTING files also pick up the new ownership (Mutagen's flags only stamp newly-created files).
+- **Alternative Docker engines (OrbStack, Colima) are now supported.** zdev resolves the active docker context's real socket path when mounting the Docker socket into the Traefik router and Dozzle, instead of assuming the legacy `/var/run/docker.sock` host symlink exists. That symlink isn't guaranteed on OrbStack (only created with admin) or Colima, so the router and log viewer previously got a dead socket on those engines. Honors `DOCKER_HOST` and falls back to `/var/run/docker.sock`. See `ALTERNATIVE_BACKENDS.md` for a cross-engine filesystem benchmark and trade-offs (TL;DR: OrbStack is fastest, Colima is the free no-GUI option, keep Mutagen on everywhere).
+
+### Bug Fixes
+
+- **`zdev update` now picks up Mutagen-only config changes.** Previously, changing `mutagen.user` (or any other Mutagen-only knob) didn't trigger session recreation because `Update` only ran the Mutagen prepare/finalize steps when a container actually needed recreating. Now those steps run unconditionally, so drift detection fires on every `zdev update`. No-op when the project doesn't use Mutagen.
+
 ## v0.7.6
 
 ### Features

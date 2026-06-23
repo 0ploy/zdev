@@ -327,11 +327,12 @@ func (m *Manager) StartRouter(ctx context.Context) error {
 // to call on every check.
 func (m *Manager) buildRouterContainerConfig(tcpPorts, udpPorts []int) runtime.ContainerConfig {
 	routerCfg := RouterConfig{
-		Image:     m.cfg.Shared.Router.Image,
-		Dashboard: m.cfg.Shared.Router.Dashboard,
-		Domain:    m.cfg.Domain,
-		TCPPorts:  tcpPorts,
-		UDPPorts:  udpPorts,
+		Image:      m.cfg.Shared.Router.Image,
+		Dashboard:  m.cfg.Shared.Router.Dashboard,
+		Domain:     m.cfg.Domain,
+		TCPPorts:   tcpPorts,
+		UDPPorts:   udpPorts,
+		SocketPath: runtime.HostDockerSocketPath(),
 	}
 
 	if m.cfg.SSL.Enabled {
@@ -574,6 +575,7 @@ func (m *Manager) StartLogs(ctx context.Context) error {
 			Image:      m.cfg.Shared.Logs.Image,
 			Domain:     m.cfg.Domain,
 			TLSEnabled: m.cfg.SSL.Enabled,
+			SocketPath: runtime.HostDockerSocketPath(),
 		})
 	})
 }

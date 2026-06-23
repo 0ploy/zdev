@@ -2,9 +2,12 @@ package mutagen
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"sort"
 	"strings"
 )
 
@@ -65,6 +68,13 @@ type SessionConfig struct {
 	Alpha   string   // Local path (host filesystem)
 	Beta    string   // Docker endpoint (docker://container/path)
 	Ignores []string // Paths to ignore from sync
+	// Beta-side defaults stamped on NEW files/dirs only - empty string means
+	// "don't pass the flag, let Mutagen use its built-in default". Changing
+	// these on an existing session has no effect on already-materialized files.
+	DefaultOwnerBeta         string
+	DefaultGroupBeta         string
+	DefaultFileModeBeta      string
+	DefaultDirectoryModeBeta string
 }
 
 // Session represents a mutagen sync session
@@ -73,6 +83,31 @@ type Session struct {
 	Status string `json:"status"`
 	Alpha  string `json:"alpha"`
 	Beta   string `json:"beta"`
+}
+
+// Hash returns a deterministic sha256 over the parts of SessionConfig that,
+// if changed, require terminating and recreating the session for the change
+// to take effect. Name, Alpha, Beta are intentionally excluded - those are
+// session identity, not config drift.
+func (cfg SessionConfig) Hash() string {
+	ignores := append([]string(nil), cfg.Ignores...)
+	sort.Strings(ignores)
+	payload := struct {
+		Ignores                  []string
+		DefaultOwnerBeta         string
+		DefaultGroupBeta         string
+		DefaultFileModeBeta      string
+		DefaultDirectoryModeBeta string
+	}{
+		Ignores:                  ignores,
+		DefaultOwnerBeta:         cfg.DefaultOwnerBeta,
+		DefaultGroupBeta:         cfg.DefaultGroupBeta,
+		DefaultFileModeBeta:      cfg.DefaultFileModeBeta,
+		DefaultDirectoryModeBeta: cfg.DefaultDirectoryModeBeta,
+	}
+	b, _ := json.Marshal(payload)
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
 }
 
 // CreateSession creates a new sync session
@@ -88,6 +123,19 @@ func (m *Mutagen) CreateSession(ctx context.Context, cfg SessionConfig) error {
 		cfg.Beta,
 		"--name", cfg.Name,
 		"--sync-mode", "two-way-safe",
+	}
+
+	if cfg.DefaultOwnerBeta != "" {
+		args = append(args, "--default-owner-beta", cfg.DefaultOwnerBeta)
+	}
+	if cfg.DefaultGroupBeta != "" {
+		args = append(args, "--default-group-beta", cfg.DefaultGroupBeta)
+	}
+	if cfg.DefaultFileModeBeta != "" {
+		args = append(args, "--default-file-mode-beta", cfg.DefaultFileModeBeta)
+	}
+	if cfg.DefaultDirectoryModeBeta != "" {
+		args = append(args, "--default-directory-mode-beta", cfg.DefaultDirectoryModeBeta)
 	}
 
 	// Add ignores

@@ -750,9 +750,13 @@ func (p *Project) Update(ctx context.Context) (bool, error) {
 		}
 	}
 
-	// If we created or recreated any container, finalize Mutagen so the new
-	// container can pass its sync-ready gate. Otherwise (true no-op update),
-	// `prepare` was never called and there's nothing to finalize.
+	// Always run prepare+finalize so Mutagen-only changes (per-service
+	// owner/group/mode tweaks) are picked up even on otherwise-no-op updates.
+	// Both calls are no-ops when Mutagen is disabled globally or the project
+	// has no sync mounts, so the cost on irrelevant projects is negligible.
+	if err := prepare(); err != nil {
+		return updated, err
+	}
 	if mutagenPrepared {
 		if err := p.finalizeMutagen(ctx, mDaemon, mutagenMounts); err != nil {
 			return updated, err

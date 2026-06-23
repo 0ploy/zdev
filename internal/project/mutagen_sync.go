@@ -21,6 +21,12 @@ type MutagenSyncMount struct {
 	ContainerPath string // Path inside container
 	VolumeName    string // Docker volume name for sync
 	SessionName   string // Mutagen session name
+	// Beta-side defaults stamped on new files/dirs inside the container.
+	// Empty strings mean "don't pass the flag" (Mutagen falls back to its own defaults).
+	Owner         string
+	Group         string
+	FileMode      string
+	DirectoryMode string
 }
 
 // MutagenSessionName returns the Mutagen session name for a service
@@ -76,6 +82,10 @@ func (p *Project) GetMutagenSyncMounts() []MutagenSyncMount {
 				ContainerPath: target,
 				VolumeName:    p.MutagenVolumeName(serviceName),
 				SessionName:   p.MutagenSessionName(serviceName),
+				Owner:         svc.Mutagen.User,
+				Group:         svc.Mutagen.Group,
+				FileMode:      svc.Mutagen.FileMode,
+				DirectoryMode: svc.Mutagen.DirectoryMode,
 			})
 		}
 	}
@@ -121,44 +131,108 @@ func (p *Project) createMutagenVolumes(ctx context.Context, mounts []MutagenSync
 	return nil
 }
 
-// startMutagenSessions creates or resumes Mutagen sync sessions
-func (p *Project) startMutagenSessions(ctx context.Context, m *mutagen.Mutagen, mounts []MutagenSyncMount) error {
+// startMutagenSessions creates or resumes Mutagen sync sessions. It returns
+// the names of sessions that were freshly (re)created during this call, so
+// the caller can perform post-creation work (e.g., chown pre-existing files
+// in the container after the initial flush).
+func (p *Project) startMutagenSessions(ctx context.Context, m *mutagen.Mutagen, mounts []MutagenSyncMount) (map[string]bool, error) {
+	recreated := make(map[string]bool)
+
 	for _, mount := range mounts {
 		exists, err := m.SessionExists(ctx, mount.SessionName)
 		if err != nil {
-			return fmt.Errorf("failed to check session %s: %w", mount.SessionName, err)
+			return nil, fmt.Errorf("failed to check session %s: %w", mount.SessionName, err)
 		}
 
 		containerName := p.ContainerName(mount.ServiceName)
 		beta := fmt.Sprintf("docker://%s%s", containerName, mount.ContainerPath)
 
+		// Build the desired session config once - reused for hashing AND
+		// for any actual create call below.
+		ignores := mutagen.MergeIgnores(p.Config.Mutagen.Ignore)
+		desired := mutagen.SessionConfig{
+			Name:                     mount.SessionName,
+			Alpha:                    mount.HostPath,
+			Beta:                     beta,
+			Ignores:                  ignores,
+			DefaultOwnerBeta:         mount.Owner,
+			DefaultGroupBeta:         mount.Group,
+			DefaultFileModeBeta:      mount.FileMode,
+			DefaultDirectoryModeBeta: mount.DirectoryMode,
+		}
+		desiredHash := desired.Hash()
+
 		if exists {
-			// Resume existing session
-			fmt.Printf("Resuming sync session %s...\n", mount.SessionName)
-			if err := m.ResumeSession(ctx, mount.SessionName); err != nil {
-				// Ignore resume errors - session might already be running
-				fmt.Printf("Note: could not resume session (may already be running): %v\n", err)
+			storedHash, _ := readSessionHash(mount.SessionName)
+			if storedHash == desiredHash {
+				// Resume existing session unchanged.
+				fmt.Printf("Resuming sync session %s...\n", mount.SessionName)
+				if err := m.ResumeSession(ctx, mount.SessionName); err != nil {
+					// Ignore resume errors - session might already be running
+					fmt.Printf("Note: could not resume session (may already be running): %v\n", err)
+				}
+				continue
+			}
+
+			// Drift detected (or no stored hash from a pre-upgrade install) -
+			// terminate so we can recreate with the new defaults.
+			fmt.Printf("Mutagen config changed for %s, recreating sync session...\n", mount.SessionName)
+			if err := m.TerminateSession(ctx, mount.SessionName); err != nil {
+				return nil, fmt.Errorf("failed to terminate stale session %s: %w", mount.SessionName, err)
 			}
 		} else {
-			// Create new session
 			fmt.Printf("Creating sync session %s...\n", mount.SessionName)
-
-			// Collect ignores from project config and built-in defaults
-			ignores := mutagen.MergeIgnores(p.Config.Mutagen.Ignore)
-
-			cfg := mutagen.SessionConfig{
-				Name:    mount.SessionName,
-				Alpha:   mount.HostPath,
-				Beta:    beta,
-				Ignores: ignores,
-			}
-
-			if err := m.CreateSession(ctx, cfg); err != nil {
-				return fmt.Errorf("failed to create session %s: %w", mount.SessionName, err)
-			}
 		}
+
+		if err := m.CreateSession(ctx, desired); err != nil {
+			return nil, fmt.Errorf("failed to create session %s: %w", mount.SessionName, err)
+		}
+		if err := writeSessionHash(mount.SessionName, desiredHash); err != nil {
+			fmt.Printf("Warning: could not record sync session hash for %s: %v\n", mount.SessionName, err)
+		}
+		recreated[mount.SessionName] = true
 	}
 
+	return recreated, nil
+}
+
+// mutagenSessionHashDir returns the directory where Mutagen session config
+// hashes are persisted. Each session gets one file at <dir>/<session-name>.
+func mutagenSessionHashDir() string {
+	return filepath.Join(config.GetZdevHome(), "mutagen", "sessions")
+}
+
+// readSessionHash returns the previously-stamped config hash for the given
+// session, or "" if none is recorded (treated as "drift" so the caller will
+// recreate the session and stamp a fresh hash).
+func readSessionHash(sessionName string) (string, error) {
+	data, err := os.ReadFile(filepath.Join(mutagenSessionHashDir(), sessionName))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	return strings.TrimSpace(string(data)), nil
+}
+
+// writeSessionHash records the config hash for a session so future starts
+// can detect drift without re-querying Mutagen for every flag.
+func writeSessionHash(sessionName, hash string) error {
+	dir := mutagenSessionHashDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, sessionName), []byte(hash+"\n"), 0o644)
+}
+
+// removeSessionHash deletes the stored hash file for a session. Best-effort:
+// missing file is fine, other errors are returned for callers that care.
+func removeSessionHash(sessionName string) error {
+	err := os.Remove(filepath.Join(mutagenSessionHashDir(), sessionName))
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
 	return nil
 }
 
@@ -197,6 +271,7 @@ func (p *Project) terminateMutagenSessions(ctx context.Context) {
 				fmt.Printf("Warning: could not terminate session %s: %v\n", mount.SessionName, err)
 			}
 		}
+		_ = removeSessionHash(mount.SessionName)
 	}
 }
 
@@ -277,16 +352,50 @@ func (p *Project) prepareMutagen(ctx context.Context) (*mutagen.Mutagen, []Mutag
 // finalizeMutagen starts/resumes sync sessions for the given mounts, waits for
 // the initial sync, and signals containers that they may proceed past the
 // sync-ready gate. Safe to call with a nil daemon or empty mounts (no-op).
+//
+// For sessions freshly (re)created in this call, after the initial flush we
+// chown the synced tree inside the container to the configured owner/group.
+// Mutagen's --default-*-beta flags only stamp NEW files, so without this step
+// pre-existing container-side files (or files synced before a config change)
+// would keep their previous ownership and the in-container process (e.g.
+// www-data) would still be unable to read them.
 func (p *Project) finalizeMutagen(ctx context.Context, m *mutagen.Mutagen, mounts []MutagenSyncMount) error {
 	if m == nil || len(mounts) == 0 {
 		return nil
 	}
-	if err := p.startMutagenSessions(ctx, m, mounts); err != nil {
+	recreated, err := p.startMutagenSessions(ctx, m, mounts)
+	if err != nil {
 		return fmt.Errorf("failed to start Mutagen sync: %w", err)
 	}
 	p.waitForInitialSync(ctx, m, mounts, 60*time.Second)
 	p.signalSyncReady(ctx, mounts)
+	p.applyPostSyncOwnership(ctx, mounts, recreated)
 	return nil
+}
+
+// applyPostSyncOwnership runs `chown -R` inside each container whose Mutagen
+// session was just (re)created and whose service config sets a Mutagen owner
+// or group. Best-effort: failures are logged but don't block startup.
+func (p *Project) applyPostSyncOwnership(ctx context.Context, mounts []MutagenSyncMount, recreated map[string]bool) {
+	for _, mount := range mounts {
+		if !recreated[mount.SessionName] {
+			continue
+		}
+		if mount.Owner == "" && mount.Group == "" {
+			continue
+		}
+		spec := mount.Owner
+		if mount.Group != "" {
+			spec = spec + ":" + mount.Group
+		}
+		containerName := p.ContainerName(mount.ServiceName)
+		fmt.Printf("Applying ownership %s to %s in %s...\n", spec, mount.ContainerPath, containerName)
+		err := p.Runtime.Exec(ctx, containerName,
+			[]string{"chown", "-R", spec, mount.ContainerPath}, false, runtime.ExecOptions{})
+		if err != nil {
+			fmt.Printf("Warning: could not chown %s in %s: %v\n", mount.ContainerPath, containerName, err)
+		}
+	}
 }
 
 // transformVolumesForMutagen transforms bind mounts to Mutagen sync volumes

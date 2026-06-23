@@ -334,6 +334,56 @@ func TestMutagenVolumeName(t *testing.T) {
 	}
 }
 
+// TestGetMutagenSyncMounts_PropagatesPerServiceConfig pins that owner/group/
+// mode values from a service's mutagen block end up on the produced
+// MutagenSyncMount, so they reach mutagen.SessionConfig downstream.
+func TestGetMutagenSyncMounts_PropagatesPerServiceConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	srcDir := filepath.Join(tmpDir, "src")
+	if err := os.MkdirAll(srcDir, 0o755); err != nil {
+		t.Fatalf("mkdir src: %v", err)
+	}
+
+	mock := runtime.NewMockRuntime()
+	p := &Project{
+		Dir: tmpDir,
+		Config: &config.ProjectConfig{
+			Name: "phpapp",
+			Services: map[string]config.ServiceConfig{
+				"web": {
+					Image:   "my-php-apache:latest",
+					Volumes: []string{"./src:/var/www/html"},
+					Mutagen: config.ServiceMutagenConfig{
+						User:          "www-data",
+						Group:         "www-data",
+						FileMode:      "0644",
+						DirectoryMode: "0755",
+					},
+				},
+			},
+		},
+		Runtime: mock,
+	}
+
+	mounts := p.GetMutagenSyncMounts()
+	if len(mounts) != 1 {
+		t.Fatalf("expected 1 mount, got %d", len(mounts))
+	}
+	m := mounts[0]
+	if m.Owner != "www-data" {
+		t.Errorf("Owner = %q, want www-data", m.Owner)
+	}
+	if m.Group != "www-data" {
+		t.Errorf("Group = %q, want www-data", m.Group)
+	}
+	if m.FileMode != "0644" {
+		t.Errorf("FileMode = %q, want 0644", m.FileMode)
+	}
+	if m.DirectoryMode != "0755" {
+		t.Errorf("DirectoryMode = %q, want 0755", m.DirectoryMode)
+	}
+}
+
 // =============================================================================
 // Lifecycle tests: Start
 // =============================================================================

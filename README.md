@@ -12,7 +12,7 @@ zdev start
 
 > `0ploy.dev` is a wildcard DNS pointing to `127.0.0.1` - everything runs locally on your machine. No cloud, no accounts. You can use your own domain too.
 
-**Requires:** [Docker Desktop](https://www.docker.com/products/docker-desktop/) (macOS/Windows) or Docker Engine (Linux)
+**Requires:** a Docker engine. zdev talks to Docker through the `docker` CLI and the active docker context, so it works with [Docker Desktop](https://www.docker.com/products/docker-desktop/), [OrbStack](https://orbstack.dev/), or [Colima](https://colima.run/) on macOS, and Docker Engine on Linux. On macOS, **OrbStack** is the fastest option and **Colima** is a free, no-GUI alternative - see [ALTERNATIVE_BACKENDS.md](ALTERNATIVE_BACKENDS.md) for a benchmark and trade-offs.
 
 ## How It Works
 
@@ -185,6 +185,8 @@ How much difference does it make? We benchmarked a Nuxt 4 app with ~1000 depende
 | zdev warm restart (stop + start) | **2.4s** | ~2s |
 
 That's a **5x speedup** on cold start and **instant** warm restarts. The trick: zdev syncs your source code via fast file sync, while keeping `node_modules` and other generated files inside the container where filesystem operations are native speed.
+
+This holds regardless of Docker engine. Even on OrbStack, whose bind mounts are much faster than Docker Desktop's, writing `node_modules` to a native volume is still ~2x faster than to a bind mount - so file sync stays on by default on every macOS engine. See [ALTERNATIVE_BACKENDS.md](ALTERNATIVE_BACKENDS.md) for the cross-engine numbers.
 
 Exclude paths you don't need synced back to the host:
 
@@ -546,6 +548,25 @@ mutagen:
 | `routing.host_port` | int | - | Host port for TCP/UDP (required for tcp/udp) |
 | `routing.domain` | string | project domain | Custom domain for this service (http/https only) |
 | `labels` | map | - | Docker labels |
+| `mutagen.user` | string | - | Owner stamped on synced files inside the container (e.g. `www-data`). Use when the in-container process runs as a non-root user that must read/write the synced tree |
+| `mutagen.group` | string | - | Group stamped on synced files inside the container |
+| `mutagen.file_mode` | string | - | Octal mode for synced files (e.g. `"0644"`) |
+| `mutagen.directory_mode` | string | - | Octal mode for synced directories (e.g. `"0755"`) |
+
+**Per-service Mutagen ownership** is for images whose runtime user differs from root - PHP/Apache as `www-data`, Node as `node`, etc. Without it, Mutagen writes files as root and the container's process can't read them. Example:
+
+```yaml
+services:
+  web:
+    image: my-php-apache:latest   # apache runs as www-data
+    volumes:
+      - ${PROJECTPATH}:/var/www/html
+    mutagen:
+      user: www-data
+      group: www-data
+```
+
+When you change any of these values, zdev detects the drift, recreates the sync session, and runs `chown -R` inside the container so pre-existing files pick up the new ownership too. (Mutagen's own defaults only stamp newly-created files.)
 
 #### Variables and environment
 

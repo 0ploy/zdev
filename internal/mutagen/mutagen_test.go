@@ -139,3 +139,59 @@ func TestSessionConfig(t *testing.T) {
 		t.Errorf("expected 2 ignores, got %d", len(cfg.Ignores))
 	}
 }
+
+func TestSessionConfigHash(t *testing.T) {
+	base := SessionConfig{
+		Name:                     "zdev-app-myproject",
+		Alpha:                    "/host/path",
+		Beta:                     "docker://app.myproject.zdev/app",
+		Ignores:                  []string{".git", "vendor"},
+		DefaultOwnerBeta:         "www-data",
+		DefaultGroupBeta:         "www-data",
+		DefaultFileModeBeta:      "0644",
+		DefaultDirectoryModeBeta: "0755",
+	}
+
+	// Identity: hash is deterministic across calls.
+	if base.Hash() != base.Hash() {
+		t.Fatal("Hash() not deterministic")
+	}
+
+	// Identity-only fields (Name/Alpha/Beta) must NOT shift the hash -
+	// they're session identity, not config drift.
+	identityShift := base
+	identityShift.Name = "different-name"
+	identityShift.Alpha = "/elsewhere"
+	identityShift.Beta = "docker://other/app"
+	if identityShift.Hash() != base.Hash() {
+		t.Error("Hash should ignore Name/Alpha/Beta")
+	}
+
+	// Each tracked field shifts the hash.
+	cases := []struct {
+		name   string
+		mutate func(*SessionConfig)
+	}{
+		{"owner", func(c *SessionConfig) { c.DefaultOwnerBeta = "root" }},
+		{"group", func(c *SessionConfig) { c.DefaultGroupBeta = "root" }},
+		{"file_mode", func(c *SessionConfig) { c.DefaultFileModeBeta = "0600" }},
+		{"directory_mode", func(c *SessionConfig) { c.DefaultDirectoryModeBeta = "0700" }},
+		{"ignores", func(c *SessionConfig) { c.Ignores = []string{".git"} }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mutated := base
+			tc.mutate(&mutated)
+			if mutated.Hash() == base.Hash() {
+				t.Errorf("Hash should change when %s changes", tc.name)
+			}
+		})
+	}
+
+	// Ignore order must not affect the hash (sorted internally).
+	reordered := base
+	reordered.Ignores = []string{"vendor", ".git"}
+	if reordered.Hash() != base.Hash() {
+		t.Error("Hash should be invariant to Ignores order")
+	}
+}
