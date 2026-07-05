@@ -9,6 +9,7 @@ Templates let users scaffold new projects with `zdev create`. A template is a Gi
 my-template/
   .zdev/
     config.yaml              # Container config, routing, volumes, mutagen
+    Dockerfile               # Optional: custom dev image, referenced via dockerfile:
     commands/
       setup.just             # Setup script
   README.md
@@ -141,9 +142,10 @@ zdev exec app sh -c "echo '.setup-complete' >> .gitignore && touch .setup-comple
 Language/framework behaviors (Node corepack, pnpm build scripts, PHP extensions,
 `SYMFONY_TRUSTED_PROXIES`, Webpack Encore asset pipelines, `memory_limit`, `MAILER_DSN`) are **not
 template-authoring-specific** — they apply to any zdev-managed container. See
-`stack-gotchas.md` for the full list. When authoring a template you'll bake those into the
-entrypoint and/or `setup.just`; when adding zdev to an existing project you'll bake them into the
-entrypoint the same way.
+`stack-gotchas.md` for the full list. System-level deps (PHP extensions, apk/apt packages) belong
+in a `.zdev/Dockerfile` referenced via `dockerfile:` (zdev builds it automatically); runtime env
+and per-project setup go in the entrypoint and/or `setup.just`. The same split applies when
+adding zdev to an existing project.
 
 ## Template Naming and Testing
 

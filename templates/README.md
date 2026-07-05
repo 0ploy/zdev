@@ -31,6 +31,7 @@ Every template has the same base structure:
 my-template/
   .zdev/
     config.yaml              # Container configuration (image, ports, volumes, etc.)
+    Dockerfile               # Optional: custom dev image, referenced via dockerfile:
     commands/
       setup.just             # Setup script (install deps, scaffold project)
   README.md                  # Usage instructions
@@ -476,16 +477,23 @@ symfony server:start --no-tls --port=8000 --allow-all-ip
 printf 'memory_limit=-1\n' > /usr/local/etc/php/conf.d/zz-app.ini
 ```
 
-**Install missing PHP extensions:** `php:8.3-cli-alpine` ships only a minimal set. Projects like Sylius, Shopware, and Akeneo need `intl pdo_mysql gd bcmath opcache exif zip` at minimum. Use [install-php-extensions](https://github.com/mlocati/docker-php-extension-installer):
+**Install missing PHP extensions:** `php:8.3-cli-alpine` ships only a minimal set. Projects like Sylius, Shopware, and Akeneo need `intl pdo_mysql gd bcmath opcache exif zip` at minimum. Bake them into a dev image via `dockerfile:` so they survive container recreates instead of being reinstalled by the entrypoint every time:
 
-```sh
-wget -qO /usr/local/bin/install-php-extensions \
-  https://github.com/mlocati/docker-php-extension-installer/releases/latest/download/install-php-extensions
-chmod +x /usr/local/bin/install-php-extensions
-install-php-extensions intl pdo_mysql gd bcmath opcache exif zip
+```yaml
+# .zdev/config.yaml
+services:
+  app:
+    dockerfile: .zdev/Dockerfile
 ```
 
-Guard with `[ ! -f /usr/local/bin/install-php-extensions ]` in the entrypoint so restarts skip the reinstall.
+```dockerfile
+# .zdev/Dockerfile
+FROM php:8.3-cli-alpine
+ADD --chmod=755 https://github.com/mlocati/docker-php-extension-installer/releases/latest/download/install-php-extensions /usr/local/bin/
+RUN install-php-extensions intl pdo_mysql gd bcmath opcache exif zip
+```
+
+([install-php-extensions](https://github.com/mlocati/docker-php-extension-installer) resolves each extension's build deps automatically.)
 
 **Trusted proxies (Symfony/Sylius/Laravel/Shopware):** Traefik terminates HTTPS and forwards HTTP to the app. Without a trusted-proxy config, Symfony generates `http://` URLs inside the HTTPS page - the browser blocks them as mixed content, the debug toolbar hangs on "Loading…", and admin login breaks. Set this in the app service `environment:`:
 

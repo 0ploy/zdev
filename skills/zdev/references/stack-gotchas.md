@@ -71,17 +71,26 @@ absolute URLs behind a reverse proxy needs similar awareness.
 ### 3. Missing PHP extensions
 
 `php:8.3-cli-alpine` ships a minimal set. Sylius, Shopware, Akeneo and similar need at least
-`intl pdo_mysql gd bcmath opcache exif zip`. Install via
-[install-php-extensions](https://github.com/mlocati/docker-php-extension-installer):
+`intl pdo_mysql gd bcmath opcache exif zip`. Bake them into a dev image with `dockerfile:` -
+zdev builds it automatically, and the extensions survive container recreates instead of being
+reinstalled by the entrypoint every time:
 
-```sh
-wget -qO /usr/local/bin/install-php-extensions \
-  https://github.com/mlocati/docker-php-extension-installer/releases/latest/download/install-php-extensions
-chmod +x /usr/local/bin/install-php-extensions
-install-php-extensions intl pdo_mysql gd bcmath opcache exif zip
+```yaml
+# .zdev/config.yaml
+services:
+  app:
+    dockerfile: .zdev/Dockerfile
 ```
 
-Guard with `[ ! -f /usr/local/bin/install-php-extensions ]` in the entrypoint to skip reinstall.
+```dockerfile
+# .zdev/Dockerfile
+FROM php:8.3-cli-alpine
+ADD --chmod=755 https://github.com/mlocati/docker-php-extension-installer/releases/latest/download/install-php-extensions /usr/local/bin/
+RUN install-php-extensions intl pdo_mysql gd bcmath opcache exif zip
+```
+
+([install-php-extensions](https://github.com/mlocati/docker-php-extension-installer) resolves
+each extension's build deps automatically.)
 
 ### 4. Asset pipelines need Node
 
