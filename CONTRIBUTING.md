@@ -177,6 +177,10 @@ User variables can reference built-in vars (e.g., `DB_NAME: ${PROJECTNAME}_db`) 
 
 `buildContainerConfig()` in `project.go` is the single source of truth for container configuration. Both `startServiceWithMutagen()` (creating containers) and `serviceNeedsRecreate()` (comparing against running containers) use it. It stamps a `zdev.config-hash` label (deterministic sha256 of image, env, volumes, command, working dir, routing labels, ports, aliases, and network). `zdev update` recreates any service whose stamped hash differs from the freshly built one. Pre-hash containers have no label and get recreated once on first update after upgrading.
 
+### Dockerfile builds (`services.<name>.dockerfile`)
+
+A service with `dockerfile:` gets its image built locally instead of pulled (`internal/project/build.go`). The build context is always the project root; the tag is `image:` if set, else `zdev-<project>-<service>:latest`. Staleness is a sha256 of the Dockerfile contents stamped on the image as a `zdev.build-hash` label - deliberately NOT a hash of the build context (source is bind-mounted live; Docker's layer cache handles COPY'd files on forced rebuilds). Because the tag doesn't change on rebuild, the container config hash can't see Dockerfile edits - `Update()` calls `serviceBuildStale()` separately and folds the result into the recreate decision. `Project.BuildMode` (set from `--build`/`--no-build` on `start` and `update`) forces or skips the build. Kept intentionally minimal: no build args, targets, custom contexts, or secrets - those use a custom command plus `image:`.
+
 ## Documentation
 
 Three docs must stay in sync with the code:

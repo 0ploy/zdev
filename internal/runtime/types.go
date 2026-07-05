@@ -21,6 +21,14 @@ type VolumeMount struct {
 	ReadOnly bool
 }
 
+// ImageBuildConfig defines how to build a local image from a Dockerfile
+type ImageBuildConfig struct {
+	Tag        string            // Image tag to build into
+	Context    string            // Build context directory (absolute path)
+	Dockerfile string            // Dockerfile path (absolute path)
+	Labels     map[string]string // Labels stamped on the image (--label)
+}
+
 // Container represents a running or stopped container
 type Container struct {
 	ID      string

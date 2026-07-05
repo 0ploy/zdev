@@ -33,6 +33,12 @@ type MockRuntime struct {
 	// ContainerLabels stores labels per container name (for GetContainerLabels)
 	ContainerLabels map[string]map[string]string
 
+	// ImageLabels stores labels per image name (for GetImageLabels)
+	ImageLabels map[string]map[string]string
+
+	// BuiltImages stores build configs by tag (set by BuildImage)
+	BuiltImages map[string]ImageBuildConfig
+
 	// Volumes stores created volume names
 	Volumes map[string]bool
 
@@ -54,6 +60,8 @@ func NewMockRuntime() *MockRuntime {
 		ImagesExist:       make(map[string]bool),
 		Containers:        make(map[string]ContainerConfig),
 		ContainerLabels:   make(map[string]map[string]string),
+		ImageLabels:       make(map[string]map[string]string),
+		BuiltImages:       make(map[string]ImageBuildConfig),
 		Volumes:           make(map[string]bool),
 		Networks:          make(map[string]bool),
 		Errors:            make(map[string]error),
@@ -358,4 +366,32 @@ func (m *MockRuntime) ImageExists(_ context.Context, image string) (bool, error)
 		return exists, nil
 	}
 	return true, nil
+}
+
+// GetImageLabels returns labels for a mock image
+func (m *MockRuntime) GetImageLabels(_ context.Context, image string) (map[string]string, error) {
+	m.record("GetImageLabels", image)
+	if err := m.err("GetImageLabels"); err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if labels, ok := m.ImageLabels[image]; ok {
+		return labels, nil
+	}
+	return map[string]string{}, nil
+}
+
+// BuildImage records the build and marks the tag as existing with its labels
+func (m *MockRuntime) BuildImage(_ context.Context, cfg ImageBuildConfig) error {
+	m.record("BuildImage", cfg.Tag, cfg)
+	if err := m.err("BuildImage"); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.BuiltImages[cfg.Tag] = cfg
+	m.ImagesExist[cfg.Tag] = true
+	m.ImageLabels[cfg.Tag] = cfg.Labels
+	return nil
 }

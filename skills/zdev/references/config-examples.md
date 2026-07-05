@@ -192,6 +192,43 @@ mutagen:
     - "*.pyc"
 ```
 
+## Custom Dev Image (`dockerfile:`)
+
+When a stock image is missing system packages, extensions, or tooling, write a dev Dockerfile in
+`.zdev/` and point the service at it — zdev builds it automatically on start and rebuilds when
+the Dockerfile changes. The build context is always the project root (so `COPY` paths resolve
+from there); the tag defaults to `zdev-<project>-<service>:latest`, or set `image:` to name it.
+
+```yaml
+name: my-app
+
+services:
+  app:
+    dockerfile: .zdev/Dockerfile     # build this instead of pulling an image
+    command: pnpm dev --host 0.0.0.0
+    working_dir: /app
+    volumes:
+      - ${PROJECTPATH}:/app
+    routing:
+      port: 3000
+
+mutagen:
+  ignore:
+    - node_modules
+    - .pnpm-store
+```
+
+```dockerfile
+# .zdev/Dockerfile — dev-only image: toolchain and system deps, no app code
+# (source is bind-mounted at runtime)
+FROM node:24-alpine
+RUN apk add --no-cache openssl git
+```
+
+Dev containers only: build args, multi-stage targets, custom contexts, secrets, and registry push
+are out of scope — for those, keep a custom build command (justfile) producing the `image:` tag.
+Files the Dockerfile `COPY`s are not change-detected; after editing them run `zdev update --build`.
+
 ## Mutagen Ignore by Stack
 
 | Stack | Always ignore |

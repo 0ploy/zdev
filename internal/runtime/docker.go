@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -377,6 +378,50 @@ func (d *DockerCLI) ImageExists(ctx context.Context, image string) (bool, error)
 		return false, err
 	}
 	return true, nil
+}
+
+// GetImageLabels returns the labels of a local image
+func (d *DockerCLI) GetImageLabels(ctx context.Context, image string) (map[string]string, error) {
+	out, err := d.run(ctx, "inspect", "--type=image", "--format={{json .Config.Labels}}", image)
+	if err != nil {
+		return nil, err
+	}
+
+	var labels map[string]string
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &labels); err != nil {
+		return nil, fmt.Errorf("failed to parse image labels: %w", err)
+	}
+	if labels == nil {
+		labels = map[string]string{}
+	}
+	return labels, nil
+}
+
+// BuildImage builds a local image from a Dockerfile, streaming build output
+// to the terminal. Labels are passed in sorted order so the invocation is
+// deterministic.
+func (d *DockerCLI) BuildImage(ctx context.Context, cfg ImageBuildConfig) error {
+	args := []string{"build", "-f", cfg.Dockerfile, "-t", cfg.Tag}
+
+	for _, k := range sortedKeys(cfg.Labels) {
+		args = append(args, "--label", fmt.Sprintf("%s=%s", k, cfg.Labels[k]))
+	}
+
+	args = append(args, cfg.Context)
+
+	cmd := d.command(ctx, args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // CreateNetwork creates a Docker network

@@ -242,6 +242,23 @@ services:
 
 These map to Mutagen's `--default-*-beta` flags, which apply to **new** files. zdev tracks these values per session and, when they change, terminates the session, recreates it, and runs `chown -R` inside the container so pre-existing files pick up the new ownership too.
 
+### Custom dev images (`dockerfile:`)
+
+When the template needs system packages or tooling that no stock image provides, ship a Dockerfile and let zdev build it - no custom build command needed:
+
+```yaml
+services:
+  app:
+    dockerfile: .zdev/Dockerfile   # build this instead of pulling an image
+    command: pnpm dev --host 0.0.0.0
+    volumes:
+      - ${PROJECTPATH}:/app
+```
+
+`zdev start` builds automatically when the image is missing or when the Dockerfile changed - a fresh clone needs no manual build step. The build context is always the project root, so `COPY`/`ADD` paths in the Dockerfile resolve from there no matter where the Dockerfile lives. The image is tagged `zdev-<project>-<service>:latest` unless you set `image:` alongside `dockerfile:` to pick the tag.
+
+This is for dev containers only: build args, multi-stage targets, custom contexts, multi-arch, build secrets, and registry push are out of scope. Templates that need those should keep a custom build command (e.g. `.zdev/commands/build-image.just`) producing the `image:` tag.
+
 ## Commands (justfiles)
 
 Templates can include commands in `.zdev/commands/`. Each `.just` file becomes a `zdev` subcommand:

@@ -10,7 +10,7 @@ zdev is a local development environment framework for web applications, built in
 GlobalConfig    - singleton at ~/.zdev/global-config.yaml; domain, SSL, Mutagen, shared service images
 ProjectConfig   - per-project at .zdev/config.yaml; services, environment, shared flags
 State           - singleton at ~/.zdev/state.yaml; registered projects + link networks + routing ports
-Service         - a container definition within a project (image, volumes, env, routing)
+Service         - a container definition within a project (image or dockerfile build, volumes, env, routing)
 SharedService   - infrastructure containers (Router, Mail, DB UI, Redis UI) in zdev_shared network
 Volume          - named Docker volume, auto-discovered from service volume mounts (no top-level declaration)
 Network         - per-project Docker network + shared zdev_shared + per-link zdev_link_<name>
@@ -35,9 +35,9 @@ ConfigHash      - sha256 label stamped on every container covering its full expe
 
 Default project lifecycle: `zdev start` -> develop -> `zdev stop` (or `zdev down` to tear down, `zdev remove` to also delete the project directory registration).
 
-**Start sequence:** check ports -> create network -> create volumes (auto-discovered) -> pull images -> create containers (stamped with `zdev.config-hash` label) -> connect shared services -> connect to member link networks -> start Mutagen sync -> start containers -> register in state.
+**Start sequence:** check ports -> create network -> create volumes (auto-discovered) -> pull images (or build them: services with `dockerfile:` are built locally when the image is missing or the Dockerfile changed, tracked via a `zdev.build-hash` image label) -> create containers (stamped with `zdev.config-hash` label) -> connect shared services -> connect to member link networks -> start Mutagen sync -> start containers -> register in state.
 
-**Restart vs Update:** `zdev restart` stops and starts the existing containers (no recreate). `zdev update` diffs the current config-hash against what the code would produce now and recreates only services whose config drifted (image, env, volumes, command, working dir, routing labels, ports, aliases). `zdev start`, `zdev stop`, and `zdev restart` all accept an optional service name to scope the action to a single container; project-wide setup (network, volumes, state) still runs idempotently for start.
+**Restart vs Update:** `zdev restart` stops and starts the existing containers (no recreate). `zdev update` diffs the current config-hash against what the code would produce now and recreates only services whose config drifted (image, env, volumes, command, working dir, routing labels, ports, aliases); for `dockerfile:` services a stale build (Dockerfile contents changed) also counts as drift and triggers rebuild + recreate. `zdev start`, `zdev stop`, and `zdev restart` all accept an optional service name to scope the action to a single container; project-wide setup (network, volumes, state) still runs idempotently for start.
 
 **Stop:** pause Mutagen -> stop containers -> disconnect shared services.
 
@@ -108,7 +108,7 @@ Default project lifecycle: `zdev start` -> develop -> `zdev stop` (or `zdev down
 
 ## CLI Commands
 
-**Lifecycle:** `create <template> [name]`, `start [-q]`, `stop`, `restart`, `update`, `down [-v]`, `remove <name>`, `rename <new-name>`
+**Lifecycle:** `create <template> [name]`, `start [-q] [--build|--no-build]`, `stop`, `restart`, `update [--build|--no-build]`, `down [-v]`, `remove <name>`, `rename <new-name>`
 **Container interaction:** `exec <service> <cmd>`, `logs [-f] [--tail N] [service]`
 **Info:** `info`, `status`, `list`, `config`, `open [project]`
 **Shared service shortcuts (browser):** `mail`, `db`, `redis`, `docs`
@@ -143,6 +143,7 @@ User-defined: `variables:` section defines custom `${VAR}` placeholders (resolve
 
 **Key project config flags:**
 - `variables: map` - reusable `${VAR}` substitution values (not passed to containers)
+- `services.<name>.dockerfile: path` - build a local dev image from this Dockerfile instead of pulling (context is always the project root; `image:` optionally names the tag, default `zdev-<project>-<service>:latest`)
 - `auto_open_at_start: bool` - open browser after start
 - `shared.router|mail|db|redis: bool` - connect to shared services
 - `services.<name>.register_to_dbui: bool` - explicitly register in Adminer (auto-detected for db/mysql/postgres names)

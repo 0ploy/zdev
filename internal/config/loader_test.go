@@ -1112,3 +1112,36 @@ services:
 		t.Errorf("Mutagen.DirectoryMode = %q, want 0755", got)
 	}
 }
+
+func TestLoadProject_DockerfileField(t *testing.T) {
+	tmpDir := t.TempDir()
+	main := `version: 1
+name: buildtest
+variables:
+  DOCKERFILE_DIR: .zdev
+services:
+  app:
+    dockerfile: ${DOCKERFILE_DIR}/Dockerfile
+    image: myapp-dev:latest
+    command: sleep infinity
+  db:
+    image: mysql:8.0
+`
+	writeProjectConfigs(t, tmpDir, main, "")
+
+	cfg, err := LoadProject(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadProject: %v", err)
+	}
+	app := cfg.Services["app"]
+	// ${VAR} substitution must reach dockerfile like every other field
+	if app.Dockerfile != ".zdev/Dockerfile" {
+		t.Errorf("Dockerfile = %q, want .zdev/Dockerfile", app.Dockerfile)
+	}
+	if app.Image != "myapp-dev:latest" {
+		t.Errorf("Image = %q, want myapp-dev:latest", app.Image)
+	}
+	if db := cfg.Services["db"]; db.Dockerfile != "" {
+		t.Errorf("db.Dockerfile = %q, want empty for image-only services", db.Dockerfile)
+	}
+}

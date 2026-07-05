@@ -11,7 +11,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var startQuiet bool
+var (
+	startQuiet   bool
+	startBuild   bool
+	startNoBuild bool
+)
 
 var startCmd = &cobra.Command{
 	Use:   "start [service]",
@@ -27,6 +31,9 @@ network and volumes still runs idempotently).`,
 
 func init() {
 	startCmd.Flags().BoolVarP(&startQuiet, "quiet", "q", false, "Skip project info display after start")
+	startCmd.Flags().BoolVar(&startBuild, "build", false, "Force rebuilding images for services with a dockerfile: config")
+	startCmd.Flags().BoolVar(&startNoBuild, "no-build", false, "Never build images; fail if a dockerfile: image is missing")
+	startCmd.MarkFlagsMutuallyExclusive("build", "no-build")
 	rootCmd.AddCommand(startCmd)
 }
 
@@ -37,6 +44,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 	}
 
 	return withProject(5*time.Minute, func(ctx context.Context, proj *project.Project) error {
+		proj.BuildMode = project.BuildModeFromFlags(startBuild, startNoBuild)
 		return runStartImpl(ctx, proj, args)
 	})
 }

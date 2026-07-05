@@ -41,4 +41,6 @@ type Runtime interface {
 	// Image operations
 	PullImage(ctx context.Context, image string) error
 	ImageExists(ctx context.Context, image string) (bool, error)
+	GetImageLabels(ctx context.Context, image string) (map[string]string, error)
+	BuildImage(ctx context.Context, cfg ImageBuildConfig) error
 }

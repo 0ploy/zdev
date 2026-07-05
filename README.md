@@ -271,6 +271,30 @@ volumes:
 
 Named volumes persist across `zdev stop`/`zdev start` AND `zdev down`. Only removed with `zdev down -v`. No separate declaration needed - zdev discovers them automatically.
 
+### Custom Dev Images (`dockerfile:`)
+
+When a stock image isn't enough - you need system packages, a compiled binary, or a specific toolchain baked into the container - point the service at a Dockerfile instead of hand-rolling a build script:
+
+```yaml
+services:
+  app:
+    dockerfile: .zdev/Dockerfile   # build this instead of pulling an image
+    command: pnpm dev --host 0.0.0.0
+    volumes:
+      - ${PROJECTPATH}:/app
+```
+
+`zdev start` builds the image automatically when it's missing or when the Dockerfile changed - so a fresh clone starts with zero manual steps. Editing source files never triggers a rebuild (source is bind-mounted live); Docker's layer cache keeps rebuilds fast when they do happen. `zdev update` treats a stale image as a config change and recreates the service with the rebuilt image.
+
+The build context is always the **project root**: `COPY`/`ADD` paths in the Dockerfile resolve from there (regardless of where the Dockerfile lives), and a `.dockerignore` at the root keeps builds fast on large repos. The image is tagged `zdev-<project>-<service>:latest` by default; set `image:` alongside `dockerfile:` to choose the tag yourself. Force or skip building with flags on `start` and `update`:
+
+```bash
+zdev start --build      # rebuild even if nothing changed
+zdev start --no-build   # never build; fails clearly if the image is missing
+```
+
+`dockerfile:` is for **dev containers only**. Build args, multi-stage targets, custom contexts, multi-arch builds, build secrets, registry push/pull auth, and production images are intentionally not supported - for those, keep a custom build command (`.zdev/commands/build-image.just`) that produces the `image:` tag.
+
 ### Custom Commands
 
 Every project has recurring tasks: install deps, run migrations, seed data, run tests. Instead of documenting these in a README, define them as [just](https://github.com/casey/just) files in `.zdev/commands/`. The filename becomes the command:
@@ -325,6 +349,8 @@ Each project runs in its own isolated network. Services within a project reach e
 ```bash
 zdev start              # Start every service in the project
 zdev start <service>    # Start a single service (project setup runs idempotently)
+zdev start --build      # Force rebuilding dockerfile: images
+zdev start --no-build   # Never build; fail if a dockerfile: image is missing
 zdev stop               # Stop containers (keeps them for quick restart)
 zdev stop <service>     # Stop a single service container
 zdev restart            # Stop + start every service
@@ -538,7 +564,8 @@ mutagen:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `image` | string | required | Docker image |
+| `image` | string | required unless `dockerfile:` is set | Docker image (with `dockerfile:`, the tag the build produces) |
+| `dockerfile` | string | - | Build a local dev image from this Dockerfile (path relative to the project root, which is also the build context). Auto-builds on start when missing or changed |
 | `command` | string | - | Container command |
 | `working_dir` | string | - | Working directory inside container |
 | `volumes` | list | - | Volume mounts (bind mounts and named volumes) |

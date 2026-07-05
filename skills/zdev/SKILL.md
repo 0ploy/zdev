@@ -41,6 +41,9 @@ zdev stop                       # Stop all containers
 zdev stop <service>             # Stop one service container
 zdev restart                    # Stop + start every service
 zdev restart <service>          # Bounce one service container in-place
+zdev update                     # Apply config.yaml + Dockerfile changes (recreates only drifted services)
+zdev start/update --build       # Force rebuilding dockerfile: images
+zdev start/update --no-build    # Never build; fail if a dockerfile: image is missing
 zdev down                       # Remove containers and network
 zdev down -v                    # Remove everything including volumes
 
@@ -208,6 +211,22 @@ services:
       domain: rabbitmq.${PROJECTNAME}.${ZDEV_DOMAIN}   # https://rabbitmq.my-app.0ploy.dev
 ```
 
+**Custom dev images** (`dockerfile:`) - when a stock image isn't enough, point the service at a
+Dockerfile instead of pre-building manually:
+
+```yaml
+services:
+  app:
+    dockerfile: .zdev/Dockerfile   # build this instead of pulling image:
+```
+
+`zdev start` builds automatically when the image is missing or the Dockerfile changed; editing
+source never triggers a rebuild (source is bind-mounted). The build context is always the project
+root, so `COPY` paths resolve from there. Tag defaults to `zdev-<project>-<service>:latest`; set
+`image:` alongside `dockerfile:` to pick the tag. Flags: `zdev start --build` forces a rebuild,
+`--no-build` skips it. Dev containers only - build args, targets, multi-arch, build secrets, and
+registry push need a custom build command plus `image:` instead.
+
 **Mutagen** (macOS) - fast file sync. Always ignore dependency dirs (`node_modules`, `vendor`) and
 build artifacts. Without ignores, installs take 5-10x longer.
 
@@ -278,7 +297,10 @@ seed data, asset build).
    and dev command. `.env` / `.env.example` for `DATABASE_URL`, `MAILER_DSN`, `HOST`, `PORT`,
    `APP_URL`. Existing `docker-compose.yml` / `Dockerfile` as a hint (ports, volumes) — not source
    of truth. README for any manual setup steps.
-2. **Pick a starting config** from `references/config-examples.md` matching the stack.
+2. **Pick a starting config** from `references/config-examples.md` matching the stack. Prefer a
+   stock image; if the app needs system packages or tooling baked in (or compose has a `build:`
+   section), write a dev Dockerfile in `.zdev/` and point the service at it with
+   `dockerfile: .zdev/Dockerfile` — zdev builds it automatically, no build script needed.
 3. **Bind the dev server to all interfaces** in the `command:` — otherwise the container port isn't
    reachable from Traefik: `HOST=0.0.0.0` (Node), `--host 0.0.0.0` (Vite), `--allow-all-ip`
    (Symfony CLI), `0.0.0.0` (Django `runserver`).
@@ -314,6 +336,10 @@ stops+starts the existing container, so edits to `environment:`, `image:`, `comm
 volume mounts don't apply. Use `zdev update` — it diffs the config against the running containers
 and recreates only the services that actually changed. Code changes are live via bind mount /
 Mutagen — no restart or update needed.
+
+**Dockerfile changes aren't taking effect:** `zdev update` (or `start`) detects edits to the
+Dockerfile itself and rebuilds. But files the Dockerfile `COPY`s are NOT hashed — after changing
+those, run `zdev update --build` to force the rebuild.
 
 **Redirects to docs page:** Either the container isn't running or `routing.port` doesn't match the
 app's port. For shared service UIs (mail, db, redis), also check `zdev services status` - the

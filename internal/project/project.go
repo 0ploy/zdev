@@ -20,6 +20,11 @@ type Project struct {
 	Dir     string
 	Config  *config.ProjectConfig
 	Runtime runtime.Runtime
+
+	// BuildMode controls when service images with a `dockerfile:` config
+	// are rebuilt. Set from the --build / --no-build flags; zero value is
+	// BuildIfStale.
+	BuildMode BuildMode
 }
 
 // ExecOptions contains options for executing a command in a container
@@ -370,13 +375,40 @@ func (p *Project) start(ctx context.Context, filter map[string]bool) error {
 func (p *Project) startServiceWithMutagen(ctx context.Context, name string, svc config.ServiceConfig, mutagenEnabled bool, mutagenMounts map[string]MutagenSyncMount) error {
 	containerName := p.ContainerName(name)
 
+	// Build the image first when a `dockerfile:` config is present, so an
+	// existing container can be recreated to pick up a rebuilt image.
+	rebuilt := false
+	if svc.Dockerfile != "" {
+		var err error
+		rebuilt, err = p.ensureBuiltImage(ctx, name, svc)
+		if err != nil {
+			return err
+		}
+	}
+
 	// Check if container already exists
 	exists, err := p.Runtime.ContainerExists(ctx, containerName)
 	if err != nil {
 		return err
 	}
 
-	if exists {
+	if exists && rebuilt {
+		// The image was rebuilt under the container - recreate it so the
+		// running service actually uses the new image.
+		fmt.Printf("Recreating service %s with rebuilt image...\n", name)
+		running, err := p.Runtime.IsContainerRunning(ctx, containerName)
+		if err != nil {
+			return err
+		}
+		if running {
+			if err := p.Runtime.StopContainer(ctx, containerName); err != nil {
+				return err
+			}
+		}
+		if err := p.Runtime.RemoveContainer(ctx, containerName); err != nil {
+			return err
+		}
+	} else if exists {
 		running, err := p.Runtime.IsContainerRunning(ctx, containerName)
 		if err != nil {
 			return err
@@ -391,16 +423,18 @@ func (p *Project) startServiceWithMutagen(ctx context.Context, name string, svc 
 		return p.Runtime.StartContainer(ctx, containerName)
 	}
 
-	// Pull image if needed
-	imageExists, err := p.Runtime.ImageExists(ctx, svc.Image)
-	if err != nil {
-		return err
-	}
-
-	if !imageExists {
-		fmt.Printf("Pulling image %s...\n", svc.Image)
-		if err := p.Runtime.PullImage(ctx, svc.Image); err != nil {
+	// Pull image if needed (built images are guaranteed present here)
+	if svc.Dockerfile == "" {
+		imageExists, err := p.Runtime.ImageExists(ctx, svc.Image)
+		if err != nil {
 			return err
+		}
+
+		if !imageExists {
+			fmt.Printf("Pulling image %s...\n", svc.Image)
+			if err := p.Runtime.PullImage(ctx, svc.Image); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -719,6 +753,17 @@ func (p *Project) Update(ctx context.Context) (bool, error) {
 			return false, err
 		}
 
+		// A stale `dockerfile:` image counts as a change too - the tag stays
+		// the same so the config hash can't see it. The rebuild itself
+		// happens on the recreate path (startService -> ensureBuiltImage).
+		if !needsRecreate {
+			stale, err := p.serviceBuildStale(ctx, serviceName, svc)
+			if err != nil {
+				return false, err
+			}
+			needsRecreate = stale
+		}
+
 		if needsRecreate {
 			fmt.Printf("Recreating service %s...\n", serviceName)
 
@@ -818,7 +863,7 @@ func (p *Project) buildContainerConfig(name string, svc config.ServiceConfig, mu
 
 	cfg := runtime.ContainerConfig{
 		Name:        containerName,
-		Image:       svc.Image,
+		Image:       p.serviceImage(name, svc),
 		WorkingDir:  svc.WorkingDir,
 		NetworkName: p.NetworkName(),
 		Aliases:     []string{name},

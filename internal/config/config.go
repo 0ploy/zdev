@@ -125,6 +125,7 @@ func defaultProjectShared() ProjectSharedConfig {
 // ServiceConfig defines a container service
 type ServiceConfig struct {
 	Image          string                `yaml:"image"`
+	Dockerfile     string                `yaml:"dockerfile"` // Build a local dev image from this Dockerfile (resolved against the project root, which is also the build context) instead of pulling image; image then names the tag
 	Routing        *RoutingConfig        `yaml:"routing"` // Traefik routing config (requires shared.router: true)
 	WorkingDir     string                `yaml:"working_dir"`
 	Volumes        []string              `yaml:"volumes"`
