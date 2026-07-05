@@ -1,3 +1,9 @@
+## v0.8.0
+
+### Features
+
+- **`services.<name>.dockerfile` builds custom dev images automatically.** Point a service at a Dockerfile instead of a pre-built image (`dockerfile: .zdev/Dockerfile`) and `zdev start` builds it when it's missing or the Dockerfile changed - a fresh clone starts with zero manual build steps. Staleness is tracked via a `zdev.build-hash` image label (sha256 of the Dockerfile contents; editing bind-mounted source never triggers a rebuild, and Docker's layer cache keeps real rebuilds fast). `zdev update` treats a stale image as config drift and recreates the service with the rebuilt image; `zdev start` recreates an existing container when the image was rebuilt underneath it. The build context is always the project root, so `COPY` paths resolve from there and a root `.dockerignore` trims large repos. The tag defaults to `zdev-<project>-<service>:latest`; set `image:` alongside `dockerfile:` to name it. New `--build` / `--no-build` flags on `start` and `update` force or skip building (`--no-build` fails clearly on a missing image). Dev containers only by design: build args, multi-stage targets, custom contexts, secrets, multi-arch, and registry push stay with a custom build command plus `image:`. **Heads-up:** configs using `dockerfile:` require zdev >= 0.8.0 - older binaries reject the unknown field.
+
 ## v0.7.7
 
 ### Features
