@@ -11,7 +11,7 @@ GlobalConfig    - singleton at ~/.zdev/global-config.yaml; domain, SSL, Mutagen,
 ProjectConfig   - per-project at .zdev/config.yaml; services, environment, shared flags
 State           - singleton at ~/.zdev/state.yaml; registered projects + link networks + routing ports
 Service         - a container definition within a project (image or dockerfile build, volumes, env, routing)
-SharedService   - infrastructure containers (Router, Mail, DB UI, Redis UI) in zdev_shared network
+SharedService   - infrastructure containers (Router, Mail, DB UI, Redis UI, Logs) in zdev_shared network
 Volume          - named Docker volume, auto-discovered from service volume mounts (no top-level declaration)
 Network         - per-project Docker network + shared zdev_shared + per-link zdev_link_<name>
 Link            - runtime relationship between projects, stored in global state (not project config)
@@ -20,6 +20,8 @@ MutagenSession  - file sync session between host directory and Docker volume (ma
 Justfile        - custom command definition in .zdev/commands/<name>.just
 Template        - GitHub repo or local dir with .zdev/ config for `zdev create`
 ConfigHash      - sha256 label stamped on every container covering its full expected config
+Environment     - a 1Password Environment (key-value secret store); services attach one via op-env
+SecretsHash     - zdev.secrets-hash label: sha256 over a container's injected secret values
 ```
 
 **Key relationships:**
@@ -35,9 +37,9 @@ ConfigHash      - sha256 label stamped on every container covering its full expe
 
 Default project lifecycle: `zdev start` -> develop -> `zdev stop` (or `zdev down` to tear down, `zdev remove` to also delete the project directory registration).
 
-**Start sequence:** check ports -> create network -> create volumes (auto-discovered) -> pull images (or build them: services with `dockerfile:` are built locally when the image is missing or the Dockerfile changed, tracked via a `zdev.build-hash` image label) -> create containers (stamped with `zdev.config-hash` label) -> connect shared services -> connect to member link networks -> start Mutagen sync -> start containers -> register in state.
+**Start sequence:** check ports -> create network -> create volumes (auto-discovered) -> pull images (or build them: services with `dockerfile:` are built locally when the image is missing or the Dockerfile changed, tracked via a `zdev.build-hash` image label) -> resolve 1Password secrets (only for services that use them; one `op environment read` per distinct Environment, after the config hash is stamped so the hash covers the unresolved references) -> create containers (stamped with `zdev.config-hash` label) -> connect shared services -> connect to member link networks -> start Mutagen sync -> start containers -> register in state.
 
-**Restart vs Update:** `zdev restart` stops and starts the existing containers (no recreate). `zdev update` diffs the current config-hash against what the code would produce now and recreates only services whose config drifted (image, env, volumes, command, working dir, routing labels, ports, aliases); for `dockerfile:` services a stale build (Dockerfile contents changed) also counts as drift and triggers rebuild + recreate. `zdev start`, `zdev stop`, and `zdev restart` all accept an optional service name to scope the action to a single container; project-wide setup (network, volumes, state) still runs idempotently for start.
+**Restart vs Update:** `zdev restart` stops and starts the existing containers (no recreate). `zdev update` diffs the current config-hash against what the code would produce now and recreates only services whose config drifted (image, env, volumes, command, working dir, routing labels, ports, aliases); for `dockerfile:` services a stale build (Dockerfile contents changed) also counts as drift and triggers rebuild + recreate. Changed 1Password secrets are NOT auto-detected: `zdev update --refresh-secrets` resolves fresh values, compares against the `zdev.secrets-hash` label, and recreates only services whose injected values changed (rotations plus variables added/removed in an attached Environment). `zdev start`, `zdev stop`, and `zdev restart` all accept an optional service name to scope the action to a single container; project-wide setup (network, volumes, state) still runs idempotently for start.
 
 **Stop:** pause Mutagen -> stop containers -> disconnect shared services.
 
@@ -62,17 +64,20 @@ Default project lifecycle: `zdev start` -> develop -> `zdev stop` (or `zdev down
 - **Per-service routing domain:** `routing.domain` allows individual services to have custom domains (HTTP/HTTPS only). Useful for frontend + backend splits on the same project.
 - **Project templates:** `zdev create` downloads GitHub repos or copies local dirs. Template repos follow naming convention `zdev-template-<name>`. Templates use a `.setup-complete` marker pattern to solve the container startup vs setup circular dependency. Template authoring guide at `templates/README.md`.
 - **ui.StatusStep / `zdev step`:** Framework-level progress messages use bold cyan `▶` + two blank leading lines to stand out from the noise of nested command output (apk, composer, npm). Template justfiles should use `@zdev step "..."` instead of `@echo "..."` for top-level phase markers.
+- **1Password secrets (op-env):** Two config forms of one token: `services.<name>.op-env: <environment-id>` injects EVERY variable of a 1Password Environment into the container env (explicit `environment:` entries win), and `op-env://<environment-id>/<VARIABLE>` env values inject single variables (self-contained, so one project can mix Environments). The Environment ID is not secret and commits safely; `${VAR}` substitution keeps it DRY. Resolution happens ONLY at container creation via the beta 1Password CLI (`op environment read`, cached per Environment per process) - `start` of existing containers, `restart`, `status`, and no-op `update` never contact 1Password. The config hash covers the UNRESOLVED reference plus the attached ID (`zdev.op-env` label), so rotation never causes surprise recreates; `--refresh-secrets` is the explicit rotation path. On recreates, secrets resolve BEFORE the old container is removed. Never log resolved values; op's stdout may contain secrets and must never be folded into errors. CI uses `OP_SERVICE_ACCOUNT_TOKEN`. Values must be single-line; a reference must be the entire env value (no mid-string interpolation).
+- **ZDEV_HOME** relocates the entire zdev home (config, state, certs, downloaded tools; default `~/.zdev`). Every storage path flows through `config.GetZdevHome()`.
 
 ## Tech Stack & Architecture
 
 | Component | Technology |
 |-----------|-----------|
-| Language | Go 1.25 |
+| Language | Go 1.26 |
 | CLI | Cobra |
 | Container runtime | Docker CLI (shell out, not SDK - enables future Podman support) |
 | File sync | Mutagen (auto-enabled on macOS, disabled on Linux) |
 | Task runner | just (justfiles in `.zdev/commands/`) |
 | SSL | mkcert (locally-trusted certs) |
+| Secrets | 1Password CLI beta (`op environment read`, user-installed via brew) |
 | Config format | YAML with `${VAR}` substitution |
 | State storage | YAML files |
 
@@ -80,8 +85,9 @@ Default project lifecycle: `zdev start` -> develop -> `zdev stop` (or `zdev down
 - `cmd/` - Cobra commands (one file per command), bootstrap helpers in `shared.go`
 - `internal/config/` - parsing, `defaults.go` (single source of truth for images/versions/domain), two-pass variable substitution
 - `internal/runtime/` - Docker abstraction interface + DockerCLI implementation + `confighash.go`
-- `internal/project/` - lifecycle (`project.go`), shared service connections, Mutagen sync, link connections, rename
-- `internal/services/` - shared infra (router, mail, adminer, redis insights) + `registry.go` (single source of truth)
+- `internal/project/` - lifecycle (`project.go`), shared service connections, Mutagen sync, link connections, rename, secret resolution hook
+- `internal/secrets/` - 1Password Environment resolver (`Resolver` interface, `OnePasswordCLI` with interactive install/signin recovery, `Mock` for tests)
+- `internal/services/` - shared infra (router, mail, adminer, redis insights, dozzle) + `registry.go` (single source of truth) + `webui.go` (shared Traefik config builder)
 - `internal/state/` - global registry with `Mutate()` atomic helper
 - `internal/mutagen/` - Mutagen binary wrapper
 - `internal/create/` - template resolution, validation, local copy, GitHub tarball download
@@ -102,14 +108,17 @@ Default project lifecycle: `zdev start` -> develop -> `zdev stop` (or `zdev down
 | Shared container | `zdev_{service}` | `zdev_router` |
 | Shared network | `zdev_shared` | - |
 | Mutagen session | `zdev-{project}-{service}` | `zdev-myshop-app` |
+| Mutagen sync volume | `sync.{service}.{project}.zdev` | `sync.app.myshop.zdev` |
 | Shared service URL | `{service}.shared.{domain}` | `mail.shared.0ploy.dev` |
 | Project URL | `{project}.{domain}` | `myshop.0ploy.dev` |
 | Config hash label | `zdev.config-hash` | stamped on every container |
+| Secrets labels | `zdev.op-env`, `zdev.secrets-hash` | attached Environment ID / injected-values hash |
+| Secret reference | `op-env://{environment-id}/{VARIABLE}` | `op-env://b7qmzx.../API_KEY` |
 
 ## CLI Commands
 
-**Lifecycle:** `create <template> [name]`, `start [-q] [--build|--no-build]`, `stop`, `restart`, `update [--build|--no-build]`, `down [-v]`, `remove <name>`, `rename <new-name>`
-**Container interaction:** `exec <service> <cmd>`, `logs [-f] [--tail N] [service]`
+**Lifecycle:** `create <template> [name]`, `start [-q] [--build|--no-build]`, `stop`, `restart`, `update [--build|--no-build] [--refresh-secrets]`, `down [-v]`, `remove <name>`, `rename <new-name>`
+**Container interaction:** `exec <service> <cmd>`, `logs [-f] [--tail N] [--open] [service]` (`--open` launches the Dozzle web UI)
 **Info:** `info`, `status`, `list`, `config`, `open [project]`
 **Shared service shortcuts (browser):** `mail`, `db`, `redis`, `docs`
 **Shared services (mgmt):** `services start|stop|status|recreate`
@@ -127,6 +136,7 @@ Default project lifecycle: `zdev start` -> develop -> `zdev stop` (or `zdev down
 | Mail | `zdev_mail` | `mail.shared.<domain>` | Mailpit email catcher (SMTP on port 1025, container name `mail`) |
 | DB UI | `zdev_db` | `db.shared.<domain>` | Adminer with auto-detected database servers |
 | Redis UI | `zdev_redis` | `redis.shared.<domain>` | Redis Insights browser |
+| Logs | `zdev_logs` | `logs.shared.<domain>` | Dozzle log viewer, grouped per project (opt-in via `shared.logs`, on by default) |
 | Docs | via Traefik | `docs.shared.<domain>` | Dynamic docs page, also the 404 catch-all |
 
 Default domain: `0ploy.dev` (wildcard DNS -> 127.0.0.1 - not a real site, just a resolver trick).
@@ -144,8 +154,9 @@ User-defined: `variables:` section defines custom `${VAR}` placeholders (resolve
 **Key project config flags:**
 - `variables: map` - reusable `${VAR}` substitution values (not passed to containers)
 - `services.<name>.dockerfile: path` - build a local dev image from this Dockerfile instead of pulling (context is always the project root; `image:` optionally names the tag, default `zdev-<project>-<service>:latest`)
+- `services.<name>.op-env: <environment-id>` - inject every variable of a 1Password Environment into the container env (explicit `environment:` entries win); single variables use `op-env://<environment-id>/<VARIABLE>` env values
 - `auto_open_at_start: bool` - open browser after start
-- `shared.router|mail|db|redis: bool` - connect to shared services
+- `shared.router|mail|db|redis|logs: bool` - connect to shared services
 - `services.<name>.register_to_dbui: bool` - explicitly register in Adminer (auto-detected for db/mysql/postgres names)
 - `services.<name>.routing.protocol: http|https|tcp|udp` - routing type
 - `services.<name>.routing.domain: string` - custom domain for this service (http/https only)
@@ -155,7 +166,7 @@ User-defined: `variables:` section defines custom `${VAR}` placeholders (resolve
 
 ## External Tools
 
-Downloaded to `~/.zdev/bin/` on first use: mkcert v1.4.4, just 1.49.0, mutagen 0.18.1. System PATH checked first. Not yet SHA256-verified on download (tracked as a ticket).
+Downloaded to `~/.zdev/bin/` on first use: mkcert v1.4.4, just 1.49.0, mutagen 0.18.1. System PATH checked first. Not yet SHA256-verified on download (tracked as a ticket). The 1Password CLI (`op`, beta build) is NOT auto-downloaded - it is user-installed via `brew install 1password-cli@beta`; zdev offers the install interactively and drives `op signin` when needed.
 
 ## Build & Release
 
@@ -189,6 +200,8 @@ Downloaded to `~/.zdev/bin/` on first use: mkcert v1.4.4, just 1.49.0, mutagen 0
 | Skill | AI agent integration file at `skills/zdev/SKILL.md` |
 | Template | GitHub repo or local dir for `zdev create` scaffolding |
 | .setup-complete | Marker file in templates solving container startup vs setup circular dependency |
+| op-env / Environment | 1Password Environment (key-value secret store); `op-env:` attaches one to a service, `op-env://` references one variable |
+| Secrets hash | `zdev.secrets-hash` label enabling `--refresh-secrets` rotation detection without storing secret material |
 
 ## Ticket Conventions
 
@@ -263,5 +276,6 @@ Add a new project template at `0ploy/zdev-template-django` that scaffolds a Djan
 - Windows support - macOS and Linux only
 - Docker Compose compatibility - zdev has its own config format
 - Multi-machine or remote Docker - local Docker daemon only
-- Container image building - zdev uses pre-built images only
+- Compose-parity image builds - `dockerfile:` deliberately stays a single field (no build args, targets, custom contexts, multi-arch); anything fancier is a custom build command plus `image:`
+- Secret backends other than 1Password Environments (no Vault, no AWS Secrets Manager, no vault-item `op://` references)
 - Docker SDK integration - we shell out to the CLI to keep the door open for Podman
