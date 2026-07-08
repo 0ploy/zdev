@@ -486,20 +486,144 @@
     white-space: nowrap;
   }
 
+  /* ── Secrets section ── */
+  .secrets-section {
+    margin: 0 48px 20px;
+    background: linear-gradient(180deg, rgba(129,140,248,0.05) 0%, rgba(129,140,248,0.015) 100%);
+    border: 1px solid rgba(129,140,248,0.1);
+    border-radius: 16px;
+    overflow: hidden;
+    position: relative;
+  }
+
+  .secrets-section::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 10%;
+    right: 10%;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(129,140,248,0.25), transparent);
+  }
+
+  .secrets-header {
+    padding: 16px 24px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    border-bottom: 1px solid rgba(255,255,255,0.035);
+  }
+
+  .secrets-badge {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    color: #a5b4fc;
+    background: rgba(129,140,248,0.08);
+    padding: 5px 12px;
+    border-radius: 6px;
+    border: 1px solid rgba(129,140,248,0.12);
+  }
+
+  .secrets-label {
+    font-size: 18px;
+    color: #64748b;
+    font-weight: 500;
+  }
+
+  .secrets-flow {
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 20px;
+    padding: 24px 24px 26px;
+  }
+
+  .secret-step {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .secret-chip {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 17px;
+    font-weight: 500;
+    padding: 11px 18px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    white-space: nowrap;
+  }
+
+  .secret-chip.ref {
+    background: rgba(129,140,248,0.07);
+    border: 1px solid rgba(129,140,248,0.16);
+  }
+
+  .secret-chip.vault {
+    background: rgba(37,99,235,0.09);
+    border: 1px solid rgba(96,165,250,0.18);
+  }
+
+  .secret-chip.env {
+    background: rgba(34,197,94,0.06);
+    border: 1px solid rgba(34,197,94,0.14);
+    gap: 0;
+  }
+
+  .secret-chip .k { color: #94a3b8; }
+  .secret-chip .ref-val { color: #a5b4fc; font-weight: 600; }
+  .secret-chip .brand { color: #93c5fd; font-weight: 700; }
+  .secret-chip .dots { color: #475569; font-size: 13px; letter-spacing: 2px; }
+  .secret-chip .val { color: #6ee7b7; font-weight: 600; }
+  .secret-chip svg { width: 15px; height: 15px; flex-shrink: 0; }
+
+  .secret-caption {
+    font-size: 15px;
+    color: #64748b;
+    font-weight: 500;
+  }
+
+  .secret-arrow {
+    display: flex;
+    align-items: center;
+    margin-top: 18px;
+    flex-shrink: 0;
+  }
+
+  .secret-arrow .line {
+    width: 46px;
+    height: 2px;
+    background: linear-gradient(90deg, rgba(129,140,248,0.12), rgba(129,140,248,0.45));
+  }
+
+  .secret-arrow .tip {
+    width: 0;
+    height: 0;
+    border-top: 5px solid transparent;
+    border-bottom: 5px solid transparent;
+    border-left: 7px solid rgba(129,140,248,0.45);
+  }
+
   /* ── Benefits bar ── */
   .benefits {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 14px;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
     margin: 0 48px 36px;
   }
 
   .benefit {
-    padding: 16px 18px;
+    padding: 15px 16px;
     border-radius: 12px;
     display: flex;
     align-items: center;
-    gap: 14px;
+    gap: 12px;
   }
 
   .benefit.ssl {
@@ -517,6 +641,11 @@
     border: 1px solid rgba(168,85,247,0.1);
   }
 
+  .benefit.vault {
+    background: linear-gradient(135deg, rgba(129,140,248,0.06), rgba(129,140,248,0.02));
+    border: 1px solid rgba(129,140,248,0.1);
+  }
+
   .benefit-icon {
     width: 36px;
     height: 36px;
@@ -530,12 +659,13 @@
   .benefit.ssl .benefit-icon { background: rgba(34,197,94,0.1); }
   .benefit.ports .benefit-icon { background: rgba(56,189,248,0.1); }
   .benefit.shared .benefit-icon { background: rgba(168,85,247,0.1); }
+  .benefit.vault .benefit-icon { background: rgba(129,140,248,0.1); }
 
   .benefit-icon svg { width: 17px; height: 17px; }
 
   .benefit-title {
     font-weight: 700;
-    font-size: 18px;
+    font-size: 17px;
     margin-bottom: 2px;
     letter-spacing: -0.1px;
   }
@@ -543,9 +673,10 @@
   .benefit.ssl .benefit-title { color: #6ee7b7; }
   .benefit.ports .benefit-title { color: #7dd3fc; }
   .benefit.shared .benefit-title { color: #c4b5fd; }
+  .benefit.vault .benefit-title { color: #a5b4fc; }
 
   .benefit-desc {
-    font-size: 15px;
+    font-size: 14px;
     color: #64748b;
     font-weight: 500;
   }
@@ -743,6 +874,47 @@
     </div>
   </div>
 
+  <!-- Secrets -->
+  <div class="secrets-section">
+    <div class="secrets-header">
+      <div class="secrets-badge">Secrets</div>
+      <div class="secrets-label">References in git, values in 1Password</div>
+    </div>
+    <div class="secrets-flow">
+
+      <div class="secret-step">
+        <div class="secret-chip ref">
+          <span class="k">API_KEY:</span> <span class="ref-val">op-env://API_KEY</span>
+        </div>
+        <div class="secret-caption">.zdev/config.yaml - safe to commit</div>
+      </div>
+
+      <div class="secret-arrow"><div class="line"></div><div class="tip"></div></div>
+
+      <div class="secret-step">
+        <div class="secret-chip vault">
+          <svg viewBox="0 0 16 16" fill="none">
+            <rect x="3" y="7" width="10" height="8" rx="1.5" fill="#60a5fa"/>
+            <path d="M5 7V5a3 3 0 0 1 6 0v2" stroke="#60a5fa" stroke-width="1.5" stroke-linecap="round" fill="none"/>
+          </svg>
+          <span class="brand">1Password</span>
+          <span class="dots">&#9679;&#9679;&#9679;&#9679;&#9679;&#9679;&#9679;&#9679;</span>
+        </div>
+        <div class="secret-caption">team-shared Environment</div>
+      </div>
+
+      <div class="secret-arrow"><div class="line"></div><div class="tip"></div></div>
+
+      <div class="secret-step">
+        <div class="secret-chip env">
+          <span class="k">API_KEY=</span><span class="val">sk-live-9f3a&hellip;</span>
+        </div>
+        <div class="secret-caption">injected at container creation - never on disk</div>
+      </div>
+
+    </div>
+  </div>
+
   <!-- Benefits -->
   <div class="benefits">
     <div class="benefit ssl">
@@ -780,6 +952,18 @@
       <div>
         <div class="benefit-title">Shared, not duplicated</div>
         <div class="benefit-desc">One router + mail for all projects</div>
+      </div>
+    </div>
+    <div class="benefit vault">
+      <div class="benefit-icon">
+        <svg viewBox="0 0 16 16" fill="none">
+          <circle cx="6" cy="8" r="2.5" stroke="#818cf8" stroke-width="1.5"/>
+          <path d="M8.5 8h5M11.5 8v2.5M13.5 8v1.5" stroke="#818cf8" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <div>
+        <div class="benefit-title">Secrets from 1Password</div>
+        <div class="benefit-desc">Never in the repo or on disk</div>
       </div>
     </div>
   </div>
