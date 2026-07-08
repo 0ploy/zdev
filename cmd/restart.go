@@ -26,7 +26,8 @@ func init() {
 }
 
 func runRestart(cmd *cobra.Command, args []string) error {
-	return withProject(7*time.Minute, func(ctx context.Context, proj *project.Project) error {
+	// Same budget as start - a restart is a stop (fast) plus a start.
+	return withProject(5*time.Minute, func(ctx context.Context, proj *project.Project) error {
 		if len(args) == 1 {
 			service := args[0]
 			fmt.Printf("Restarting service %s...\n", service)

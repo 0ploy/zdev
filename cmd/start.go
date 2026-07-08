@@ -90,11 +90,7 @@ func runStartImpl(ctx context.Context, proj *project.Project, args []string) err
 
 	if proj.Config.AutoOpenAtStart {
 		if globalCfg, err := config.LoadGlobalConfig(); err == nil {
-			protocol := "http"
-			if globalCfg.SSL.Enabled {
-				protocol = "https"
-			}
-			url := fmt.Sprintf("%s://%s", protocol, proj.Config.Domain)
+			url := fmt.Sprintf("%s://%s", schemeFor(globalCfg), proj.Config.Domain)
 			fmt.Printf("\nOpening %s\n", url)
 			_ = openBrowser(url)
 		}

@@ -10,6 +10,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// errMutagenDisabled is returned by mutagen subcommands that need file
+// sync while it is turned off for this machine.
+var errMutagenDisabled = fmt.Errorf("Mutagen file sync is disabled - enable it in ~/.zdev/global-config.yaml")
+
 var mutagenCmd = &cobra.Command{
 	Use:   "mutagen",
 	Short: "Manage Mutagen file synchronization",
@@ -104,9 +108,8 @@ func runMutagenReset(cmd *cobra.Command, args []string) error {
 }
 
 func runMutagenResetImpl(ctx context.Context, proj *project.Project) error {
-	// Check if Mutagen is enabled
 	if !proj.IsMutagenEnabled() {
-		return fmt.Errorf("Mutagen file sync is disabled - enable it in ~/.zdev/global-config.yaml")
+		return errMutagenDisabled
 	}
 
 	// Get Mutagen binary
@@ -193,9 +196,8 @@ func runMutagenFlush(cmd *cobra.Command, args []string) error {
 }
 
 func runMutagenFlushImpl(ctx context.Context, proj *project.Project) error {
-	// Check if Mutagen is enabled
 	if !proj.IsMutagenEnabled() {
-		return fmt.Errorf("Mutagen file sync is disabled - enable it in ~/.zdev/global-config.yaml")
+		return errMutagenDisabled
 	}
 
 	// Get Mutagen binary

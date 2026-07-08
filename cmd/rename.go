@@ -74,10 +74,7 @@ func runRenameImpl(ctx context.Context, proj *project.Project, newName string) e
 	if globalCfg != nil && globalCfg.Domain != "" {
 		domain = globalCfg.Domain
 	}
-	protocol := "http"
-	if globalCfg != nil && globalCfg.SSL.Enabled {
-		protocol = "https"
-	}
+	protocol := schemeFor(globalCfg)
 
 	fmt.Printf("Rename project: %s -> %s\n", oldName, newName)
 

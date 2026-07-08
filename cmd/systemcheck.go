@@ -109,11 +109,7 @@ func openDocsAfterFirstRun(ctx context.Context, cfg *config.GlobalConfig) {
 	_ = mgr.StartDBUI(ctx)
 
 	// Build docs URL
-	protocol := "http"
-	if cfg.SSL.Enabled {
-		protocol = "https"
-	}
-	url := fmt.Sprintf("%s://docs.shared.%s", protocol, cfg.Domain)
+	url := fmt.Sprintf("%s://docs.shared.%s", schemeFor(cfg), cfg.Domain)
 
 	fmt.Println()
 	fmt.Println("Opening documentation...")
@@ -503,8 +499,8 @@ func checkCertificates(cfg *config.GlobalConfig) int {
 	}
 
 	certsDir := config.GetCertsDir()
-	certPath := filepath.Join(certsDir, "cert.pem")
-	keyPath := filepath.Join(certsDir, "key.pem")
+	certPath := filepath.Join(certsDir, ssl.CertFileName)
+	keyPath := filepath.Join(certsDir, ssl.KeyFileName)
 
 	certExists := false
 	keyExists := false

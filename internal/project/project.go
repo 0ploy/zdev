@@ -73,7 +73,7 @@ func LoadFromDir(dir string) (*Project, error) {
 // Format: <service>.<project>.zdev (e.g., app.myproject.zdev)
 // This standalone function can be used without a loaded Project.
 func ContainerNameFor(service, projectName string) string {
-	return fmt.Sprintf("%s.%s.zdev", service, projectName)
+	return runtime.ScopedName(service, projectName)
 }
 
 // ContainerName returns the full container name for a service
@@ -96,7 +96,7 @@ func shellQuote(s string) string {
 // VolumeName returns the full volume name for a project volume
 // Format: <volume>.<project>.zdev (e.g., db_data.myproject.zdev)
 func (p *Project) VolumeName(volume string) string {
-	return fmt.Sprintf("%s.%s.zdev", volume, p.Config.Name)
+	return runtime.ScopedName(volume, p.Config.Name)
 }
 
 // NamedVolumes returns all named volumes discovered from service volume mounts.

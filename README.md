@@ -683,6 +683,8 @@ mutagen:
   sync_mode: two-way-safe  # default sync mode
 ```
 
+Environment variables zdev itself honors: `ZDEV_HOME` relocates the zdev home directory (config, state, certs, downloaded tools; default `~/.zdev`), `ZDEV_PLAIN=1` forces plain output (no colors, hyperlinks, or step markers - overrides the `terminal.plain` config setting), `ZDEV_NO_UPDATE_CHECK=1` disables the background self-update check, and `OP_SERVICE_ACCOUNT_TOKEN` authenticates 1Password secret resolution in CI.
+
 ## Troubleshooting
 
 ### "DNS doesn't resolve"

@@ -38,7 +38,7 @@ func (p *Project) MutagenSessionName(serviceName string) string {
 // MutagenVolumeName returns the Docker volume name for Mutagen sync
 // Same as session name for clarity
 func (p *Project) MutagenVolumeName(serviceName string) string {
-	return fmt.Sprintf("sync.%s.%s.zdev", serviceName, p.Config.Name)
+	return runtime.MutagenSyncVolumeName(serviceName, p.Config.Name)
 }
 
 // isBindMount checks if a volume string represents a bind mount (vs named volume)

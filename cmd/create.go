@@ -186,6 +186,12 @@ func runAutoSetup(projectDir string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
+	// setup.just starts containers - fail with the friendly Docker
+	// message up front instead of raw errors mid-setup.
+	if err := requireDocker(ctx); err != nil {
+		return err
+	}
+
 	toolMgr, err := tools.NewManager()
 	if err != nil {
 		return fmt.Errorf("failed to initialize tool manager: %w", err)

@@ -54,10 +54,7 @@ func showProjectInfo(ctx context.Context, proj *project.Project) error {
 	if cfg != nil && cfg.Domain != "" {
 		globalDomain = cfg.Domain
 	}
-	protocol := "http"
-	if cfg != nil && cfg.SSL.Enabled {
-		protocol = "https"
-	}
+	protocol := schemeFor(cfg)
 
 	// Project header
 	fmt.Printf("Project: %s\n", proj.Config.Name)

@@ -40,6 +40,13 @@ func runJustfile(justfile *project.JustfileInfo, args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
+	// Recipes almost always shell into containers via `zdev exec` - fail
+	// with the friendly Docker message up front instead of raw errors
+	// mid-recipe.
+	if err := requireDocker(ctx); err != nil {
+		return err
+	}
+
 	// Ensure just is available
 	toolMgr, err := tools.NewManager()
 	if err != nil {

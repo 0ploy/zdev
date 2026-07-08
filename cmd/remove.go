@@ -58,7 +58,7 @@ func runRemoveImpl(ctx context.Context, name string) error {
 		if !removeForce {
 			var msg string
 			if removeVolumes {
-				msg = fmt.Sprintf("This will remove all containers, networks, and volumes for project %q.\nData stored in volumes will be permanently deleted. Continue? [y/N]: ", name)
+				msg = volumeRemovalPrompt(name)
 			} else {
 				msg = fmt.Sprintf("This will remove all containers and networks for project %q.\nVolumes will be kept. Use -v to also remove volumes. Continue? [y/N]: ", name)
 			}

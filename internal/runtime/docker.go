@@ -281,9 +281,7 @@ func (d *DockerCLI) ContainerExists(ctx context.Context, name string) (bool, err
 	// Use docker inspect - returns error if container doesn't exist
 	_, err := d.run(ctx, "inspect", "--type=container", name)
 	if err != nil {
-		// Check if it's a "not found" error (case-insensitive)
-		errLower := strings.ToLower(err.Error())
-		if strings.Contains(errLower, "no such") || strings.Contains(errLower, "not found") {
+		if isNotFoundErr(err) {
 			return false, nil
 		}
 		return false, err
@@ -291,12 +289,19 @@ func (d *DockerCLI) ContainerExists(ctx context.Context, name string) (bool, err
 	return true, nil
 }
 
+// isNotFoundErr reports whether a docker CLI error means the inspected
+// object (container, image, network, volume) does not exist - callers
+// treat that as a clean "no" rather than a failure.
+func isNotFoundErr(err error) bool {
+	errLower := strings.ToLower(err.Error())
+	return strings.Contains(errLower, "no such") || strings.Contains(errLower, "not found")
+}
+
 // IsContainerRunning checks if a container is currently running
 func (d *DockerCLI) IsContainerRunning(ctx context.Context, name string) (bool, error) {
 	out, err := d.run(ctx, "inspect", "--format={{.State.Running}}", name)
 	if err != nil {
-		errLower := strings.ToLower(err.Error())
-		if strings.Contains(errLower, "no such") || strings.Contains(errLower, "not found") {
+		if isNotFoundErr(err) {
 			return false, nil
 		}
 		return false, err
@@ -308,8 +313,7 @@ func (d *DockerCLI) IsContainerRunning(ctx context.Context, name string) (bool, 
 func (d *DockerCLI) GetContainer(ctx context.Context, name string) (*Container, error) {
 	out, err := d.run(ctx, "inspect", "--type=container", name)
 	if err != nil {
-		errLower := strings.ToLower(err.Error())
-		if strings.Contains(errLower, "no such") || strings.Contains(errLower, "not found") {
+		if isNotFoundErr(err) {
 			return nil, nil
 		}
 		return nil, err
@@ -371,8 +375,7 @@ func (d *DockerCLI) PullImage(ctx context.Context, image string) error {
 func (d *DockerCLI) ImageExists(ctx context.Context, image string) (bool, error) {
 	_, err := d.run(ctx, "inspect", "--type=image", image)
 	if err != nil {
-		errLower := strings.ToLower(err.Error())
-		if strings.Contains(errLower, "no such") || strings.Contains(errLower, "not found") {
+		if isNotFoundErr(err) {
 			return false, nil
 		}
 		return false, err
@@ -440,8 +443,7 @@ func (d *DockerCLI) RemoveNetwork(ctx context.Context, name string) error {
 func (d *DockerCLI) NetworkExists(ctx context.Context, name string) (bool, error) {
 	_, err := d.run(ctx, "network", "inspect", name)
 	if err != nil {
-		errLower := strings.ToLower(err.Error())
-		if strings.Contains(errLower, "no such") || strings.Contains(errLower, "not found") {
+		if isNotFoundErr(err) {
 			return false, nil
 		}
 		return false, err
@@ -489,8 +491,7 @@ func (d *DockerCLI) RemoveVolume(ctx context.Context, name string) error {
 func (d *DockerCLI) VolumeExists(ctx context.Context, name string) (bool, error) {
 	_, err := d.run(ctx, "volume", "inspect", name)
 	if err != nil {
-		errLower := strings.ToLower(err.Error())
-		if strings.Contains(errLower, "no such") || strings.Contains(errLower, "not found") {
+		if isNotFoundErr(err) {
 			return false, nil
 		}
 		return false, err

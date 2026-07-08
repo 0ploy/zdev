@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/0ploy/zdev/internal/runtime"
 	"github.com/0ploy/zdev/internal/state"
 )
 
@@ -153,13 +154,13 @@ func (p *Project) firstServiceImage() string {
 // VolumeNameFor returns the full volume name for a given volume and project name.
 // Standalone version of Project.VolumeName() for use without a loaded Project.
 func VolumeNameFor(volume, projectName string) string {
-	return fmt.Sprintf("%s.%s.zdev", volume, projectName)
+	return runtime.ScopedName(volume, projectName)
 }
 
 // MutagenVolumeNameFor returns the Mutagen sync volume name for a given service and project.
 // Standalone version of Project.MutagenVolumeName() for use without a loaded Project.
 func MutagenVolumeNameFor(service, projectName string) string {
-	return fmt.Sprintf("sync.%s.%s.zdev", service, projectName)
+	return runtime.MutagenSyncVolumeName(service, projectName)
 }
 
 // updateConfigName reads the config file and sets the name field.

@@ -30,8 +30,7 @@ func init() {
 func runDown(cmd *cobra.Command, args []string) error {
 	return withProject(2*time.Minute, func(ctx context.Context, proj *project.Project) error {
 		if downRemoveVolumes && !downForce {
-			msg := fmt.Sprintf("This will remove all containers, networks, and volumes for project %q.\nData stored in volumes will be permanently deleted. Continue? [y/N]: ", proj.Config.Name)
-			if !confirm(msg) {
+			if !confirm(volumeRemovalPrompt(proj.Config.Name)) {
 				fmt.Println("Aborted.")
 				return nil
 			}

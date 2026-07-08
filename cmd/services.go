@@ -61,10 +61,7 @@ func init() {
 }
 
 func printSharedServiceURLs(cfg *config.GlobalConfig, header string) {
-	protocol := "http"
-	if cfg.SSL.Enabled {
-		protocol = "https"
-	}
+	protocol := schemeFor(cfg)
 	fmt.Println()
 	fmt.Println(header)
 	fmt.Printf("  Docs:   %s://docs.shared.%s\n", protocol, cfg.Domain)
@@ -128,10 +125,7 @@ func runServicesStatusImpl(ctx context.Context) error {
 
 	mgr := services.NewManager(cfg)
 
-	protocol := "http"
-	if cfg.SSL.Enabled {
-		protocol = "https"
-	}
+	protocol := schemeFor(cfg)
 
 	fmt.Println("Shared Services Status")
 	fmt.Println("======================")

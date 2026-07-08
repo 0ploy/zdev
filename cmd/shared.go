@@ -61,6 +61,15 @@ func withDocker(timeout time.Duration, fn func(ctx context.Context) error) error
 	return fn(ctx)
 }
 
+// schemeFor returns the URL scheme zdev serves under: https when SSL is
+// enabled in the global config, http otherwise (including nil config).
+func schemeFor(cfg *config.GlobalConfig) string {
+	if cfg != nil && cfg.SSL.Enabled {
+		return "https"
+	}
+	return "http"
+}
+
 // openSharedServiceURL opens a shared service URL in the browser
 // serviceName is used for error messages (e.g., "mail", "db", "router")
 // urlPath is the subdomain (e.g., "mail.shared", "db.shared", "docs.shared")
@@ -89,16 +98,18 @@ func openSharedServiceURL(
 		return fmt.Errorf("%s service is not running\n\nStart it with: zdev services start", serviceName)
 	}
 
-	protocol := "http"
-	if cfg.SSL.Enabled {
-		protocol = "https"
-	}
-	url := fmt.Sprintf("%s://%s.%s", protocol, urlPath, cfg.Domain)
+	url := fmt.Sprintf("%s://%s.%s", schemeFor(cfg), urlPath, cfg.Domain)
 
 	plainMode := ui.PlainMode(cfg.Terminal.Plain)
 	fmt.Printf("Opening %s\n", ui.Hyperlink(url, url, plainMode))
 
 	return openBrowser(url)
+}
+
+// volumeRemovalPrompt is the confirmation shown before destroying a
+// project's volumes. Shared by `zdev down -v` and `zdev remove -v`.
+func volumeRemovalPrompt(projectName string) string {
+	return fmt.Sprintf("This will remove all containers, networks, and volumes for project %q.\nData stored in volumes will be permanently deleted. Continue? [y/N]: ", projectName)
 }
 
 // confirm prompts the user with a message and returns true if they answer y/yes.

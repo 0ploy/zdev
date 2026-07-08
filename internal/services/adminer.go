@@ -145,7 +145,7 @@ func getDBServersFromProjects(ctx context.Context) ([]DBServer, error) {
 		for serviceName, svc := range projCfg.Services {
 			if svc.RegisterToDBUI || isDBServiceByNameOrImage(serviceName, svc.Image) {
 				servers = append(servers, DBServer{
-					Hostname:    fmt.Sprintf("%s.%s.zdev", serviceName, projCfg.Name),
+					Hostname:    runtime.ScopedName(serviceName, projCfg.Name),
 					ProjectName: projCfg.Name,
 					ServiceName: serviceName,
 					DBType:      detectDBType(svc.Image),

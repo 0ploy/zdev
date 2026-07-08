@@ -40,11 +40,7 @@ func runOpen(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load global config: %w", err)
 	}
 
-	protocol := "http"
-	if gcfg != nil && gcfg.SSL.Enabled {
-		protocol = "https"
-	}
-	url := fmt.Sprintf("%s://%s", protocol, domain)
+	url := fmt.Sprintf("%s://%s", schemeFor(gcfg), domain)
 
 	plainMode := false
 	if gcfg != nil {
