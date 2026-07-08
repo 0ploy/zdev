@@ -102,14 +102,12 @@ func runMyCommand(cmd *cobra.Command, args []string) error {
 
 This has multiple touch points that are easy to miss:
 
-1. Create `internal/services/<service>.go` with container name constant and config function
-2. Add `Start<Service>`, `Stop<Service>`, `<Service>Status`, `Connect<Service>ToProject`, `Disconnect<Service>FromProject` methods to `manager.go`
-3. **Pass network aliases in `Connect<Service>ToProject`** - without aliases, the service won't be resolvable by its short name from project containers (e.g., `mail` instead of `zdev_mail`)
-4. Add entry to `sharedServiceRegistry()` in `cmd/services.go` (handles start/stop/status/recreate)
-5. Add connect/disconnect methods to `internal/project/shared_services.go` using `connectSharedService` helper
-6. Add image constant to `internal/config/defaults.go`
-7. Add to `ProjectSharedConfig` in `internal/config/config.go`
-8. Update `cmd/info.go` to display the service status
+1. Create `internal/services/<service>.go` with the container name constant and a `<Service>ContainerConfig` function built on `webUIContainerConfig` (`internal/services/webui.go`) - it owns the Traefik label wiring and stamps the config hash; only port/alias/env/volumes vary per service
+2. Add `Start<Service>` and `<Service>Status` methods to `manager.go` (no per-service stop/connect/disconnect methods - the registry closures call the generic helpers)
+3. Add an entry to `AllSharedServices()` in `internal/services/registry.go` using `stopClosure`/`connectClosure`/`disconnectClosure` - **pass the network alias to `connectClosure`**, otherwise the service won't be resolvable by its short name from project containers (e.g., `mail` instead of `zdev_mail`). This single registry drives CLI start/stop/status/recreate and per-project connect/disconnect
+4. Add the image constant to `internal/config/defaults.go`
+5. Add the opt-in flag to `ProjectSharedConfig` in `internal/config/config.go` and reference it in the registry entry's `ProjectEnabled` closure
+6. Update `cmd/info.go` and `cmd/status.go` to display the service status
 
 ## Link Networks
 

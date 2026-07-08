@@ -1,8 +1,6 @@
 package services
 
 import (
-	"fmt"
-
 	"github.com/0ploy/zdev/internal/runtime"
 )
 
@@ -26,8 +24,6 @@ type LogsServiceConfig struct {
 // stamp dev.dozzle.group=<project> in buildContainerConfig so they cluster
 // per-project in the UI.
 func LogsContainerConfig(cfg LogsServiceConfig) runtime.ContainerConfig {
-	logsHost := fmt.Sprintf("logs.shared.%s", cfg.Domain)
-
 	// Host socket path varies by engine (Docker Desktop, OrbStack, Colima);
 	// the in-container target is the conventional path Dozzle expects.
 	socketSource := cfg.SocketPath
@@ -35,39 +31,15 @@ func LogsContainerConfig(cfg LogsServiceConfig) runtime.ContainerConfig {
 		socketSource = runtime.DefaultDockerSocket
 	}
 
-	labels := map[string]string{
-		"zdev.managed":       "true",
-		"zdev.service":       "logs",
-		DozzleVisibilityLabel: "true",
-		DozzleGroupLabel:      DozzleSharedGroup,
-
-		// Enable Traefik routing for web UI
-		"traefik.enable":         "true",
-		"traefik.docker.network": SharedNetworkName,
-
-		// HTTP router for web UI
-		"traefik.http.routers.zdev-logs.rule":        fmt.Sprintf("Host(`%s`)", logsHost),
-		"traefik.http.routers.zdev-logs.entrypoints": "http",
-		"traefik.http.routers.zdev-logs.service":     "zdev-logs",
-
-		// Service pointing to Dozzle web UI port
-		"traefik.http.services.zdev-logs.loadbalancer.server.port": "8080",
-	}
-
-	// Add HTTPS router if TLS is enabled
-	if cfg.TLSEnabled {
-		labels["traefik.http.routers.zdev-logs-https.rule"] = fmt.Sprintf("Host(`%s`)", logsHost)
-		labels["traefik.http.routers.zdev-logs-https.entrypoints"] = "https"
-		labels["traefik.http.routers.zdev-logs-https.tls"] = "true"
-		labels["traefik.http.routers.zdev-logs-https.service"] = "zdev-logs"
-	}
-
-	out := runtime.ContainerConfig{
-		Name:        LogsContainerName,
-		Image:       cfg.Image,
-		NetworkName: SharedNetworkName,
-		Aliases:     []string{"logs"},
-		Labels:      labels,
+	return webUIContainerConfig(webUIConfig{
+		ContainerName: LogsContainerName,
+		Service:       "logs",
+		Subdomain:     "logs",
+		Alias:         "logs",
+		Port:          "8080",
+		Image:         cfg.Image,
+		Domain:        cfg.Domain,
+		TLSEnabled:    cfg.TLSEnabled,
 		Env: map[string]string{
 			"DOZZLE_NO_ANALYTICS": "true",
 			// Restrict Dozzle to opted-in containers. Shared services always
@@ -93,7 +65,5 @@ func LogsContainerConfig(cfg LogsServiceConfig) runtime.ContainerConfig {
 				Target: "/data",
 			},
 		},
-	}
-	runtime.StampConfigHash(&out)
-	return out
+	})
 }

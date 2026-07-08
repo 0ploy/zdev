@@ -50,12 +50,11 @@ Use `withProject(timeout, fn)` or `withDocker(timeout, fn)` from `cmd/shared.go`
 Easy-to-miss steps when wiring a new shared service:
 
 1. Container name constant in `internal/services/<service>.go`.
-2. `<Service>ContainerConfig(...)` function that stamps `runtime.StampConfigHash` - same pattern as `mail.go` / `redis_insights.go`.
-3. `Start<Service>` / `Stop<Service>` / `<Service>Status` on `manager.go`.
-4. `Connect<Service>ToProject` **must pass network aliases** so project containers can resolve it by short name.
-5. Add an entry to `AllSharedServices()` in `internal/services/registry.go` - this single registry drives CLI start/stop/status, `services recreate`, and per-project connect/disconnect. **Do not add parallel registries in `cmd/` or `internal/project/`.**
-6. Add the image constant to `internal/config/defaults.go`.
-7. Add the per-project opt-in flag to `ProjectSharedConfig` in `internal/config/config.go` and reference it in the registry's `ProjectEnabled` closure.
+2. `<Service>ContainerConfig(...)` built on `webUIContainerConfig` (`internal/services/webui.go`) - it owns the Traefik label wiring and stamps the config hash; only port/alias/env/volumes vary per service (see `mail.go` for the minimal case, `logs.go` for one with extras).
+3. `Start<Service>` and `<Service>Status` on `manager.go`. No per-service Stop/Connect/Disconnect methods - those come from the registry closures.
+4. Add an entry to `AllSharedServices()` in `internal/services/registry.go` using `stopClosure` / `connectClosure` / `disconnectClosure` - **`connectClosure` must get the network alias** so project containers can resolve the service by short name. This single registry drives CLI start/stop/status, `services recreate`, and per-project connect/disconnect. **Do not add parallel registries in `cmd/` or `internal/project/`.**
+5. Add the image constant to `internal/config/defaults.go`.
+6. Add the per-project opt-in flag to `ProjectSharedConfig` in `internal/config/config.go` and reference it in the registry's `ProjectEnabled` closure.
 
 ## Gotchas
 

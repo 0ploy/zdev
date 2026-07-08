@@ -25,35 +25,6 @@ type DBUIServiceConfig struct {
 
 // DBUIContainerConfig returns the container configuration for Adminer
 func DBUIContainerConfig(cfg DBUIServiceConfig) runtime.ContainerConfig {
-	dbHost := fmt.Sprintf("db.shared.%s", cfg.Domain)
-
-	labels := map[string]string{
-		"zdev.managed":       "true",
-		"zdev.service":       "db",
-		DozzleVisibilityLabel: "true",
-		DozzleGroupLabel:      DozzleSharedGroup,
-
-		// Enable Traefik routing for web UI
-		"traefik.enable":         "true",
-		"traefik.docker.network": SharedNetworkName,
-
-		// HTTP router for web UI
-		"traefik.http.routers.zdev-db.rule":        fmt.Sprintf("Host(`%s`)", dbHost),
-		"traefik.http.routers.zdev-db.entrypoints": "http",
-		"traefik.http.routers.zdev-db.service":     "zdev-db",
-
-		// Service pointing to Adminer web UI port
-		"traefik.http.services.zdev-db.loadbalancer.server.port": "8080",
-	}
-
-	// Add HTTPS router if TLS is enabled
-	if cfg.TLSEnabled {
-		labels["traefik.http.routers.zdev-db-https.rule"] = fmt.Sprintf("Host(`%s`)", dbHost)
-		labels["traefik.http.routers.zdev-db-https.entrypoints"] = "https"
-		labels["traefik.http.routers.zdev-db-https.tls"] = "true"
-		labels["traefik.http.routers.zdev-db-https.service"] = "zdev-db"
-	}
-
 	var volumes []runtime.VolumeMount
 
 	// Mount the servers.php file for the login-servers plugin
@@ -65,20 +36,21 @@ func DBUIContainerConfig(cfg DBUIServiceConfig) runtime.ContainerConfig {
 		})
 	}
 
-	out := runtime.ContainerConfig{
-		Name:        DBUIContainerName,
-		Image:       cfg.Image,
-		NetworkName: SharedNetworkName,
-		Aliases:     []string{"adminer"},
-		Labels:      labels,
-		Volumes:     volumes,
+	return webUIContainerConfig(webUIConfig{
+		ContainerName: DBUIContainerName,
+		Service:       "db",
+		Subdomain:     "db",
+		Alias:         "adminer",
+		Port:          "8080",
+		Image:         cfg.Image,
+		Domain:        cfg.Domain,
+		TLSEnabled:    cfg.TLSEnabled,
+		Volumes:       volumes,
 		Env: map[string]string{
 			// Default to no specific database type - user selects in UI
 			"ADMINER_DEFAULT_SERVER": "",
 		},
-	}
-	runtime.StampConfigHash(&out)
-	return out
+	})
 }
 
 // GetAdminerConfigDir returns the path to the Adminer config directory

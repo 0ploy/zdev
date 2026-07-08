@@ -445,20 +445,8 @@ func unionPortSets(a, b []int) []int {
 	return out
 }
 
-func (m *Manager) StopRouter(ctx context.Context) error {
-	return m.stopService(ctx, RouterContainerName, "Router")
-}
-
 func (m *Manager) RouterStatus(ctx context.Context) (*ServiceStatus, error) {
 	return m.getServiceStatus(ctx, RouterContainerName, "Router")
-}
-
-func (m *Manager) ConnectRouterToProject(ctx context.Context, projectNetwork string) error {
-	return m.connectServiceToProject(ctx, RouterContainerName, "Router", projectNetwork, m.RouterStatus, "router")
-}
-
-func (m *Manager) DisconnectRouterFromProject(ctx context.Context, projectNetwork string) error {
-	return m.disconnectServiceFromProject(ctx, RouterContainerName, "Router", projectNetwork)
 }
 
 // =============================================================================
@@ -475,20 +463,8 @@ func (m *Manager) StartMail(ctx context.Context) error {
 	})
 }
 
-func (m *Manager) StopMail(ctx context.Context) error {
-	return m.stopService(ctx, MailContainerName, "Mail")
-}
-
 func (m *Manager) MailStatus(ctx context.Context) (*ServiceStatus, error) {
 	return m.getServiceStatus(ctx, MailContainerName, "Mail")
-}
-
-func (m *Manager) ConnectMailToProject(ctx context.Context, projectNetwork string) error {
-	return m.connectServiceToProject(ctx, MailContainerName, "Mail", projectNetwork, m.MailStatus, "mail")
-}
-
-func (m *Manager) DisconnectMailFromProject(ctx context.Context, projectNetwork string) error {
-	return m.disconnectServiceFromProject(ctx, MailContainerName, "Mail", projectNetwork)
 }
 
 // =============================================================================
@@ -513,26 +489,8 @@ func (m *Manager) StartDBUI(ctx context.Context) error {
 	})
 }
 
-func (m *Manager) StopDBUI(ctx context.Context) error {
-	return m.stopService(ctx, DBUIContainerName, "DBUI")
-}
-
 func (m *Manager) DBUIStatus(ctx context.Context) (*ServiceStatus, error) {
 	return m.getServiceStatus(ctx, DBUIContainerName, "DBUI")
-}
-
-func (m *Manager) ConnectDBUIToProject(ctx context.Context, projectNetwork string) error {
-	err := m.connectServiceToProject(ctx, DBUIContainerName, "DBUI", projectNetwork, m.DBUIStatus, "adminer")
-	// Update Adminer servers list on connect
-	_ = UpdateAdminerServers(ctx)
-	return err
-}
-
-func (m *Manager) DisconnectDBUIFromProject(ctx context.Context, projectNetwork string) error {
-	err := m.disconnectServiceFromProject(ctx, DBUIContainerName, "DBUI", projectNetwork)
-	// Update Adminer servers list on disconnect
-	_ = UpdateAdminerServers(ctx)
-	return err
 }
 
 // =============================================================================
@@ -549,20 +507,8 @@ func (m *Manager) StartRedisInsights(ctx context.Context) error {
 	})
 }
 
-func (m *Manager) StopRedisInsights(ctx context.Context) error {
-	return m.stopService(ctx, RedisInsightsContainerName, "RedisInsights")
-}
-
 func (m *Manager) RedisInsightsStatus(ctx context.Context) (*ServiceStatus, error) {
 	return m.getServiceStatus(ctx, RedisInsightsContainerName, "RedisInsights")
-}
-
-func (m *Manager) ConnectRedisInsightsToProject(ctx context.Context, projectNetwork string) error {
-	return m.connectServiceToProject(ctx, RedisInsightsContainerName, "RedisInsights", projectNetwork, m.RedisInsightsStatus, "redis-insights")
-}
-
-func (m *Manager) DisconnectRedisInsightsFromProject(ctx context.Context, projectNetwork string) error {
-	return m.disconnectServiceFromProject(ctx, RedisInsightsContainerName, "RedisInsights", projectNetwork)
 }
 
 // =============================================================================
@@ -580,18 +526,6 @@ func (m *Manager) StartLogs(ctx context.Context) error {
 	})
 }
 
-func (m *Manager) StopLogs(ctx context.Context) error {
-	return m.stopService(ctx, LogsContainerName, "Logs")
-}
-
 func (m *Manager) LogsStatus(ctx context.Context) (*ServiceStatus, error) {
 	return m.getServiceStatus(ctx, LogsContainerName, "Logs")
-}
-
-func (m *Manager) ConnectLogsToProject(ctx context.Context, projectNetwork string) error {
-	return m.connectServiceToProject(ctx, LogsContainerName, "Logs", projectNetwork, m.LogsStatus, "logs")
-}
-
-func (m *Manager) DisconnectLogsFromProject(ctx context.Context, projectNetwork string) error {
-	return m.disconnectServiceFromProject(ctx, LogsContainerName, "Logs", projectNetwork)
 }

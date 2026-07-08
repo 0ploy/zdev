@@ -154,25 +154,26 @@ func TestManager_RouterLifecycle(t *testing.T) {
 		}
 		defer docker.RemoveNetwork(ctx, testNetwork)
 
-		if err := mgr.ConnectRouterToProject(ctx, testNetwork); err != nil {
-			t.Fatalf("ConnectRouterToProject failed: %v", err)
+		router := defFor(t, RouterContainerName)
+		if err := router.Connect(ctx, mgr, testNetwork); err != nil {
+			t.Fatalf("router Connect failed: %v", err)
 		}
 
 		// Connect again should not error
-		if err := mgr.ConnectRouterToProject(ctx, testNetwork); err != nil {
-			t.Fatalf("ConnectRouterToProject (second time) failed: %v", err)
+		if err := router.Connect(ctx, mgr, testNetwork); err != nil {
+			t.Fatalf("router Connect (second time) failed: %v", err)
 		}
 
 		// Disconnect
-		if err := mgr.DisconnectRouterFromProject(ctx, testNetwork); err != nil {
-			t.Fatalf("DisconnectRouterFromProject failed: %v", err)
+		if err := router.Disconnect(ctx, mgr, testNetwork); err != nil {
+			t.Fatalf("router Disconnect failed: %v", err)
 		}
 	})
 
 	// Test: Stop router
 	t.Run("StopRouter", func(t *testing.T) {
-		if err := mgr.StopRouter(ctx); err != nil {
-			t.Fatalf("StopRouter failed: %v", err)
+		if err := defFor(t, RouterContainerName).Stop(ctx, mgr); err != nil {
+			t.Fatalf("router Stop failed: %v", err)
 		}
 
 		status, err := mgr.RouterStatus(ctx)
@@ -467,25 +468,26 @@ func TestManager_DBUILifecycle(t *testing.T) {
 		}
 		defer docker.RemoveNetwork(ctx, testNetwork)
 
-		if err := mgr.ConnectDBUIToProject(ctx, testNetwork); err != nil {
-			t.Fatalf("ConnectDBUIToProject failed: %v", err)
+		dbui := defFor(t, DBUIContainerName)
+		if err := dbui.Connect(ctx, mgr, testNetwork); err != nil {
+			t.Fatalf("DBUI Connect failed: %v", err)
 		}
 
 		// Connect again should not error
-		if err := mgr.ConnectDBUIToProject(ctx, testNetwork); err != nil {
-			t.Fatalf("ConnectDBUIToProject (second time) failed: %v", err)
+		if err := dbui.Connect(ctx, mgr, testNetwork); err != nil {
+			t.Fatalf("DBUI Connect (second time) failed: %v", err)
 		}
 
 		// Disconnect
-		if err := mgr.DisconnectDBUIFromProject(ctx, testNetwork); err != nil {
-			t.Fatalf("DisconnectDBUIFromProject failed: %v", err)
+		if err := dbui.Disconnect(ctx, mgr, testNetwork); err != nil {
+			t.Fatalf("DBUI Disconnect failed: %v", err)
 		}
 	})
 
 	// Test: Stop DBUI
 	t.Run("StopDBUI", func(t *testing.T) {
-		if err := mgr.StopDBUI(ctx); err != nil {
-			t.Fatalf("StopDBUI failed: %v", err)
+		if err := defFor(t, DBUIContainerName).Stop(ctx, mgr); err != nil {
+			t.Fatalf("DBUI Stop failed: %v", err)
 		}
 
 		status, err := mgr.DBUIStatus(ctx)
@@ -497,4 +499,18 @@ func TestManager_DBUILifecycle(t *testing.T) {
 		}
 	})
 
+}
+
+// defFor returns the registry definition for a shared service by
+// container name, so lifecycle tests exercise the exact closures the
+// CLI and per-project connect flow use.
+func defFor(t *testing.T, containerName string) SharedServiceDef {
+	t.Helper()
+	for _, def := range AllSharedServices() {
+		if def.ContainerName == containerName {
+			return def
+		}
+	}
+	t.Fatalf("no shared service definition for %s", containerName)
+	return SharedServiceDef{}
 }
