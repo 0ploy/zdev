@@ -10,6 +10,7 @@ import (
 
 	"github.com/0ploy/zdev/internal/config"
 	"github.com/0ploy/zdev/internal/firstrun"
+	"github.com/0ploy/zdev/internal/secrets"
 	"github.com/0ploy/zdev/internal/services"
 	"github.com/0ploy/zdev/internal/ssl"
 	"github.com/0ploy/zdev/internal/tools"
@@ -186,6 +187,9 @@ func runSystemcheck(cmd *cobra.Command, args []string) error {
 	// Check mutagen (lazily downloaded when sync is enabled)
 	checkMutagen(ctx, globalCfg)
 
+	// Check 1Password CLI (user-installed, only needed for op:// refs)
+	issues += check1Password(ctx)
+
 	// Handle --install-ca flag
 	if installCAFlag && mkcertPath != "" {
 		fmt.Println()
@@ -355,6 +359,84 @@ func checkMutagen(ctx context.Context, cfg *config.GlobalConfig) {
 		version = "unknown"
 	}
 	fmt.Printf("%s (%s %s)\n", statusText("OK"), path, version)
+}
+
+// check1Password reports the 1Password CLI status. op is user-installed
+// (never auto-downloaded) and only required when the current project's
+// config contains op-env:// secret references, so absence is
+// informational unless such a project is present. Environments need the
+// beta CLI build.
+func check1Password(ctx context.Context) int {
+	fmt.Print("1password:     ")
+
+	// Detect whether the current directory's project uses op-env:// refs.
+	// Errors are ignored: systemcheck often runs outside a project.
+	usesRefs := false
+	if dir, err := config.FindProjectDir(); err == nil {
+		if cfg, err := config.LoadProject(dir); err == nil {
+			for _, svc := range cfg.Services {
+				if projectServiceUsesSecretRefs(cfg.Environment, svc.Environment) {
+					usesRefs = true
+					break
+				}
+			}
+		}
+	}
+
+	path, found := tools.FindInPath("op")
+	if !found {
+		if usesRefs {
+			fmt.Printf("%s (not found in PATH but this project uses op-env:// secret references)\n", statusText("MISSING"))
+			fmt.Println("               Install it: brew install 1password-cli@beta")
+			return 1
+		}
+		fmt.Printf("%s (not installed - only needed for op-env:// secret references)\n", statusText("SKIP"))
+		return 0
+	}
+
+	version := firstLine(tools.RunTool(ctx, path, "--version"))
+	if version == "" {
+		version = "unknown"
+	}
+
+	// Environments are beta-CLI-only; a stable build has no
+	// `op environment` command family.
+	if _, err := tools.RunTool(ctx, path, "environment", "--help"); err != nil {
+		if usesRefs {
+			fmt.Printf("%s (%s %s - no Environments support, this project needs it)\n", statusText("MISSING"), path, version)
+			fmt.Println("               Install the beta build: brew install 1password-cli@beta")
+			return 1
+		}
+		fmt.Printf("%s (%s %s - stable build, Environments need the beta)\n", statusText("SKIP"), path, version)
+		return 0
+	}
+
+	if usesRefs {
+		// whoami fails fast without prompting when no session exists.
+		if _, err := tools.RunTool(ctx, path, "whoami"); err != nil {
+			fmt.Printf("%s (%s %s - not signed in, run: op signin)\n", statusText("SKIP"), path, version)
+			return 0
+		}
+	}
+
+	fmt.Printf("%s (%s %s)\n", statusText("OK"), path, version)
+	return 0
+}
+
+// projectServiceUsesSecretRefs reports whether the merged project+service
+// env contains op-env:// references.
+func projectServiceUsesSecretRefs(projectEnv, serviceEnv map[string]string) bool {
+	for _, v := range projectEnv {
+		if secrets.IsRef(v) {
+			return true
+		}
+	}
+	for _, v := range serviceEnv {
+		if secrets.IsRef(v) {
+			return true
+		}
+	}
+	return false
 }
 
 // firstLine returns the first non-empty line of out, ignoring err. mkcert/just

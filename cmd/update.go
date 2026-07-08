@@ -10,8 +10,9 @@ import (
 )
 
 var (
-	updateBuild   bool
-	updateNoBuild bool
+	updateBuild          bool
+	updateNoBuild        bool
+	updateRefreshSecrets bool
 )
 
 var updateCmd = &cobra.Command{
@@ -33,13 +34,18 @@ Changes detected (via a config hash stamped on each container):
 - Command / working directory changes
 - Routing configuration (host_port, protocol, port, domain)
 - Labels, network aliases, and published ports
-- Stale dockerfile: images (Dockerfile contents changed)`,
+- Stale dockerfile: images (Dockerfile contents changed)
+
+Rotated 1Password secrets (op-env:// references in environment:) are NOT
+detected automatically - pass --refresh-secrets to check 1Password and
+recreate only the services whose secret values changed.`,
 	RunE: runUpdate,
 }
 
 func init() {
 	updateCmd.Flags().BoolVar(&updateBuild, "build", false, "Force rebuilding images for services with a dockerfile: config")
 	updateCmd.Flags().BoolVar(&updateNoBuild, "no-build", false, "Never build images; fail if a dockerfile: image is missing")
+	updateCmd.Flags().BoolVar(&updateRefreshSecrets, "refresh-secrets", false, "Re-resolve op-env:// secret references and recreate services whose values rotated")
 	updateCmd.MarkFlagsMutuallyExclusive("build", "no-build")
 	rootCmd.AddCommand(updateCmd)
 }
@@ -47,6 +53,7 @@ func init() {
 func runUpdate(cmd *cobra.Command, args []string) error {
 	return withProject(5*time.Minute, func(ctx context.Context, proj *project.Project) error {
 		proj.BuildMode = project.BuildModeFromFlags(updateBuild, updateNoBuild)
+		proj.RefreshSecrets = updateRefreshSecrets
 		fmt.Printf("Updating project %s...\n", proj.Config.Name)
 
 		updated, err := proj.Update(ctx)

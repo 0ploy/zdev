@@ -2,7 +2,7 @@
 
 **Ever seen a developer and an AI agent fall in love with a dev environment?** 🧑‍💻🤖❤️
 
-zdev is a local development tool that gets you from `git clone` to coding in seconds. One command starts your entire project - HTTPS, routing, shared services, and all. Simple enough for any AI coding agent to operate, powerful enough for complex multi-service setups.
+zdev is a local development tool that gets you from `git clone` to coding in seconds. One command starts your entire project - HTTPS, routing, shared services, and secrets management. Simple enough for any AI coding agent to operate, powerful enough for complex multi-service setups.
 
 ```bash
 cd my-project
@@ -19,7 +19,11 @@ zdev start
 Every project runs in its own isolated network. zdev gives each project its own HTTPS subdomain - no port conflicts, no SSL setup. Shared services like mail catching, database browsing, and Redis inspection are available to all projects automatically.
 
 > [!IMPORTANT]
+> ### Security
+>
 > **Your code runs in containers, not on your machine.** Every `pnpm install`, `composer install`, and dev server runs inside an isolated Docker container. If a malicious npm package tries to steal your SSH keys, read your browser cookies, or encrypt your files - it can't. It's trapped in a throwaway container with no access to your host. In an era where supply chain attacks on npm, PyPI, and Packagist are increasingly common, this isn't just convenience - it's protection.
+>
+> **Your secrets live in 1Password, not in `.env` files.** The config you commit holds only `op-env://` references - real values stay in your team's shared [1Password Environment](https://www.1password.dev/environments) and are injected when containers are created. No `.env` handed around over Slack, no plaintext copies drifting on every laptop, nothing to leak when the repo, a backup, or an AI agent reads your config. See [Team Secrets from 1Password](#team-secrets-from-1password).
 
 ![zdev architecture](docs/architecture.png)
 
@@ -32,6 +36,7 @@ zdev gives AI coding agents (Claude Code, Cursor, Copilot) exactly what they nee
 - **Single config file** - `.zdev/config.yaml` is the complete source of truth. One file to read, not five.
 - **Discoverable commands** - `ls .zdev/commands/` reveals all project-specific tasks. No guessing.
 - **`zdev exec app <cmd>`** - Run anything in any container. No container name lookup needed.
+- **No secrets in the loop** - config holds `op-env://` references, not values. Agents read, edit, and commit the full config without ever handling secret material.
 
 ### Agent Integration
 
@@ -51,6 +56,7 @@ This teaches your agent the full zdev CLI, config format, debugging workflows, a
 | Each project configures its own mail, DB tools | Shared services run once, work for all projects |
 | New developer spends a day setting up | Clone, `zdev start`, done |
 | Complex Docker Compose with 100+ lines | Simple config with sensible defaults |
+| Secrets passed around in `.env` files and Slack | Config references 1Password - commit it, clone it, `zdev start` |
 | Slow file sync on macOS | Native-speed file sync, zero config |
 | Malicious packages can access your entire machine | Code runs in isolated containers - supply chain attacks stay sandboxed |
 
@@ -171,6 +177,26 @@ shared:
 ### Automatic HTTPS
 
 Every project and shared service gets locally-trusted HTTPS certificates. Your browser shows a green lock, cookies work with `Secure` flag, and your local environment matches production.
+
+### Team Secrets from 1Password
+
+The classic onboarding wall: the app needs API keys and passwords, so someone digs up the current `.env` and sends it over Slack - and from that moment every developer has their own drifting, plaintext copy. zdev removes the handoff entirely: secrets live in a [1Password Environment](https://www.1password.dev/environments) your team already shares, and the committed config only holds references.
+
+```yaml
+secrets:
+  op-env: b7qmzx3kfpwj4hn2c6t8vydl5a   # your team's 1Password Environment (ID is not secret)
+
+services:
+  app:
+    environment:
+      API_URL: https://example.com/api    # plain values mix freely
+      STRIPE_KEY: op-env://STRIPE_KEY     # resolved from 1Password at container creation
+      DB_PASS: op-env://DB_PASS
+```
+
+A new teammate clones the repo, runs `zdev start`, approves one Touch ID prompt - done. No `.env` to obtain, nothing secret in git. When a secret changes in 1Password, `zdev update --refresh-secrets` recreates exactly the services whose values rotated. Manage the variables as a table in the 1Password app (Developer > Environments), including one-click `.env` import for existing projects.
+
+Day-to-day commands (`start`/`stop`/`restart`/`status`) never contact 1Password, so there are no surprise authorization prompts. Requires the beta 1Password CLI - zdev offers to install it and walks you through sign-in when needed. See the [full reference](#1password-secrets-op-env-references) for CI setup and details.
 
 ### Fast File Sync (macOS)
 
@@ -355,6 +381,8 @@ zdev stop               # Stop containers (keeps them for quick restart)
 zdev stop <service>     # Stop a single service container
 zdev restart            # Stop + start every service
 zdev restart <service>  # Bounce a single service container in-place
+zdev update             # Apply config changes (recreates only drifted services)
+zdev update --refresh-secrets  # Also check 1Password and recreate services with rotated secrets
 zdev down        # Remove containers and network
 zdev down -v     # Remove everything including volumes
 zdev rename <n>  # Rename project, migrate volumes, restart
@@ -552,7 +580,8 @@ mutagen:
 | `name` | string | directory name | Project name, used in domain and container names |
 | `domain` | string | `{name}.0ploy.dev` | Project domain for HTTP routing |
 | `variables` | map | - | Reusable `${VAR}` placeholders substituted throughout the config (not passed to containers) |
-| `environment` | map | - | Environment variables passed to ALL containers |
+| `environment` | map | - | Environment variables passed to ALL containers. Values may reference 1Password Environment variables (`op-env://NAME`) |
+| `secrets.op-env` | string | - | 1Password Environment ID that `op-env://` references resolve against. Not secret, safe to commit |
 | `shared.router` | bool | `true` | Connect to shared Traefik router |
 | `shared.mail` | bool | `true` | Connect to shared Mailpit |
 | `shared.db` | bool | `false` | Connect to shared Adminer |
@@ -569,7 +598,7 @@ mutagen:
 | `command` | string | - | Container command |
 | `working_dir` | string | - | Working directory inside container |
 | `volumes` | list | - | Volume mounts (bind mounts and named volumes) |
-| `environment` | map | - | Env vars for this container (overrides project-level) |
+| `environment` | map | - | Env vars for this container (overrides project-level). Values may reference 1Password Environment variables (`op-env://NAME`) |
 | `routing.protocol` | string | `http` | `http`, `https`, `tcp`, `udp` |
 | `routing.port` | int | 80 (http), 443 (https) | Container port to route to |
 | `routing.host_port` | int | - | Host port for TCP/UDP (required for tcp/udp) |
@@ -603,9 +632,23 @@ When you change any of these values, zdev detects the drift, recreates the sync 
 
 **Built-in variables:** `${PROJECTNAME}`, `${PROJECTPATH}`, `${PROJECTDIR}`, `${ZDEV_DOMAIN}`, `${ZDEV_HOME}`, `${USER}`, `${HOME}`, plus all host environment variables. User-defined `variables` can reference built-in ones (e.g. `DB_NAME: ${PROJECTNAME}_db`).
 
+#### 1Password secrets (`op-env://` references)
+
+The concept and a full example live in [Team Secrets from 1Password](#team-secrets-from-1password). The precise rules:
+
+- **`secrets.op-env`** holds the 1Password Environment ID (app: Developer > Environments > Manage environment > **Copy environment ID**). Neither the ID nor the `op-env://` references contain secret material - both are safe to commit.
+- References work in project-level and service-level `environment:`. The referenced key may differ from the env var name (`DB_PASS: op-env://MYSQL_PASSWORD`), and `${VAR}` substitution composes (it runs first, at config load).
+- A reference must be the **entire** env value - no mid-string interpolation (`mysql://dev:op-env://DB_PASS@db/...` does not work). For composite values like a `DATABASE_URL`, store the whole assembled string in the Environment.
+- Resolution happens only when a container is **created**; the whole Environment is fetched in one `op` call per operation (at most one authorization prompt), and values are never written to disk by zdev. `start` of an existing container, `restart`, `status`, and no-op `update` never contact 1Password.
+- **Rotation is not auto-detected.** `zdev update --refresh-secrets` checks 1Password and recreates only the services whose values changed. `zdev restart` does NOT refresh secrets.
+- Requires the **beta** CLI build: `brew install 1password-cli@beta` (2.33.0-beta.02+; Environments don't exist in the stable build). If `op` is missing, zdev offers the install; if you're signed out, it walks you through `op signin`. `zdev systemcheck` reports CLI, Environments support, and sign-in state.
+- CI / non-interactive: create a [service account](https://www.1password.dev/service-accounts/) with read access to the Environment and set `OP_SERVICE_ACCOUNT_TOKEN` - zdev passes it through and never prompts when stdin isn't a terminal.
+- Values must be single-line; duplicate keys in the Environment resolve to the last occurrence.
+- Like any container env var (docker-compose included), resolved values are visible to `docker inspect` on your machine.
+
 #### Local overrides (`.zdev/local/config.yaml`)
 
-If `.zdev/local/config.yaml` exists, it is deep-merged on top of `.zdev/config.yaml` before variable substitution. Use it for per-developer settings that shouldn't be committed (secrets, machine-specific tweaks, override images). Add `.zdev/local/` to `.gitignore`.
+If `.zdev/local/config.yaml` exists, it is deep-merged on top of `.zdev/config.yaml` before variable substitution. Use it for per-developer settings that shouldn't be committed (machine-specific tweaks, override images, personal secrets - though for team secrets, prefer `op-env://` references above). Add `.zdev/local/` to `.gitignore`.
 
 Merge rules:
 - **Maps** merge recursively - e.g. add a single env var to a service without copying the rest.

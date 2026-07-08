@@ -163,6 +163,8 @@ mutagen:
 
 **`environment`** (project-level) defines environment variables passed to ALL containers. **`services.<name>.environment`** (service-level) defines environment variables for that specific container only, and overrides project-level env vars with the same name.
 
+**1Password secrets:** projects can wire a 1Password Environment via `secrets.op-env: <environment-id>` and reference its variables in env values as `op-env://<NAME>`; zdev resolves them via the 1Password CLI (beta) when the container is created. Neither the ID nor the references contain secret material, so they commit safely. Rotated secrets are picked up with `zdev update --refresh-secrets`. Templates should generally NOT hardcode `secrets.op-env` (each team has its own Environment) - document it as a post-create step instead.
+
 Built-in variables are always available: `${PROJECTDIR}`, `${PROJECTPATH}`, `${PROJECTNAME}`, `${ZDEV_DOMAIN}`, `${ZDEV_HOME}`, `${USER}`, `${HOME}`, plus all host environment variables. User-defined `variables` can reference built-in ones (e.g. `DB_NAME: ${PROJECTNAME}_db`).
 
 **Local overrides:** if `.zdev/local/config.yaml` exists, it deep-merges on top of the committed `config.yaml` before substitution. Templates should add `.zdev/local/` to `.gitignore` so per-developer secrets and tweaks (e.g. `variables: { STRIPE_KEY: ... }`) stay off the repo. Maps merge recursively; scalars and slices in the local file replace the base value.

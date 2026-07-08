@@ -11,6 +11,7 @@ import (
 	"github.com/0ploy/zdev/internal/config"
 	"github.com/0ploy/zdev/internal/mutagen"
 	"github.com/0ploy/zdev/internal/runtime"
+	"github.com/0ploy/zdev/internal/secrets"
 	"github.com/0ploy/zdev/internal/services"
 	"github.com/0ploy/zdev/internal/state"
 )
@@ -21,10 +22,19 @@ type Project struct {
 	Config  *config.ProjectConfig
 	Runtime runtime.Runtime
 
+	// Secrets resolves op:// references in service env at container
+	// creation time. Nil falls back to the 1Password CLI resolver.
+	Secrets secrets.Resolver
+
 	// BuildMode controls when service images with a `dockerfile:` config
 	// are rebuilt. Set from the --build / --no-build flags; zero value is
 	// BuildIfStale.
 	BuildMode BuildMode
+
+	// RefreshSecrets makes Update re-resolve op:// references and
+	// recreate services whose resolved values changed since creation.
+	// Set from the --refresh-secrets flag.
+	RefreshSecrets bool
 }
 
 // ExecOptions contains options for executing a command in a container
@@ -54,6 +64,7 @@ func LoadFromDir(dir string) (*Project, error) {
 		Dir:     dir,
 		Config:  cfg,
 		Runtime: runtime.NewDockerCLI(),
+		Secrets: secrets.NewOnePasswordCLI(),
 	}, nil
 }
 
@@ -441,6 +452,13 @@ func (p *Project) startServiceWithMutagen(ctx context.Context, name string, svc 
 	// Build container config (single source of truth)
 	cfg := p.buildContainerConfig(name, svc, mutagenEnabled, mutagenMounts)
 
+	// Resolve op:// secret references AFTER the config hash is stamped
+	// (hash covers the unresolved refs, so the update compare path never
+	// needs 1Password) and before the container is created.
+	if err := p.resolveSecretEnv(ctx, name, &cfg); err != nil {
+		return err
+	}
+
 	// Create and start
 	fmt.Printf("Creating service %s...\n", name)
 	if _, err := p.Runtime.CreateContainer(ctx, cfg); err != nil {
@@ -760,6 +778,20 @@ func (p *Project) Update(ctx context.Context) (bool, error) {
 			stale, err := p.serviceBuildStale(ctx, serviceName, svc)
 			if err != nil {
 				return false, err
+			}
+			needsRecreate = stale
+		}
+
+		// --refresh-secrets: resolve op:// refs fresh and recreate only
+		// when the values actually rotated (compared via the stamped
+		// secrets hash). Without the flag secrets stay untouched.
+		if !needsRecreate && p.RefreshSecrets {
+			stale, err := p.serviceSecretsStale(ctx, serviceName, svc)
+			if err != nil {
+				return false, err
+			}
+			if !stale && serviceUsesSecretRefs(p.Config.Environment, svc) {
+				fmt.Printf("Secrets unchanged for service %s\n", serviceName)
 			}
 			needsRecreate = stale
 		}

@@ -15,6 +15,14 @@ import (
 // would produce, and the container must be recreated.
 const ConfigHashLabel = "zdev.config-hash"
 
+// SecretsHashLabel carries a sha256 over the resolved secret values a
+// container was created with (see secrets.HashValues). It lets
+// `zdev update --refresh-secrets` detect rotation without resolving on
+// the regular compare path. Excluded from the config hash alongside
+// ConfigHashLabel: it is stamped after resolution, which happens after
+// StampConfigHash, and must not perturb drift detection.
+const SecretsHashLabel = "zdev.secrets-hash"
+
 // ComputeConfigHash returns a deterministic sha256 of the fields that
 // define container identity for recreation purposes. The ConfigHashLabel
 // itself is excluded so the hash doesn't depend on its own value.
@@ -27,7 +35,7 @@ func ComputeConfigHash(cfg ContainerConfig) string {
 
 	labelPairs := make([]string, 0, len(cfg.Labels))
 	for k, v := range cfg.Labels {
-		if k == ConfigHashLabel {
+		if k == ConfigHashLabel || k == SecretsHashLabel {
 			continue
 		}
 		labelPairs = append(labelPairs, k+"="+v)

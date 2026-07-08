@@ -8,6 +8,7 @@ import (
 
 	"github.com/0ploy/zdev/internal/config"
 	"github.com/0ploy/zdev/internal/runtime"
+	"github.com/0ploy/zdev/internal/secrets"
 )
 
 // setupTestEnv creates a temporary ZDEV_HOME and HOME directory with a
@@ -59,6 +60,7 @@ func newTestProject(mock *runtime.MockRuntime) *Project {
 			},
 		},
 		Runtime: mock,
+		Secrets: &secrets.Mock{},
 	}
 }
 

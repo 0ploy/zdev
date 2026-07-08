@@ -10,6 +10,9 @@ description: |
   Also trigger when the user wants to create an zdev template, scaffold a new project template,
   build a starter template for a framework, or asks about `zdev create`, template authoring,
   setup.just files, or the .setup-complete pattern.
+  Also trigger for secrets in the dev environment: 1Password integration, `op-env://` references,
+  `secrets.op-env`, moving API keys or passwords out of committed config or `.env` files,
+  rotating secrets, or "how do I share dev secrets with my team".
 ---
 
 # zdev - Local Development Environment
@@ -189,6 +192,12 @@ containers. Use for values shared across services (DB passwords, names).
 **Environment** - project-level `environment:` goes to ALL containers. `services.<name>.environment`
 goes to THAT container only and overrides project-level.
 
+**1Password secrets** - env values like `API_KEY: op-env://API_KEY` resolve from a 1Password
+Environment (wired once via `secrets.op-env: <environment-id>`, which is not secret and commits
+safely). Resolution happens only at container creation; rotation is picked up with
+`zdev update --refresh-secrets` (NOT by `zdev restart`). For setup, the resolution/refresh rules,
+CI via service accounts, and troubleshooting, read `references/secrets.md`.
+
 **Built-in variables:** `${PROJECTPATH}`, `${PROJECTNAME}`, `${PROJECTDIR}`, `${ZDEV_DOMAIN}`, `${ZDEV_HOME}` + all host env vars.
 
 **Volumes** - bind mounts (start with `/`, `.`, `${`) sync host dirs into containers. Named volumes
@@ -315,7 +324,7 @@ seed data, asset build).
 6. **`mutagen.ignore`** for dependency and build artifact dirs: `node_modules`, `.pnpm-store`,
    `vendor`, `var/cache`, `.nuxt`, `.next`, framework-specific build output. Without this, installs
    are 5–10× slower on macOS.
-7. **`.gitignore`:** add `.zdev/local/` (always) and `.pnpm-store/` (pnpm projects). `.zdev/local/config.yaml` deep-merges on top of `.zdev/config.yaml` before variable substitution, so per-developer secrets and overrides go there (e.g. `variables: { STRIPE_KEY: ... }` referenced as `${STRIPE_KEY}` in the committed config).
+7. **`.gitignore`:** add `.zdev/local/` (always) and `.pnpm-store/` (pnpm projects). `.zdev/local/config.yaml` deep-merges on top of `.zdev/config.yaml` before variable substitution, so per-developer overrides go there (e.g. `variables: { STRIPE_KEY: ... }` referenced as `${STRIPE_KEY}` in the committed config). For secrets the whole team needs, prefer 1Password Environment references (`op-env://`, see `references/secrets.md`) over per-developer local copies - the existing `.env` can be imported into an Environment directly.
 8. **`zdev start`, then verify in a browser** (not just curl): check the console and network tabs
    for mixed-content, missing assets, JS errors. `curl 200` lies for HTML apps.
 9. **Document** `zdev start` in the project README and `zdev exec app <cmd>` patterns in its
