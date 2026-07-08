@@ -11,10 +11,12 @@ Local development environment framework for web applications. Go CLI that shells
 - **Never commit, push, or tag without explicit user confirmation.** Show the proposed commit message and wait for approval before `git commit`, `git push`, or `git tag`. Never add "Co-Authored-By" lines.
 
 Release process:
-1. Add `## vX.Y.Z` section at the top of `CHANGELOG.md`.
+1. Add a `## vX.Y.Z` section at the top of `CHANGELOG.md` covering the user-visible changes since the last tag (`git log <last-tag>..HEAD` for the candidates).
 2. `git add CHANGELOG.md && git commit -m "Release vX.Y.Z"`
 3. `git tag vX.Y.Z && git push origin main && git push origin vX.Y.Z`
 4. CI builds darwin/linux (arm64/amd64) binaries and creates the GitHub Release from the changelog.
+
+**CHANGELOG entries are for user-visible changes only**: new features, changed behavior, bug fixes a user could hit. Refactors, dead-code cleanup, test/docs/CI work get NO entry - the changelog is a curated story for users, not a commit log. Decide per change; most commits won't warrant an entry.
 
 ## Style
 
