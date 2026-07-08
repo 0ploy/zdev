@@ -187,7 +187,7 @@ func runSystemcheck(cmd *cobra.Command, args []string) error {
 	// Check mutagen (lazily downloaded when sync is enabled)
 	checkMutagen(ctx, globalCfg)
 
-	// Check 1Password CLI (user-installed, only needed for op:// refs)
+	// Check 1Password CLI (user-installed, only needed for op-env secrets)
 	issues += check1Password(ctx)
 
 	// Handle --install-ca flag
