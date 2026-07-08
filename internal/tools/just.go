@@ -37,11 +37,6 @@ func NewJust(binaryPath string) *Just {
 	return &Just{binaryPath: binaryPath}
 }
 
-// BinaryPath returns the path to the just binary
-func (j *Just) BinaryPath() string {
-	return j.binaryPath
-}
-
 // Run executes a justfile with the given arguments.
 // This runs interactively, attaching stdin/stdout/stderr.
 // workingDir is the directory recipes execute in - typically the project
@@ -100,10 +95,5 @@ func (j *Just) ListRecipes(ctx context.Context, justfile string) ([]string, erro
 		}
 	}
 	return recipes, nil
-}
-
-// Version returns the just version
-func (j *Just) Version(ctx context.Context) (string, error) {
-	return RunTool(ctx, j.binaryPath, "--version")
 }
 

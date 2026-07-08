@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/0ploy/zdev/internal/config"
 )
 
 // ToolInfo describes a downloadable tool
@@ -32,22 +34,12 @@ type Manager struct {
 
 // NewManager creates a new tool manager
 func NewManager() (*Manager, error) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get home directory: %w", err)
-	}
-
-	binDir := filepath.Join(homeDir, ".zdev", "bin")
+	binDir := filepath.Join(config.GetZdevHome(), "bin")
 	if err := os.MkdirAll(binDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create bin directory: %w", err)
 	}
 
 	return &Manager{binDir: binDir}, nil
-}
-
-// BinDir returns the tool binary directory path
-func (m *Manager) BinDir() string {
-	return m.binDir
 }
 
 // FindInPath checks if a tool exists in system PATH
@@ -280,24 +272,6 @@ func JustOS(goos string) string {
 	default:
 		return goos
 	}
-}
-
-// GetArch returns the architecture string for download URLs
-// Some tools use different naming conventions
-func GetArch() string {
-	switch runtime.GOARCH {
-	case "amd64":
-		return "amd64"
-	case "arm64":
-		return "arm64"
-	default:
-		return runtime.GOARCH
-	}
-}
-
-// GetOS returns the OS string for download URLs
-func GetOS() string {
-	return runtime.GOOS
 }
 
 // RunTool executes a tool with the given arguments

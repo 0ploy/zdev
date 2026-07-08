@@ -24,8 +24,8 @@ func TestParseRef(t *testing.T) {
 		"op-env://short/KEY",
 	}
 	for _, ref := range valid {
-		if err := ValidateRef(ref); err != nil {
-			t.Errorf("ValidateRef(%q) = %v, want nil", ref, err)
+		if _, _, err := ParseRef(ref); err != nil {
+			t.Errorf("ParseRef(%q) = %v, want nil", ref, err)
 		}
 	}
 
@@ -41,8 +41,8 @@ func TestParseRef(t *testing.T) {
 		"API_KEY",
 	}
 	for _, ref := range invalid {
-		if err := ValidateRef(ref); err == nil {
-			t.Errorf("ValidateRef(%q) = nil, want error", ref)
+		if _, _, err := ParseRef(ref); err == nil {
+			t.Errorf("ParseRef(%q) = nil, want error", ref)
 		}
 	}
 }

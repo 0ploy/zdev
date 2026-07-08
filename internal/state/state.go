@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/0ploy/zdev/internal/config"
 	"gopkg.in/yaml.v3"
 )
 
@@ -50,12 +51,7 @@ type Manager struct {
 
 // DefaultManager returns a manager using the default state file location
 func DefaultManager() (*Manager, error) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get home directory: %w", err)
-	}
-
-	zdevDir := filepath.Join(homeDir, ".zdev")
+	zdevDir := config.GetZdevHome()
 	if err := os.MkdirAll(zdevDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create .zdev directory: %w", err)
 	}
@@ -76,14 +72,6 @@ func (m *Manager) Load() (*State, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.loadLocked()
-}
-
-// Save writes the state file. Rarely needed by external callers -
-// prefer Mutate for read-modify-write operations.
-func (m *Manager) Save(state *State) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.saveLocked(state)
 }
 
 // Mutate atomically loads the state, applies fn, and saves the result.

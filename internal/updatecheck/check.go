@@ -31,6 +31,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"time"
+
+	"github.com/0ploy/zdev/internal/config"
 )
 
 const (
@@ -312,11 +314,7 @@ func defaultCanInstall() bool {
 // CanonicalPath returns the user-owned location where the real zdev binary
 // should live. Callers typically pair this with a symlink in a PATH dir.
 func CanonicalPath() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".zdev", "bin", "zdev"), nil
+	return filepath.Join(config.GetZdevHome(), "bin", "zdev"), nil
 }
 
 // shouldSkip returns true for cases where an update check is unwanted:
@@ -332,11 +330,7 @@ func shouldSkip(v string) bool {
 }
 
 func cachePath() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".zdev", "update-check.json"), nil
+	return filepath.Join(config.GetZdevHome(), "update-check.json"), nil
 }
 
 func loadCache(path string) (*cache, error) {

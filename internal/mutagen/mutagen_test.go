@@ -16,15 +16,6 @@ func TestNew(t *testing.T) {
 	}
 }
 
-func TestBinaryPath(t *testing.T) {
-	m := New("/custom/path/to/mutagen")
-
-	path := m.BinaryPath()
-	if path != "/custom/path/to/mutagen" {
-		t.Errorf("expected '/custom/path/to/mutagen', got %q", path)
-	}
-}
-
 func TestMergeIgnores(t *testing.T) {
 	tests := []struct {
 		name        string

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/0ploy/zdev/internal/config"
 	"github.com/0ploy/zdev/internal/tools"
 )
 
@@ -24,12 +25,7 @@ type CertManager struct {
 
 // NewCertManager creates a new certificate manager
 func NewCertManager(mkcertPath string) (*CertManager, error) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get home directory: %w", err)
-	}
-
-	certsDir := filepath.Join(homeDir, ".zdev", "certs")
+	certsDir := config.GetCertsDir()
 	if err := os.MkdirAll(certsDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create certs directory: %w", err)
 	}
@@ -38,11 +34,6 @@ func NewCertManager(mkcertPath string) (*CertManager, error) {
 		certsDir: certsDir,
 		mkcert:   tools.NewMkcert(mkcertPath),
 	}, nil
-}
-
-// CertsDir returns the certificates directory path
-func (c *CertManager) CertsDir() string {
-	return c.certsDir
 }
 
 // GetCertPaths returns paths to cert and key files
@@ -116,18 +107,6 @@ func (c *CertManager) VerifyCertCA(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
-// GenerateCerts generates new certificates, overwriting any existing ones
-func (c *CertManager) GenerateCerts(ctx context.Context, domain string) (string, string, error) {
-	certPath, keyPath := c.GetCertPaths()
-	domains := buildDomainList(domain)
-
-	if err := c.mkcert.GenerateCert(ctx, certPath, keyPath, domains...); err != nil {
-		return "", "", fmt.Errorf("failed to generate certificates: %w", err)
-	}
-
-	return certPath, keyPath, nil
-}
-
 // buildDomainList builds the list of domains/SANs for the certificate
 func buildDomainList(domain string) []string {
 	return []string{
@@ -137,25 +116,4 @@ func buildDomainList(domain string) []string {
 		"localhost",            // Local development
 		"127.0.0.1",            // IP-based access
 	}
-}
-
-// IsCAInstalled checks if the mkcert CA is installed
-func (c *CertManager) IsCAInstalled(ctx context.Context) (bool, error) {
-	return c.mkcert.IsCAInitialized(ctx)
-}
-
-// InstallCA installs the mkcert CA into the system trust store
-// This is idempotent - safe to run multiple times
-func (c *CertManager) InstallCA(ctx context.Context) error {
-	return c.mkcert.InstallCA(ctx)
-}
-
-// GetCARoot returns the mkcert CA directory
-func (c *CertManager) GetCARoot(ctx context.Context) (string, error) {
-	return c.mkcert.GetCARoot(ctx)
-}
-
-// Mkcert returns the underlying mkcert wrapper
-func (c *CertManager) Mkcert() *tools.Mkcert {
-	return c.mkcert
 }

@@ -286,8 +286,7 @@ func checkMkcert(ctx context.Context, cfg *config.GlobalConfig) (string, int) {
 	}
 
 	// Check zdev bin directory
-	homeDir, _ := os.UserHomeDir()
-	zdevBinPath := filepath.Join(homeDir, ".zdev", "bin", "mkcert")
+	zdevBinPath := filepath.Join(config.GetZdevHome(), "bin", "mkcert")
 	if _, err := os.Stat(zdevBinPath); err == nil {
 		version, err := tools.RunTool(ctx, zdevBinPath, "-version")
 		if err != nil {
@@ -309,8 +308,7 @@ func checkJust(ctx context.Context) {
 
 	path, found := tools.FindInPath("just")
 	if !found {
-		homeDir, _ := os.UserHomeDir()
-		zdevBinPath := filepath.Join(homeDir, ".zdev", "bin", "just")
+		zdevBinPath := filepath.Join(config.GetZdevHome(), "bin", "just")
 		if _, err := os.Stat(zdevBinPath); err == nil {
 			path = zdevBinPath
 			found = true
@@ -341,8 +339,7 @@ func checkMutagen(ctx context.Context, cfg *config.GlobalConfig) {
 
 	path, found := tools.FindInPath("mutagen")
 	if !found {
-		homeDir, _ := os.UserHomeDir()
-		zdevBinPath := filepath.Join(homeDir, ".zdev", "bin", "mutagen")
+		zdevBinPath := filepath.Join(config.GetZdevHome(), "bin", "mutagen")
 		if _, err := os.Stat(zdevBinPath); err == nil {
 			path = zdevBinPath
 			found = true

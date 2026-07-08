@@ -89,41 +89,6 @@ func TestMkcertTool(t *testing.T) {
 	}
 }
 
-func TestGetArch(t *testing.T) {
-	arch := GetArch()
-
-	// Should return a non-empty string
-	if arch == "" {
-		t.Error("expected non-empty architecture string")
-	}
-
-	// Should be one of the known architectures
-	validArchs := map[string]bool{
-		"amd64": true,
-		"arm64": true,
-		"386":   true,
-		"arm":   true,
-	}
-
-	if !validArchs[arch] {
-		t.Logf("unexpected architecture: %s (this may be valid for your platform)", arch)
-	}
-}
-
-func TestGetOS(t *testing.T) {
-	os := GetOS()
-
-	// Should return a non-empty string
-	if os == "" {
-		t.Error("expected non-empty OS string")
-	}
-
-	// Should match runtime.GOOS
-	if os != runtime.GOOS {
-		t.Errorf("expected %q, got %q", runtime.GOOS, os)
-	}
-}
-
 func TestJustArch(t *testing.T) {
 	tests := []struct {
 		goarch   string

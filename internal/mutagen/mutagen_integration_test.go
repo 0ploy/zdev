@@ -31,29 +31,6 @@ func findMutagenBinary() string {
 	return ""
 }
 
-func TestMutagen_Version(t *testing.T) {
-	binaryPath := findMutagenBinary()
-	if binaryPath == "" {
-		t.Skip("mutagen binary not found, skipping integration test")
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	m := New(binaryPath)
-
-	version, err := m.Version(ctx)
-	if err != nil {
-		t.Fatalf("Version() failed: %v", err)
-	}
-
-	if version == "" {
-		t.Error("expected non-empty version string")
-	}
-
-	t.Logf("Mutagen version: %s", version)
-}
-
 func TestMutagen_Daemon(t *testing.T) {
 	binaryPath := findMutagenBinary()
 	if binaryPath == "" {
@@ -222,38 +199,4 @@ func TestMutagen_SessionLifecycle(t *testing.T) {
 	}
 
 	t.Log("Session lifecycle test completed successfully")
-}
-
-func TestMutagen_ListSessionsByPrefix(t *testing.T) {
-	binaryPath := findMutagenBinary()
-	if binaryPath == "" {
-		t.Skip("mutagen binary not found, skipping integration test")
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	m := New(binaryPath)
-
-	// Ensure daemon is running
-	if err := m.EnsureDaemon(ctx); err != nil {
-		t.Fatalf("EnsureDaemon() failed: %v", err)
-	}
-
-	// List sessions with zdev prefix (may be empty)
-	sessions, err := m.ListSessionsByPrefix(ctx, "zdev-")
-	if err != nil {
-		t.Fatalf("ListSessionsByPrefix() failed: %v", err)
-	}
-
-	// Result should be a valid slice (possibly empty)
-	if sessions == nil {
-		// nil is acceptable when no sessions exist
-		t.Log("No sessions with 'zdev-' prefix found")
-	} else {
-		t.Logf("Found %d sessions with 'zdev-' prefix", len(sessions))
-		for _, s := range sessions {
-			t.Logf("  - %s", s)
-		}
-	}
 }

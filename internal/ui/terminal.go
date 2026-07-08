@@ -132,14 +132,6 @@ func Color(text, color string, plainMode bool) string {
 	return code + text + "\x1b[0m"
 }
 
-// Bold wraps text in ANSI bold codes when supported.
-func Bold(text string, plainMode bool) string {
-	if plainMode || !SupportsColors() {
-		return text
-	}
-	return "\x1b[1m" + text + "\x1b[0m"
-}
-
 // StatusStep prints a visually distinct framework status message to stdout.
 // Used during multi-step flows (setup, start) to make zdev's own progress
 // markers stand out against verbose nested command output. Leads with two

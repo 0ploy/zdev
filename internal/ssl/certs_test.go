@@ -137,14 +137,3 @@ func TestCertsExist(t *testing.T) {
 		}
 	})
 }
-
-func TestCertsDir(t *testing.T) {
-	cm := &CertManager{
-		certsDir: "/test/path/certs",
-		mkcert:   nil,
-	}
-
-	if cm.CertsDir() != "/test/path/certs" {
-		t.Errorf("expected certsDir '/test/path/certs', got %q", cm.CertsDir())
-	}
-}

@@ -42,13 +42,6 @@ func ParseRef(ref string) (envID, key string, err error) {
 	return envID, key, nil
 }
 
-// ValidateRef checks that a reference parses into an Environment ID and
-// variable name.
-func ValidateRef(ref string) error {
-	_, _, err := ParseRef(ref)
-	return err
-}
-
 // Resolver reads a 1Password Environment: the full set of its variables
 // as a name -> value map. Implementations cache per Environment ID, so
 // any number of references and whole-Environment injections across all

@@ -83,11 +83,7 @@ func DBUIContainerConfig(cfg DBUIServiceConfig) runtime.ContainerConfig {
 
 // GetAdminerConfigDir returns the path to the Adminer config directory
 func GetAdminerConfigDir() (string, error) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("failed to get home directory: %w", err)
-	}
-	return filepath.Join(homeDir, ".zdev", "adminer"), nil
+	return filepath.Join(config.GetZdevHome(), "adminer"), nil
 }
 
 // EnsureAdminerConfig creates the Adminer config directory and servers.php file

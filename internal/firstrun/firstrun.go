@@ -26,15 +26,8 @@ type Manager struct {
 
 // NewManager creates a new first-run manager
 func NewManager(cfg *config.GlobalConfig) (*Manager, error) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get home directory: %w", err)
-	}
-
-	zdevHome := filepath.Join(homeDir, ".zdev")
-
 	return &Manager{
-		zdevHome: zdevHome,
+		zdevHome: config.GetZdevHome(),
 		domain:    cfg.Domain,
 		sslEnabled: cfg.SSL.Enabled,
 	}, nil

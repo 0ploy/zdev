@@ -30,11 +30,6 @@ func NewMkcert(binaryPath string) *Mkcert {
 	return &Mkcert{binaryPath: binaryPath}
 }
 
-// BinaryPath returns the path to the mkcert binary
-func (m *Mkcert) BinaryPath() string {
-	return m.binaryPath
-}
-
 // GetCARoot returns the mkcert CA directory (runs `mkcert -CAROOT`)
 func (m *Mkcert) GetCARoot(ctx context.Context) (string, error) {
 	output, err := RunTool(ctx, m.binaryPath, "-CAROOT")
@@ -119,13 +114,4 @@ func (m *Mkcert) IsCATrusted(ctx context.Context, certPath string) (bool, error)
 		return false, nil
 	}
 	return true, nil
-}
-
-// Version returns the mkcert version
-func (m *Mkcert) Version(ctx context.Context) (string, error) {
-	output, err := RunTool(ctx, m.binaryPath, "-version")
-	if err != nil {
-		return "", fmt.Errorf("failed to get mkcert version: %w", err)
-	}
-	return output, nil
 }

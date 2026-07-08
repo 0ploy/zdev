@@ -21,20 +21,6 @@ func New(binaryPath string) *Mutagen {
 	return &Mutagen{binaryPath: binaryPath}
 }
 
-// BinaryPath returns the path to the mutagen binary
-func (m *Mutagen) BinaryPath() string {
-	return m.binaryPath
-}
-
-// Version returns the mutagen version
-func (m *Mutagen) Version(ctx context.Context) (string, error) {
-	output, err := m.run(ctx, "version")
-	if err != nil {
-		return "", fmt.Errorf("failed to get mutagen version: %w", err)
-	}
-	return output, nil
-}
-
 // Daemon management
 
 // EnsureDaemon ensures the mutagen daemon is running, starting it if necessary
@@ -75,14 +61,6 @@ type SessionConfig struct {
 	DefaultGroupBeta         string
 	DefaultFileModeBeta      string
 	DefaultDirectoryModeBeta string
-}
-
-// Session represents a mutagen sync session
-type Session struct {
-	Name   string `json:"name"`
-	Status string `json:"status"`
-	Alpha  string `json:"alpha"`
-	Beta   string `json:"beta"`
 }
 
 // Hash returns a deterministic sha256 over the parts of SessionConfig that,
@@ -217,48 +195,6 @@ func (m *Mutagen) GetSessionStatus(ctx context.Context, name string) (string, er
 	}
 
 	return strings.TrimSpace(string(output)), nil
-}
-
-// ListSessions returns all sync sessions
-func (m *Mutagen) ListSessions(ctx context.Context) ([]Session, error) {
-	cmd := exec.CommandContext(ctx, m.binaryPath, "sync", "list", "--output", "json")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		// No sessions or daemon not running
-		return nil, nil
-	}
-
-	// Parse JSON output
-	var sessions []Session
-	if err := json.Unmarshal(output, &sessions); err != nil {
-		// Mutagen might return empty output for no sessions
-		if len(output) == 0 || strings.TrimSpace(string(output)) == "" {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("failed to parse sessions: %w", err)
-	}
-
-	return sessions, nil
-}
-
-// ListSessionsByPrefix returns all sessions with names starting with the given prefix
-func (m *Mutagen) ListSessionsByPrefix(ctx context.Context, prefix string) ([]string, error) {
-	cmd := exec.CommandContext(ctx, m.binaryPath, "sync", "list", "--template", "{{range .}}{{.Name}}\n{{end}}")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return nil, nil
-	}
-
-	var matching []string
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	for _, line := range lines {
-		name := strings.TrimSpace(line)
-		if name != "" && strings.HasPrefix(name, prefix) {
-			matching = append(matching, name)
-		}
-	}
-
-	return matching, nil
 }
 
 // run executes a mutagen command and returns the output
