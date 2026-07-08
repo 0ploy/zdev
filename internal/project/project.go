@@ -325,18 +325,8 @@ func (p *Project) start(ctx context.Context, filter map[string]bool) error {
 	}
 
 	// Create project volumes if they don't exist
-	for _, volumeName := range p.NamedVolumes() {
-		fullName := p.VolumeName(volumeName)
-		exists, err := p.Runtime.VolumeExists(ctx, fullName)
-		if err != nil {
-			return fmt.Errorf("failed to check volume %s: %w", volumeName, err)
-		}
-		if !exists {
-			fmt.Printf("Creating volume %s...\n", fullName)
-			if err := p.Runtime.CreateVolume(ctx, fullName); err != nil {
-				return fmt.Errorf("failed to create volume %s: %w", volumeName, err)
-			}
-		}
+	if err := p.ensureNamedVolumes(ctx); err != nil {
+		return err
 	}
 
 	// Start services (filtered)
@@ -364,23 +354,7 @@ func (p *Project) start(ctx context.Context, filter map[string]bool) error {
 		return err
 	}
 
-	// Register project with routing info in state
-	tcpPorts, udpPorts := p.GetRequiredPorts()
-	stateMgr, err := state.DefaultManager()
-	if err != nil {
-		return fmt.Errorf("failed to load state: %w", err)
-	}
-	if err := stateMgr.RegisterProjectWithRouting(p.Config.Name, p.Dir, tcpPorts, udpPorts); err != nil {
-		return fmt.Errorf("failed to register project: %w", err)
-	}
-
-	// Connect shared services
-	p.connectEnabledSharedServices(ctx)
-
-	// Connect to link networks
-	p.connectLinks(ctx)
-
-	return nil
+	return p.registerAndConnect(ctx)
 }
 
 // startServiceWithMutagen starts a service with optional Mutagen volume transformation
@@ -408,16 +382,7 @@ func (p *Project) startServiceWithMutagen(ctx context.Context, name string, svc 
 		// The image was rebuilt under the container - recreate it so the
 		// running service actually uses the new image.
 		fmt.Printf("Recreating service %s with rebuilt image...\n", name)
-		running, err := p.Runtime.IsContainerRunning(ctx, containerName)
-		if err != nil {
-			return err
-		}
-		if running {
-			if err := p.Runtime.StopContainer(ctx, containerName); err != nil {
-				return err
-			}
-		}
-		if err := p.Runtime.RemoveContainer(ctx, containerName); err != nil {
+		if err := p.removeServiceContainer(ctx, name); err != nil {
 			return err
 		}
 	} else if exists {
@@ -470,17 +435,137 @@ func (p *Project) startServiceWithMutagen(ctx context.Context, name string, svc 
 	return p.Runtime.StartContainer(ctx, containerName)
 }
 
+// requireService returns an error when name is not declared in the
+// project config.
+func (p *Project) requireService(name string) error {
+	if _, ok := p.Config.Services[name]; !ok {
+		return fmt.Errorf("service %q not found in project config (available: %s)", name, strings.Join(p.ServiceNames(), ", "))
+	}
+	return nil
+}
+
+// ensureNamedVolumes creates any missing named project volumes. Shared
+// by start and Update so both create the same set.
+func (p *Project) ensureNamedVolumes(ctx context.Context) error {
+	for _, volumeName := range p.NamedVolumes() {
+		fullName := p.VolumeName(volumeName)
+		exists, err := p.Runtime.VolumeExists(ctx, fullName)
+		if err != nil {
+			return fmt.Errorf("failed to check volume %s: %w", volumeName, err)
+		}
+		if !exists {
+			fmt.Printf("Creating volume %s...\n", fullName)
+			if err := p.Runtime.CreateVolume(ctx, fullName); err != nil {
+				return fmt.Errorf("failed to create volume %s: %w", volumeName, err)
+			}
+		}
+	}
+	return nil
+}
+
+// removeServiceContainer stops (if running) and removes a service's
+// container. Used by the recreate paths, which announce their own
+// intent ("Recreating service...") - this helper is silent.
+func (p *Project) removeServiceContainer(ctx context.Context, serviceName string) error {
+	containerName := p.ContainerName(serviceName)
+	running, err := p.Runtime.IsContainerRunning(ctx, containerName)
+	if err != nil {
+		return err
+	}
+	if running {
+		if err := p.Runtime.StopContainer(ctx, containerName); err != nil {
+			return fmt.Errorf("failed to stop service %s: %w", serviceName, err)
+		}
+	}
+	if err := p.Runtime.RemoveContainer(ctx, containerName); err != nil {
+		return fmt.Errorf("failed to remove service %s: %w", serviceName, err)
+	}
+	return nil
+}
+
+// stopServiceContainer stops a service's running container, printing a
+// note when it is already stopped. Shared by StopService and Stop.
+func (p *Project) stopServiceContainer(ctx context.Context, serviceName string) error {
+	containerName := p.ContainerName(serviceName)
+	running, err := p.Runtime.IsContainerRunning(ctx, containerName)
+	if err != nil {
+		return err
+	}
+	if !running {
+		fmt.Printf("Service %s is not running\n", serviceName)
+		return nil
+	}
+	fmt.Printf("Stopping service %s...\n", serviceName)
+	if err := p.Runtime.StopContainer(ctx, containerName); err != nil {
+		return fmt.Errorf("failed to stop service %s: %w", serviceName, err)
+	}
+	return nil
+}
+
+// serviceMutagenMounts returns the project's Mutagen sync mounts that
+// belong to one service (empty when Mutagen is disabled).
+func (p *Project) serviceMutagenMounts(name string) []MutagenSyncMount {
+	if !p.IsMutagenEnabled() {
+		return nil
+	}
+	var mounts []MutagenSyncMount
+	for _, m := range p.GetMutagenSyncMounts() {
+		if m.ServiceName == name {
+			mounts = append(mounts, m)
+		}
+	}
+	return mounts
+}
+
+// pauseServiceMutagenSessions pauses the sync sessions for the given
+// mounts, warning instead of failing - a stuck session must not block a
+// stop or restart.
+func (p *Project) pauseServiceMutagenSessions(ctx context.Context, mounts []MutagenSyncMount) {
+	if len(mounts) == 0 {
+		return
+	}
+	m, err := p.EnsureMutagen(ctx)
+	if err != nil {
+		return
+	}
+	for _, mount := range mounts {
+		if exists, _ := m.SessionExists(ctx, mount.SessionName); exists {
+			fmt.Printf("Pausing sync session %s...\n", mount.SessionName)
+			if err := m.PauseSession(ctx, mount.SessionName); err != nil {
+				fmt.Printf("Warning: could not pause session %s: %v\n", mount.SessionName, err)
+			}
+		}
+	}
+}
+
+// registerAndConnect records the project's routing ports in global state
+// and attaches the enabled shared services and link networks. Runs at
+// the end of both start and Update so the two paths cannot drift.
+func (p *Project) registerAndConnect(ctx context.Context) error {
+	tcpPorts, udpPorts := p.GetRequiredPorts()
+	stateMgr, err := state.DefaultManager()
+	if err != nil {
+		return fmt.Errorf("failed to load state: %w", err)
+	}
+	if err := stateMgr.RegisterProjectWithRouting(p.Config.Name, p.Dir, tcpPorts, udpPorts); err != nil {
+		return fmt.Errorf("failed to register project: %w", err)
+	}
+
+	p.connectEnabledSharedServices(ctx)
+	p.connectLinks(ctx)
+	return nil
+}
+
 // StopService stops a single service container. Pauses only the Mutagen
 // sessions tied to that service. Other services in the project remain
 // running. To start it back up, use `zdev start <service>` (or `zdev
 // restart <service>` for an in-place bounce of an existing container).
 func (p *Project) StopService(ctx context.Context, name string) error {
-	if _, ok := p.Config.Services[name]; !ok {
-		return fmt.Errorf("service %q not found in project config (available: %s)", name, strings.Join(p.ServiceNames(), ", "))
+	if err := p.requireService(name); err != nil {
+		return err
 	}
 
-	containerName := p.ContainerName(name)
-	exists, err := p.Runtime.ContainerExists(ctx, containerName)
+	exists, err := p.Runtime.ContainerExists(ctx, p.ContainerName(name))
 	if err != nil {
 		return err
 	}
@@ -489,36 +574,9 @@ func (p *Project) StopService(ctx context.Context, name string) error {
 		return nil
 	}
 
-	if p.IsMutagenEnabled() {
-		if m, err := p.EnsureMutagen(ctx); err == nil {
-			for _, mount := range p.GetMutagenSyncMounts() {
-				if mount.ServiceName != name {
-					continue
-				}
-				if existsSess, _ := m.SessionExists(ctx, mount.SessionName); existsSess {
-					fmt.Printf("Pausing sync session %s...\n", mount.SessionName)
-					if err := m.PauseSession(ctx, mount.SessionName); err != nil {
-						fmt.Printf("Warning: could not pause session %s: %v\n", mount.SessionName, err)
-					}
-				}
-			}
-		}
-	}
+	p.pauseServiceMutagenSessions(ctx, p.serviceMutagenMounts(name))
 
-	running, err := p.Runtime.IsContainerRunning(ctx, containerName)
-	if err != nil {
-		return err
-	}
-	if !running {
-		fmt.Printf("Service %s is not running\n", name)
-		return nil
-	}
-
-	fmt.Printf("Stopping service %s...\n", name)
-	if err := p.Runtime.StopContainer(ctx, containerName); err != nil {
-		return fmt.Errorf("failed to stop service %s: %w", name, err)
-	}
-	return nil
+	return p.stopServiceContainer(ctx, name)
 }
 
 // Stop stops all project services
@@ -529,30 +587,16 @@ func (p *Project) Stop(ctx context.Context) error {
 	}
 
 	for serviceName := range p.Config.Services {
-		containerName := p.ContainerName(serviceName)
-
-		exists, err := p.Runtime.ContainerExists(ctx, containerName)
+		exists, err := p.Runtime.ContainerExists(ctx, p.ContainerName(serviceName))
 		if err != nil {
 			return err
 		}
-
 		if !exists {
 			continue
 		}
 
-		running, err := p.Runtime.IsContainerRunning(ctx, containerName)
-		if err != nil {
+		if err := p.stopServiceContainer(ctx, serviceName); err != nil {
 			return err
-		}
-
-		if !running {
-			fmt.Printf("Service %s is not running\n", serviceName)
-			continue
-		}
-
-		fmt.Printf("Stopping service %s...\n", serviceName)
-		if err := p.Runtime.StopContainer(ctx, containerName); err != nil {
-			return fmt.Errorf("failed to stop service %s: %w", serviceName, err)
 		}
 	}
 	return nil
@@ -694,18 +738,8 @@ func (p *Project) Update(ctx context.Context) (bool, error) {
 	}
 
 	// Ensure volumes exist
-	for _, volumeName := range p.NamedVolumes() {
-		fullName := p.VolumeName(volumeName)
-		exists, err := p.Runtime.VolumeExists(ctx, fullName)
-		if err != nil {
-			return false, fmt.Errorf("failed to check volume %s: %w", volumeName, err)
-		}
-		if !exists {
-			fmt.Printf("Creating volume %s...\n", fullName)
-			if err := p.Runtime.CreateVolume(ctx, fullName); err != nil {
-				return false, fmt.Errorf("failed to create volume %s: %w", volumeName, err)
-			}
-		}
+	if err := p.ensureNamedVolumes(ctx); err != nil {
+		return false, err
 	}
 
 	// Mutagen state is prepared lazily on first need: a no-op `zdev update`
@@ -810,14 +844,8 @@ func (p *Project) Update(ctx context.Context) (bool, error) {
 			}
 
 			// Stop and remove old container
-			running, _ := p.Runtime.IsContainerRunning(ctx, containerName)
-			if running {
-				if err := p.Runtime.StopContainer(ctx, containerName); err != nil {
-					return false, fmt.Errorf("failed to stop service %s: %w", serviceName, err)
-				}
-			}
-			if err := p.Runtime.RemoveContainer(ctx, containerName); err != nil {
-				return false, fmt.Errorf("failed to remove service %s: %w", serviceName, err)
+			if err := p.removeServiceContainer(ctx, serviceName); err != nil {
+				return false, err
 			}
 
 			// Create new container
@@ -850,23 +878,7 @@ func (p *Project) Update(ctx context.Context) (bool, error) {
 		}
 	}
 
-	// Update state with current routing info
-	tcpPorts, udpPorts := p.GetRequiredPorts()
-	stateMgr, err := state.DefaultManager()
-	if err != nil {
-		return updated, fmt.Errorf("failed to load state: %w", err)
-	}
-	if err := stateMgr.RegisterProjectWithRouting(p.Config.Name, p.Dir, tcpPorts, udpPorts); err != nil {
-		return updated, fmt.Errorf("failed to register project: %w", err)
-	}
-
-	// Connect shared services
-	p.connectEnabledSharedServices(ctx)
-
-	// Connect to link networks
-	p.connectLinks(ctx)
-
-	return updated, nil
+	return updated, p.registerAndConnect(ctx)
 }
 
 // serviceNeedsRecreate checks if a service container needs to be recreated.
@@ -1083,8 +1095,8 @@ func (p *Project) Restart(ctx context.Context) error {
 // Pauses and resumes only the Mutagen sync sessions tied to this service.
 // To pick up config changes, use `zdev update` instead.
 func (p *Project) RestartService(ctx context.Context, name string) error {
-	if _, ok := p.Config.Services[name]; !ok {
-		return fmt.Errorf("service %q not found in project config (available: %s)", name, strings.Join(p.ServiceNames(), ", "))
+	if err := p.requireService(name); err != nil {
+		return err
 	}
 
 	containerName := p.ContainerName(name)
@@ -1096,27 +1108,8 @@ func (p *Project) RestartService(ctx context.Context, name string) error {
 		return fmt.Errorf("service %s container does not exist - run 'zdev start' first", name)
 	}
 
-	var serviceMounts []MutagenSyncMount
-	if p.IsMutagenEnabled() {
-		for _, m := range p.GetMutagenSyncMounts() {
-			if m.ServiceName == name {
-				serviceMounts = append(serviceMounts, m)
-			}
-		}
-	}
-
-	if len(serviceMounts) > 0 {
-		if m, err := p.EnsureMutagen(ctx); err == nil {
-			for _, mount := range serviceMounts {
-				if existsSess, _ := m.SessionExists(ctx, mount.SessionName); existsSess {
-					fmt.Printf("Pausing sync session %s...\n", mount.SessionName)
-					if err := m.PauseSession(ctx, mount.SessionName); err != nil {
-						fmt.Printf("Warning: could not pause session %s: %v\n", mount.SessionName, err)
-					}
-				}
-			}
-		}
-	}
+	serviceMounts := p.serviceMutagenMounts(name)
+	p.pauseServiceMutagenSessions(ctx, serviceMounts)
 
 	running, err := p.Runtime.IsContainerRunning(ctx, containerName)
 	if err != nil {
