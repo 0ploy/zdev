@@ -375,7 +375,7 @@ func check1Password(ctx context.Context) int {
 	if dir, err := config.FindProjectDir(); err == nil {
 		if cfg, err := config.LoadProject(dir); err == nil {
 			for _, svc := range cfg.Services {
-				if projectServiceUsesSecretRefs(cfg.Environment, svc.Environment) {
+				if projectServiceUsesSecrets(cfg.Environment, svc) {
 					usesRefs = true
 					break
 				}
@@ -423,15 +423,19 @@ func check1Password(ctx context.Context) int {
 	return 0
 }
 
-// projectServiceUsesSecretRefs reports whether the merged project+service
-// env contains op-env:// references.
-func projectServiceUsesSecretRefs(projectEnv, serviceEnv map[string]string) bool {
+// projectServiceUsesSecrets reports whether the service pulls anything
+// from 1Password: an attached Environment (op-env:) or op-env://
+// references in the merged project+service env.
+func projectServiceUsesSecrets(projectEnv map[string]string, svc config.ServiceConfig) bool {
+	if svc.OpEnv != "" {
+		return true
+	}
 	for _, v := range projectEnv {
 		if secrets.IsRef(v) {
 			return true
 		}
 	}
-	for _, v := range serviceEnv {
+	for _, v := range svc.Environment {
 		if secrets.IsRef(v) {
 			return true
 		}

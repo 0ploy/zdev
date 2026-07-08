@@ -19,89 +19,93 @@ func (p *Project) resolver() secrets.Resolver {
 	return p.Secrets
 }
 
-// envSecretKeys returns the sorted unique 1Password Environment variable
-// names referenced by op-env:// env values.
-func envSecretKeys(env map[string]string) []string {
-	seen := make(map[string]bool)
-	var keys []string
-	for _, val := range env {
+// serviceUsesSecrets reports whether the service pulls anything from
+// 1Password: a whole attached Environment (op-env:) or op-env://
+// references in its effective env.
+func (p *Project) serviceUsesSecrets(svc config.ServiceConfig) bool {
+	if svc.OpEnv != "" {
+		return true
+	}
+	for _, v := range p.containerEnv(svc) {
+		if secrets.IsRef(v) {
+			return true
+		}
+	}
+	return false
+}
+
+// secretValuesFor resolves everything the service pulls from 1Password,
+// keyed by container env name: every variable of the attached
+// Environment (svc.OpEnv) that baseEnv does not set explicitly, plus
+// each op-env://<environment-id>/<VARIABLE> reference in baseEnv. The
+// resolver caches per Environment ID, so any number of services and
+// references cost one op call per distinct Environment.
+func (p *Project) secretValuesFor(ctx context.Context, serviceName string, svc config.ServiceConfig, baseEnv map[string]string) (map[string]string, error) {
+	resolved := make(map[string]string)
+
+	if svc.OpEnv != "" {
+		vars, err := p.resolver().ReadEnvironment(ctx, svc.OpEnv)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read 1Password Environment %s for service %s: %w", svc.OpEnv, serviceName, err)
+		}
+		for k, v := range vars {
+			if _, exists := baseEnv[k]; exists {
+				continue // explicit environment: entries win over injection
+			}
+			resolved[k] = v
+		}
+	}
+
+	// Sorted iteration so warnings and errors are deterministic.
+	envKeys := make([]string, 0, len(baseEnv))
+	for k := range baseEnv {
+		envKeys = append(envKeys, k)
+	}
+	sort.Strings(envKeys)
+
+	for _, envKey := range envKeys {
+		val := baseEnv[envKey]
 		if !secrets.IsRef(val) {
 			continue
 		}
-		key := secrets.Key(val)
-		if !seen[key] {
-			seen[key] = true
-			keys = append(keys, key)
+		envID, varName, err := secrets.ParseRef(val)
+		if err != nil {
+			return nil, fmt.Errorf("service %s, env %s: %w", serviceName, envKey, err)
 		}
+		vars, err := p.resolver().ReadEnvironment(ctx, envID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve %s for service %s (env %s): %w", val, serviceName, envKey, err)
+		}
+		value, ok := vars[varName]
+		if !ok {
+			return nil, fmt.Errorf("variable %s not found in 1Password Environment %s (service %s, env %s) - check the Environment in the 1Password app (Developer > Environments)", varName, envID, serviceName, envKey)
+		}
+		if value == "" {
+			fmt.Printf("Warning: 1Password Environment variable %s is empty (service %s, env %s)\n", varName, serviceName, envKey)
+		}
+		resolved[envKey] = value
 	}
-	sort.Strings(keys)
-	return keys
+
+	return resolved, nil
 }
 
-// serviceUsesSecretRefs reports whether a service's effective env
-// (project-level env merged with service overrides, mirroring
-// buildContainerConfig) contains op-env:// references.
-func serviceUsesSecretRefs(projectEnv map[string]string, svc config.ServiceConfig) bool {
-	return len(envSecretKeys(mergedServiceEnv(projectEnv, svc))) > 0
-}
-
-// mergedServiceEnv applies the same project-then-service env merge as
-// buildContainerConfig, without the injected USER_ID/GROUP_ID.
-func mergedServiceEnv(projectEnv map[string]string, svc config.ServiceConfig) map[string]string {
-	env := make(map[string]string, len(projectEnv)+len(svc.Environment))
-	for k, v := range projectEnv {
-		env[k] = v
-	}
-	for k, v := range svc.Environment {
-		env[k] = v
-	}
-	return env
-}
-
-// secretsEnvironmentID returns the configured 1Password Environment ID,
-// or an actionable error when references are used without one.
-func (p *Project) secretsEnvironmentID() (string, error) {
-	if p.Config.Secrets.OpEnv == "" {
-		return "", fmt.Errorf("config uses op-env:// secret references but secrets.op-env is not set\n\nAdd the 1Password Environment ID to .zdev/config.yaml:\n\nsecrets:\n  op-env: <environment-id>\n\nFind the ID in the 1Password app: Developer > Environments > Manage environment > Copy environment ID")
-	}
-	return p.Config.Secrets.OpEnv, nil
-}
-
-// resolveSecretEnv replaces op-env:// references in cfg.Env with values
-// from the project's 1Password Environment and stamps SecretsHashLabel
-// over them. Must run AFTER StampConfigHash (so the config hash covers
-// the unresolved references and the compare path stays offline) and
-// before CreateContainer.
-func (p *Project) resolveSecretEnv(ctx context.Context, serviceName string, cfg *runtime.ContainerConfig) error {
-	keys := envSecretKeys(cfg.Env)
-	if len(keys) == 0 {
+// resolveSecretEnv injects the service's 1Password secrets into cfg.Env
+// (whole attached Environment plus op-env:// references) and stamps
+// SecretsHashLabel over the injected values. Must run AFTER
+// StampConfigHash (so the config hash covers the unresolved references
+// and the compare path stays offline) and before CreateContainer.
+func (p *Project) resolveSecretEnv(ctx context.Context, serviceName string, svc config.ServiceConfig, cfg *runtime.ContainerConfig) error {
+	if !p.serviceUsesSecrets(svc) {
 		return nil
 	}
 
-	envID, err := p.secretsEnvironmentID()
+	values, err := p.secretValuesFor(ctx, serviceName, svc, cfg.Env)
 	if err != nil {
 		return err
 	}
 
-	values, err := p.resolver().Resolve(ctx, envID, keys)
-	if err != nil {
-		var envKeys []string
-		for k, v := range cfg.Env {
-			if secrets.IsRef(v) {
-				envKeys = append(envKeys, k)
-			}
-		}
-		sort.Strings(envKeys)
-		return fmt.Errorf("failed to resolve 1Password secrets for service %s (env: %v): %w", serviceName, envKeys, err)
-	}
-
-	for key, val := range cfg.Env {
-		if !secrets.IsRef(val) {
-			continue
-		}
-		if resolved, ok := values[secrets.Key(val)]; ok {
-			cfg.Env[key] = resolved
-		}
+	for k, v := range values {
+		cfg.Env[k] = v
 	}
 
 	if cfg.Labels == nil {
@@ -112,24 +116,32 @@ func (p *Project) resolveSecretEnv(ctx context.Context, serviceName string, cfg 
 	return nil
 }
 
-// serviceSecretsStale reports whether a service's secrets rotated since
-// its container was created, by resolving fresh values and comparing
-// their hash against the stamped SecretsHashLabel. Only called from the
-// --refresh-secrets path; the regular update compare never resolves.
+// prefetchSecrets resolves the service's secrets without applying them,
+// warming the per-Environment cache and surfacing resolution failures
+// (malformed reference, unknown variable, not signed in) BEFORE the old
+// container is stopped and removed on the recreate path.
+func (p *Project) prefetchSecrets(ctx context.Context, serviceName string, svc config.ServiceConfig) error {
+	if !p.serviceUsesSecrets(svc) {
+		return nil
+	}
+	_, err := p.secretValuesFor(ctx, serviceName, svc, p.containerEnv(svc))
+	return err
+}
+
+// serviceSecretsStale reports whether a service's secrets changed since
+// its container was created (rotated values, or variables added to or
+// removed from the attached Environment), by resolving fresh values and
+// comparing their hash against the stamped SecretsHashLabel. Only called
+// from the --refresh-secrets path; the regular update compare never
+// resolves.
 func (p *Project) serviceSecretsStale(ctx context.Context, serviceName string, svc config.ServiceConfig) (bool, error) {
-	keys := envSecretKeys(mergedServiceEnv(p.Config.Environment, svc))
-	if len(keys) == 0 {
+	if !p.serviceUsesSecrets(svc) {
 		return false, nil
 	}
 
-	envID, err := p.secretsEnvironmentID()
+	values, err := p.secretValuesFor(ctx, serviceName, svc, p.containerEnv(svc))
 	if err != nil {
 		return false, err
-	}
-
-	values, err := p.resolver().Resolve(ctx, envID, keys)
-	if err != nil {
-		return false, fmt.Errorf("failed to resolve 1Password secrets for service %s: %w", serviceName, err)
 	}
 
 	labels, err := p.Runtime.GetContainerLabels(ctx, p.ContainerName(serviceName))

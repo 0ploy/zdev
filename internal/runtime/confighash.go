@@ -23,6 +23,13 @@ const ConfigHashLabel = "zdev.config-hash"
 // StampConfigHash, and must not perturb drift detection.
 const SecretsHashLabel = "zdev.secrets-hash"
 
+// OpEnvLabel records the 1Password Environment attached to a container
+// via services.<name>.op-env. Deliberately INCLUDED in the config hash
+// (unlike SecretsHashLabel): attaching, changing, or removing the
+// Environment must trigger a recreate, while its content rotating must
+// not (that's `zdev update --refresh-secrets`).
+const OpEnvLabel = "zdev.op-env"
+
 // ComputeConfigHash returns a deterministic sha256 of the fields that
 // define container identity for recreation purposes. The ConfigHashLabel
 // itself is excluded so the hash doesn't depend on its own value.

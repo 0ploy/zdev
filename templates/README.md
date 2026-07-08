@@ -163,7 +163,7 @@ mutagen:
 
 **`environment`** (project-level) defines environment variables passed to ALL containers. **`services.<name>.environment`** (service-level) defines environment variables for that specific container only, and overrides project-level env vars with the same name.
 
-**1Password secrets:** projects can wire a 1Password Environment via `secrets.op-env: <environment-id>` and reference its variables in env values as `op-env://<NAME>`; zdev resolves them via the 1Password CLI (beta) when the container is created. Neither the ID nor the references contain secret material, so they commit safely. Rotated secrets are picked up with `zdev update --refresh-secrets`. Templates should generally NOT hardcode `secrets.op-env` (each team has its own Environment) - document it as a post-create step instead.
+**1Password secrets:** projects can attach a 1Password Environment per service via `services.<name>.op-env: <environment-id>` (injects every variable; explicit `environment:` entries win) or inject single variables with `op-env://<environment-id>/<VARIABLE>` env values; zdev resolves them via the 1Password CLI (beta) when the container is created. Neither the ID nor the references contain secret material, so they commit safely. Changes in 1Password are picked up with `zdev update --refresh-secrets`. Templates should generally NOT hardcode an Environment ID (each team has its own Environment) - document it as a post-create step instead.
 
 Built-in variables are always available: `${PROJECTDIR}`, `${PROJECTPATH}`, `${PROJECTNAME}`, `${ZDEV_DOMAIN}`, `${ZDEV_HOME}`, `${USER}`, `${HOME}`, plus all host environment variables. User-defined `variables` can reference built-in ones (e.g. `DB_NAME: ${PROJECTNAME}_db`).
 

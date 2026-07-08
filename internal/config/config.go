@@ -89,18 +89,8 @@ type ProjectConfig struct {
 	Variables       map[string]string        `yaml:"variables"`
 	Shared          ProjectSharedConfig      `yaml:"shared"`
 	Environment     map[string]string        `yaml:"environment"`
-	Secrets         ProjectSecretsConfig     `yaml:"secrets"`
 	Services map[string]ServiceConfig `yaml:"services"`
 	Mutagen  ProjectMutagenConfig   `yaml:"mutagen"`
-}
-
-// ProjectSecretsConfig wires the project to a 1Password Environment.
-// OpEnv is the Environment's ID (1Password app > Developer >
-// Environments > Manage environment > Copy environment ID). The ID is
-// not secret and safe to commit; env values reference variables in the
-// Environment as `op-env://<NAME>`.
-type ProjectSecretsConfig struct {
-	OpEnv string `yaml:"op-env"`
 }
 
 // ProjectMutagenConfig defines project-level Mutagen settings
@@ -140,6 +130,7 @@ type ServiceConfig struct {
 	WorkingDir     string                `yaml:"working_dir"`
 	Volumes        []string              `yaml:"volumes"`
 	Environment    map[string]string     `yaml:"environment"`
+	OpEnv          string                `yaml:"op-env"` // 1Password Environment ID (not secret, safe to commit): every variable in it is injected into the container env, explicit environment: entries win; single variables use op-env://<environment-id>/<VARIABLE> values in environment: instead
 	Command        string                `yaml:"command"`
 	Labels         map[string]string     `yaml:"labels"`
 	RegisterToDBUI bool                  `yaml:"register_to_dbui"` // Register this service in the shared DB UI (Adminer)

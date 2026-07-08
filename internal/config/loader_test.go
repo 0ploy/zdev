@@ -1150,13 +1150,14 @@ func TestLoadProject_SecretsEnvironment(t *testing.T) {
 	tmpDir := t.TempDir()
 	main := `version: 1
 name: secretsenv
-secrets:
+variables:
   op-env: b7qmzx3kfpwj4hn2c6t8vydl5a
 services:
   app:
     image: alpine:latest
+    op-env: ${op-env}
     environment:
-      API_KEY: op-env://API_KEY
+      API_KEY: op-env://${op-env}/API_KEY
 `
 	writeProjectConfigs(t, tmpDir, main, "")
 
@@ -1164,10 +1165,13 @@ services:
 	if err != nil {
 		t.Fatalf("LoadProject: %v", err)
 	}
-	if cfg.Secrets.OpEnv != "b7qmzx3kfpwj4hn2c6t8vydl5a" {
-		t.Errorf("Secrets.OpEnv = %q, want the configured ID", cfg.Secrets.OpEnv)
+	if cfg.Services["app"].OpEnv != "b7qmzx3kfpwj4hn2c6t8vydl5a" {
+		t.Errorf("Services.app.OpEnv = %q, want the substituted ID", cfg.Services["app"].OpEnv)
 	}
-	if got := cfg.Services["app"].Environment["API_KEY"]; got != "op-env://API_KEY" {
-		t.Errorf("op-env:// value must pass through config load untouched, got %q", got)
+	// Variable substitution runs at load time; the op-env:// reference
+	// itself must otherwise pass through untouched (resolution happens
+	// at container creation, not at load).
+	if got := cfg.Services["app"].Environment["API_KEY"]; got != "op-env://b7qmzx3kfpwj4hn2c6t8vydl5a/API_KEY" {
+		t.Errorf("op-env:// value should have variables substituted but stay a reference, got %q", got)
 	}
 }

@@ -22,8 +22,9 @@ type Project struct {
 	Config  *config.ProjectConfig
 	Runtime runtime.Runtime
 
-	// Secrets resolves op:// references in service env at container
-	// creation time. Nil falls back to the 1Password CLI resolver.
+	// Secrets reads 1Password Environments for op-env:// references and
+	// op-env: attachments at container creation time. Nil falls back to
+	// the 1Password CLI resolver.
 	Secrets secrets.Resolver
 
 	// BuildMode controls when service images with a `dockerfile:` config
@@ -31,7 +32,7 @@ type Project struct {
 	// BuildIfStale.
 	BuildMode BuildMode
 
-	// RefreshSecrets makes Update re-resolve op:// references and
+	// RefreshSecrets makes Update re-resolve 1Password secrets and
 	// recreate services whose resolved values changed since creation.
 	// Set from the --refresh-secrets flag.
 	RefreshSecrets bool
@@ -452,10 +453,10 @@ func (p *Project) startServiceWithMutagen(ctx context.Context, name string, svc 
 	// Build container config (single source of truth)
 	cfg := p.buildContainerConfig(name, svc, mutagenEnabled, mutagenMounts)
 
-	// Resolve op:// secret references AFTER the config hash is stamped
-	// (hash covers the unresolved refs, so the update compare path never
-	// needs 1Password) and before the container is created.
-	if err := p.resolveSecretEnv(ctx, name, &cfg); err != nil {
+	// Resolve 1Password secrets AFTER the config hash is stamped (hash
+	// covers the unresolved refs, so the update compare path never needs
+	// 1Password) and before the container is created.
+	if err := p.resolveSecretEnv(ctx, name, svc, &cfg); err != nil {
 		return err
 	}
 
@@ -782,15 +783,15 @@ func (p *Project) Update(ctx context.Context) (bool, error) {
 			needsRecreate = stale
 		}
 
-		// --refresh-secrets: resolve op:// refs fresh and recreate only
-		// when the values actually rotated (compared via the stamped
-		// secrets hash). Without the flag secrets stay untouched.
+		// --refresh-secrets: resolve secrets fresh and recreate only when
+		// the values actually changed (compared via the stamped secrets
+		// hash). Without the flag secrets stay untouched.
 		if !needsRecreate && p.RefreshSecrets {
 			stale, err := p.serviceSecretsStale(ctx, serviceName, svc)
 			if err != nil {
 				return false, err
 			}
-			if !stale && serviceUsesSecretRefs(p.Config.Environment, svc) {
+			if !stale && p.serviceUsesSecrets(svc) {
 				fmt.Printf("Secrets unchanged for service %s\n", serviceName)
 			}
 			needsRecreate = stale
@@ -798,6 +799,15 @@ func (p *Project) Update(ctx context.Context) (bool, error) {
 
 		if needsRecreate {
 			fmt.Printf("Recreating service %s...\n", serviceName)
+
+			// Resolve secrets BEFORE touching the old container, so a
+			// resolution failure (not signed in, deleted Environment,
+			// unknown variable) aborts while the running service is still
+			// intact. The resolver caches per Environment, so the later
+			// create pays nothing extra.
+			if err := p.prefetchSecrets(ctx, serviceName, svc); err != nil {
+				return false, err
+			}
 
 			// Stop and remove old container
 			running, _ := p.Runtime.IsContainerRunning(ctx, containerName)
@@ -890,6 +900,27 @@ func (p *Project) serviceNeedsRecreate(ctx context.Context, serviceName string, 
 // This is the single source of truth for container config - used by both
 // startServiceWithMutagen (for creating containers) and serviceNeedsRecreate
 // (for comparing against running containers).
+// containerEnv builds a service's effective pre-secrets env: project
+// environment, then service overrides, then USER_ID/GROUP_ID defaults
+// (for bind mount permission handling). Shared by buildContainerConfig
+// and the secrets code so both see identical input.
+func (p *Project) containerEnv(svc config.ServiceConfig) map[string]string {
+	env := make(map[string]string, len(p.Config.Environment)+len(svc.Environment)+2)
+	for k, v := range p.Config.Environment {
+		env[k] = v
+	}
+	for k, v := range svc.Environment {
+		env[k] = v
+	}
+	if _, exists := env["USER_ID"]; !exists {
+		env["USER_ID"] = fmt.Sprintf("%d", os.Getuid())
+	}
+	if _, exists := env["GROUP_ID"]; !exists {
+		env["GROUP_ID"] = fmt.Sprintf("%d", os.Getgid())
+	}
+	return env
+}
+
 func (p *Project) buildContainerConfig(name string, svc config.ServiceConfig, mutagenEnabled bool, mutagenMounts map[string]MutagenSyncMount) runtime.ContainerConfig {
 	containerName := p.ContainerName(name)
 
@@ -899,7 +930,7 @@ func (p *Project) buildContainerConfig(name string, svc config.ServiceConfig, mu
 		WorkingDir:  svc.WorkingDir,
 		NetworkName: p.NetworkName(),
 		Aliases:     []string{name},
-		Env:         make(map[string]string),
+		Env:         p.containerEnv(svc),
 		Labels: map[string]string{
 			"zdev.managed": "true",
 			"zdev.project": p.Config.Name,
@@ -907,22 +938,13 @@ func (p *Project) buildContainerConfig(name string, svc config.ServiceConfig, mu
 		},
 	}
 
-	// Merge global environment first
-	for k, v := range p.Config.Environment {
-		cfg.Env[k] = v
-	}
-
-	// Then service-specific environment (overrides global)
-	for k, v := range svc.Environment {
-		cfg.Env[k] = v
-	}
-
-	// Add USER_ID and GROUP_ID for bind mount permission handling
-	if _, exists := cfg.Env["USER_ID"]; !exists {
-		cfg.Env["USER_ID"] = fmt.Sprintf("%d", os.Getuid())
-	}
-	if _, exists := cfg.Env["GROUP_ID"]; !exists {
-		cfg.Env["GROUP_ID"] = fmt.Sprintf("%d", os.Getgid())
+	// Attached 1Password Environment (op-env:). The label makes the
+	// attachment visible in docker inspect and folds the ID into the
+	// config hash, so attaching/changing/removing it recreates the
+	// service. The Environment's CONTENT is deliberately not hashed -
+	// rotation is handled by `zdev update --refresh-secrets`.
+	if svc.OpEnv != "" {
+		cfg.Labels[runtime.OpEnvLabel] = svc.OpEnv
 	}
 
 	// Opt-in to the shared Dozzle log viewer: stamp the visibility-filter

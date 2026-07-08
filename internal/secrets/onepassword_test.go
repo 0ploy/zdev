@@ -9,11 +9,19 @@ import (
 
 const testEnvID = "b7qmzx3kfpwj4hn2c6t8vydl5a"
 
-func TestValidateRef(t *testing.T) {
+func TestParseRef(t *testing.T) {
+	envID, key, err := ParseRef("op-env://" + testEnvID + "/API_KEY")
+	if err != nil {
+		t.Fatalf("ParseRef: %v", err)
+	}
+	if envID != testEnvID || key != "API_KEY" {
+		t.Errorf("ParseRef = (%q, %q), want (%q, API_KEY)", envID, key, testEnvID)
+	}
+
 	valid := []string{
-		"op-env://API_KEY",
-		"op-env://DB_PASSWORD",
-		"op-env://lower_case1",
+		"op-env://" + testEnvID + "/API_KEY",
+		"op-env://" + testEnvID + "/lower_case1",
+		"op-env://short/KEY",
 	}
 	for _, ref := range valid {
 		if err := ValidateRef(ref); err != nil {
@@ -23,22 +31,19 @@ func TestValidateRef(t *testing.T) {
 
 	invalid := []string{
 		"op-env://",
-		"op-env://KEY WITH SPACE",
-		"op-env://KEY=VALUE",
-		"op-env://vault/item/field",
-		"op-env://KE\nY",
+		"op-env://API_KEY",             // missing environment ID segment
+		"op-env:///API_KEY",            // empty environment ID
+		"op-env://" + testEnvID + "/",  // empty variable name
+		"op-env://" + testEnvID + "/KEY WITH SPACE",
+		"op-env://" + testEnvID + "/KEY=VALUE",
+		"op-env://" + testEnvID + "/a/b", // slash in variable name
+		"op-env://id with space/KEY",
 		"API_KEY",
 	}
 	for _, ref := range invalid {
 		if err := ValidateRef(ref); err == nil {
 			t.Errorf("ValidateRef(%q) = nil, want error", ref)
 		}
-	}
-}
-
-func TestKey(t *testing.T) {
-	if got := Key("op-env://API_KEY"); got != "API_KEY" {
-		t.Errorf("Key = %q, want API_KEY", got)
 	}
 }
 
@@ -91,10 +96,10 @@ func stubRead(output string) func(context.Context, string, string, []string) (st
 	}
 }
 
-func TestResolve_SelectsRequestedKeys(t *testing.T) {
+func TestReadEnvironment_ReturnsAllVars(t *testing.T) {
 	o := testCLI()
 	readCalls := 0
-	inner := stubRead("API_KEY=value-a\nDB_PASS=value-b\nUNUSED=nope\n")
+	inner := stubRead("API_KEY=value-a\nDB_PASS=value-b\n")
 	o.runRead = func(ctx context.Context, binary, envID string, env []string) (string, string, error) {
 		readCalls++
 		if envID != testEnvID {
@@ -103,22 +108,19 @@ func TestResolve_SelectsRequestedKeys(t *testing.T) {
 		return inner(ctx, binary, envID, env)
 	}
 
-	got, err := o.Resolve(context.Background(), testEnvID, []string{"API_KEY", "DB_PASS", "API_KEY"})
+	got, err := o.ReadEnvironment(context.Background(), testEnvID)
 	if err != nil {
-		t.Fatalf("Resolve: %v", err)
+		t.Fatalf("ReadEnvironment: %v", err)
 	}
-	if got["API_KEY"] != "value-a" || got["DB_PASS"] != "value-b" {
+	if got["API_KEY"] != "value-a" || got["DB_PASS"] != "value-b" || len(got) != 2 {
 		t.Errorf("unexpected values: %v", got)
-	}
-	if _, ok := got["UNUSED"]; ok {
-		t.Error("unrequested key must not be returned")
 	}
 	if readCalls != 1 {
 		t.Errorf("read called %d times, want 1", readCalls)
 	}
 }
 
-func TestResolve_CacheAvoidsSecondInvocation(t *testing.T) {
+func TestReadEnvironment_CacheAvoidsSecondInvocation(t *testing.T) {
 	o := testCLI()
 	readCalls := 0
 	inner := stubRead("API_KEY=value-a\nOTHER=value-b\n")
@@ -127,15 +129,18 @@ func TestResolve_CacheAvoidsSecondInvocation(t *testing.T) {
 		return inner(ctx, binary, envID, env)
 	}
 
-	if _, err := o.Resolve(context.Background(), testEnvID, []string{"API_KEY"}); err != nil {
-		t.Fatalf("Resolve #1: %v", err)
-	}
-	// Different key, same environment: must come from cache.
-	got, err := o.Resolve(context.Background(), testEnvID, []string{"OTHER"})
+	first, err := o.ReadEnvironment(context.Background(), testEnvID)
 	if err != nil {
-		t.Fatalf("Resolve #2: %v", err)
+		t.Fatalf("ReadEnvironment #1: %v", err)
 	}
-	if got["OTHER"] != "value-b" {
+	// Mutating the returned map must not poison the cache.
+	first["API_KEY"] = "tampered"
+
+	got, err := o.ReadEnvironment(context.Background(), testEnvID)
+	if err != nil {
+		t.Fatalf("ReadEnvironment #2: %v", err)
+	}
+	if got["API_KEY"] != "value-a" || got["OTHER"] != "value-b" {
 		t.Errorf("got %v", got)
 	}
 	if readCalls != 1 {
@@ -143,19 +148,25 @@ func TestResolve_CacheAvoidsSecondInvocation(t *testing.T) {
 	}
 }
 
-func TestResolve_MissingKeyError(t *testing.T) {
+func TestReadEnvironment_DistinctEnvironmentsReadSeparately(t *testing.T) {
 	o := testCLI()
-	o.runRead = stubRead("PRESENT=yes\n")
+	var readIDs []string
+	o.runRead = func(ctx context.Context, binary, envID string, env []string) (string, string, error) {
+		readIDs = append(readIDs, envID)
+		return "KEY=" + envID + "\n", "", nil
+	}
 
-	_, err := o.Resolve(context.Background(), testEnvID, []string{"PRESENT", "ABSENT"})
-	if err == nil {
-		t.Fatal("expected error for missing key")
+	for _, envID := range []string{"env-a", "env-b", "env-a"} {
+		got, err := o.ReadEnvironment(context.Background(), envID)
+		if err != nil {
+			t.Fatalf("ReadEnvironment(%s): %v", envID, err)
+		}
+		if got["KEY"] != envID {
+			t.Errorf("KEY = %q, want %q", got["KEY"], envID)
+		}
 	}
-	if !strings.Contains(err.Error(), "ABSENT") || !strings.Contains(err.Error(), testEnvID) {
-		t.Errorf("error should name the missing key and environment: %v", err)
-	}
-	if strings.Contains(err.Error(), "yes") {
-		t.Errorf("error must not leak resolved values: %v", err)
+	if len(readIDs) != 2 || readIDs[0] != "env-a" || readIDs[1] != "env-b" {
+		t.Errorf("read invocations = %v, want one per distinct environment", readIDs)
 	}
 }
 
@@ -163,7 +174,7 @@ func TestEnsureBinary_MissingNonInteractive(t *testing.T) {
 	o := testCLI()
 	o.lookPath = func(string) (string, bool) { return "", false }
 
-	_, err := o.Resolve(context.Background(), testEnvID, []string{"API_KEY"})
+	_, err := o.ReadEnvironment(context.Background(), testEnvID)
 	if err == nil {
 		t.Fatal("expected error when op is missing")
 	}
@@ -194,9 +205,9 @@ func TestEnsureBinary_InstallOfferAccepted(t *testing.T) {
 	o.runInstall = func(context.Context) error { installed = true; return nil }
 	o.runRead = stubRead("API_KEY=val\n")
 
-	got, err := o.Resolve(context.Background(), testEnvID, []string{"API_KEY"})
+	got, err := o.ReadEnvironment(context.Background(), testEnvID)
 	if err != nil {
-		t.Fatalf("Resolve after install: %v", err)
+		t.Fatalf("ReadEnvironment after install: %v", err)
 	}
 	if !prompted || !installed {
 		t.Errorf("prompted=%v installed=%v, want both true", prompted, installed)
@@ -221,7 +232,7 @@ func TestEnsureBinary_InstallOfferDeclined(t *testing.T) {
 		return nil
 	}
 
-	if _, err := o.Resolve(context.Background(), testEnvID, []string{"API_KEY"}); err == nil {
+	if _, err := o.ReadEnvironment(context.Background(), testEnvID); err == nil {
 		t.Error("expected error after declined install")
 	}
 }
@@ -235,7 +246,7 @@ func TestEnsureBinary_NoPromptWithoutBrew(t *testing.T) {
 		return false
 	}
 
-	if _, err := o.Resolve(context.Background(), testEnvID, []string{"API_KEY"}); err == nil {
+	if _, err := o.ReadEnvironment(context.Background(), testEnvID); err == nil {
 		t.Error("expected error")
 	}
 }
@@ -264,9 +275,9 @@ func TestRead_AuthRecoveryRetriesOnce(t *testing.T) {
 		return "API_KEY=val\n", "", nil
 	}
 
-	got, err := o.Resolve(context.Background(), testEnvID, []string{"API_KEY"})
+	got, err := o.ReadEnvironment(context.Background(), testEnvID)
 	if err != nil {
-		t.Fatalf("Resolve: %v", err)
+		t.Fatalf("ReadEnvironment: %v", err)
 	}
 	if got["API_KEY"] != "val" {
 		t.Errorf("got %v", got)
@@ -294,7 +305,7 @@ func TestRead_AuthRecoverySecondFailureSurfaces(t *testing.T) {
 		return "", "[ERROR] you are not currently signed in", fmt.Errorf("exit status 1")
 	}
 
-	_, err := o.Resolve(context.Background(), testEnvID, []string{"API_KEY"})
+	_, err := o.ReadEnvironment(context.Background(), testEnvID)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -320,7 +331,7 @@ func TestRead_NonAuthErrorNoSigninOffer(t *testing.T) {
 		return "", `[ERROR] environment "bogus" not found`, fmt.Errorf("exit status 1")
 	}
 
-	_, err := o.Resolve(context.Background(), testEnvID, []string{"API_KEY"})
+	_, err := o.ReadEnvironment(context.Background(), testEnvID)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -343,7 +354,7 @@ func TestRead_AuthErrorNonInteractiveNoPrompt(t *testing.T) {
 		return "", "[ERROR] no accounts configured for use with 1Password CLI", fmt.Errorf("exit status 1")
 	}
 
-	_, err := o.Resolve(context.Background(), testEnvID, []string{"API_KEY"})
+	_, err := o.ReadEnvironment(context.Background(), testEnvID)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -358,7 +369,7 @@ func TestRead_StableCLIWithoutEnvironmentsHint(t *testing.T) {
 		return "", `[ERROR] unknown command "environment" for "op"`, fmt.Errorf("exit status 1")
 	}
 
-	_, err := o.Resolve(context.Background(), testEnvID, []string{"API_KEY"})
+	_, err := o.ReadEnvironment(context.Background(), testEnvID)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -390,9 +401,9 @@ func TestRead_AccountAddWhenNoAccounts(t *testing.T) {
 		return "API_KEY=val\n", "", nil
 	}
 
-	got, err := o.Resolve(context.Background(), testEnvID, []string{"API_KEY"})
+	got, err := o.ReadEnvironment(context.Background(), testEnvID)
 	if err != nil {
-		t.Fatalf("Resolve: %v", err)
+		t.Fatalf("ReadEnvironment: %v", err)
 	}
 	if !accountAdded {
 		t.Error("account add should have run")
@@ -411,5 +422,9 @@ func TestHashValues(t *testing.T) {
 	c := HashValues(map[string]string{"API_KEY": "one", "DB_PASS": "rotated"})
 	if a == c {
 		t.Error("hash should change when a value changes")
+	}
+	d := HashValues(map[string]string{"API_KEY": "one", "DB_PASS": "two", "ADDED": "three"})
+	if a == d {
+		t.Error("hash should change when a variable is added")
 	}
 }

@@ -6,59 +6,47 @@ import (
 	"sync"
 )
 
-// MockCall records one Resolve invocation.
-type MockCall struct {
-	EnvID string
-	Keys  []string
-}
-
-// Mock implements Resolver for testing. Tests pre-populate Values and
-// assert against recorded Calls, mirroring runtime.MockRuntime.
+// Mock implements Resolver for testing. Tests pre-populate Environments
+// and assert against recorded Calls, mirroring runtime.MockRuntime.
+// Unlike OnePasswordCLI it does not cache, so Calls counts every read
+// the project layer performs.
 type Mock struct {
 	mu sync.Mutex
 
-	// Values maps variable names to values, simulating the content of
-	// the 1Password Environment. A key missing from Values causes
-	// Resolve to fail unless Default is set.
-	Values map[string]string
+	// Environments maps Environment IDs to their variables.
+	Environments map[string]map[string]string
 
-	// Default is returned for keys not present in Values when non-empty.
-	Default string
-
-	// Err, when set, is returned by every Resolve call.
+	// Err, when set, is returned by every ReadEnvironment call.
 	Err error
 
-	// Calls records each Resolve invocation in order.
-	Calls []MockCall
+	// Calls records the Environment ID of each ReadEnvironment invocation.
+	Calls []string
 }
 
-// Resolve implements Resolver.
-func (m *Mock) Resolve(ctx context.Context, envID string, keys []string) (map[string]string, error) {
+// ReadEnvironment implements Resolver.
+func (m *Mock) ReadEnvironment(ctx context.Context, envID string) (map[string]string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.Calls = append(m.Calls, MockCall{EnvID: envID, Keys: append([]string(nil), keys...)})
+	m.Calls = append(m.Calls, envID)
 
 	if m.Err != nil {
 		return nil, m.Err
 	}
 
-	result := make(map[string]string, len(keys))
-	for _, key := range keys {
-		if val, ok := m.Values[key]; ok {
-			result[key] = val
-			continue
-		}
-		if m.Default != "" {
-			result[key] = m.Default
-			continue
-		}
-		return nil, fmt.Errorf("mock resolver: no value for %s in environment %s", key, envID)
+	vars, ok := m.Environments[envID]
+	if !ok {
+		return nil, fmt.Errorf("mock resolver: unknown environment %s", envID)
+	}
+
+	result := make(map[string]string, len(vars))
+	for k, v := range vars {
+		result[k] = v
 	}
 	return result, nil
 }
 
-// CallCount returns the number of Resolve invocations.
+// CallCount returns the number of ReadEnvironment invocations.
 func (m *Mock) CallCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()

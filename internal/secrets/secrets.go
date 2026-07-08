@@ -9,10 +9,11 @@ import (
 	"strings"
 )
 
-// KeyPrefix marks an env value as a reference to a variable in the
-// project's 1Password Environment (op-env://<VARIABLE_NAME>). The
-// Environment itself is selected by `secrets.op-env` (its ID) in
-// .zdev/config.yaml.
+// KeyPrefix marks an env value as a reference to a variable in a
+// 1Password Environment: op-env://<environment-id>/<VARIABLE>. The
+// reference is self-contained (it carries its Environment ID), so one
+// project can mix variables from multiple Environments. Whole-Environment
+// injection uses the services.<name>.op-env config field instead.
 const KeyPrefix = "op-env://"
 
 // IsRef reports whether an env value references a 1Password Environment
@@ -21,38 +22,45 @@ func IsRef(value string) bool {
 	return strings.HasPrefix(value, KeyPrefix)
 }
 
-// Key extracts the variable name from an op-env:// reference.
-func Key(ref string) string {
-	return strings.TrimPrefix(ref, KeyPrefix)
-}
-
-// ValidateRef checks that a reference names a plausible environment
-// variable.
-func ValidateRef(ref string) error {
+// ParseRef splits an op-env:// reference into its Environment ID and
+// variable name. The full form op-env://<environment-id>/<VARIABLE> is
+// required.
+func ParseRef(ref string) (envID, key string, err error) {
 	if !IsRef(ref) {
-		return fmt.Errorf("not a secret reference (missing %s prefix): %s", KeyPrefix, ref)
+		return "", "", fmt.Errorf("not a secret reference (missing %s prefix): %s", KeyPrefix, ref)
 	}
-	key := Key(ref)
-	if key == "" {
-		return fmt.Errorf("invalid secret reference %q: missing variable name after %s", ref, KeyPrefix)
+	envID, key, ok := strings.Cut(strings.TrimPrefix(ref, KeyPrefix), "/")
+	if !ok || envID == "" || key == "" {
+		return "", "", fmt.Errorf("invalid secret reference %q: expected %s<environment-id>/<VARIABLE>", ref, KeyPrefix)
+	}
+	if strings.ContainsAny(envID, "=\n\r ") {
+		return "", "", fmt.Errorf("invalid secret reference %q: environment ID must not contain spaces, '=' or newlines", ref)
 	}
 	if strings.ContainsAny(key, "=\n\r ") || strings.Contains(key, "/") {
-		return fmt.Errorf("invalid secret reference %q: variable name must not contain spaces, '=', '/' or newlines", ref)
+		return "", "", fmt.Errorf("invalid secret reference %q: variable name must not contain spaces, '=', '/' or newlines", ref)
 	}
-	return nil
+	return envID, key, nil
 }
 
-// Resolver resolves environment variable keys against a 1Password
-// Environment. Input is the Environment ID and a set of deduplicated
-// variable names; output maps each name to its value.
+// ValidateRef checks that a reference parses into an Environment ID and
+// variable name.
+func ValidateRef(ref string) error {
+	_, _, err := ParseRef(ref)
+	return err
+}
+
+// Resolver reads a 1Password Environment: the full set of its variables
+// as a name -> value map. Implementations cache per Environment ID, so
+// any number of references and whole-Environment injections across all
+// services cost one op call per distinct Environment per process.
 type Resolver interface {
-	Resolve(ctx context.Context, envID string, keys []string) (map[string]string, error)
+	ReadEnvironment(ctx context.Context, envID string) (map[string]string, error)
 }
 
 // HashValues returns a deterministic sha256 over resolved secret values,
-// keyed by variable name. Used for the zdev.secrets-hash container label
-// so a later refresh can detect rotation without storing the values
-// anywhere.
+// keyed by container env name. Used for the zdev.secrets-hash container
+// label so a later refresh can detect rotation (and added/removed
+// variables) without storing the values anywhere.
 func HashValues(values map[string]string) string {
 	pairs := make([]string, 0, len(values))
 	for key, val := range values {

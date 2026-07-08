@@ -16,13 +16,13 @@ import (
 	"github.com/0ploy/zdev/internal/tools"
 )
 
-// OnePasswordCLI resolves op-env:// references by shelling out to the
+// OnePasswordCLI reads 1Password Environments by shelling out to the
 // 1Password CLI (`op environment read`, beta). The binary is
-// user-installed and looked up in PATH lazily on first Resolve, so
-// projects without secret references never require it. One Resolve call
-// fetches the whole Environment in a single op invocation (one auth
-// prompt no matter how many variables); the parsed set is cached in
-// memory for the lifetime of the process and never persisted.
+// user-installed and looked up in PATH lazily on first read, so projects
+// without secrets never require it. `op environment read` returns the
+// whole Environment in one invocation (one auth prompt no matter how
+// many variables); the parsed set is cached in memory per Environment ID
+// for the lifetime of the process and never persisted.
 type OnePasswordCLI struct {
 	mu         sync.Mutex
 	binary     string
@@ -45,14 +45,15 @@ type opAccount struct {
 }
 
 // NewOnePasswordCLI creates a resolver. It performs no PATH lookup and no
-// op invocation until Resolve is first called with references.
+// op invocation until ReadEnvironment is first called.
 func NewOnePasswordCLI() *OnePasswordCLI {
 	return &OnePasswordCLI{cache: make(map[string]map[string]string)}
 }
 
-// Resolve fetches the 1Password Environment (once, cached) and returns
-// the values for the requested variable names.
-func (o *OnePasswordCLI) Resolve(ctx context.Context, envID string, keys []string) (map[string]string, error) {
+// ReadEnvironment fetches the 1Password Environment (once per ID, cached)
+// and returns all its variables. The result is a copy; callers may
+// mutate it freely.
+func (o *OnePasswordCLI) ReadEnvironment(ctx context.Context, envID string) (map[string]string, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
@@ -73,29 +74,10 @@ func (o *OnePasswordCLI) Resolve(ctx context.Context, envID string, keys []strin
 		vars = fetched
 	}
 
-	result := make(map[string]string, len(keys))
-	var missing []string
-	seen := make(map[string]bool)
-	for _, key := range keys {
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		val, ok := vars[key]
-		if !ok {
-			missing = append(missing, key)
-			continue
-		}
-		if val == "" {
-			fmt.Printf("Warning: 1Password Environment variable %s is empty\n", key)
-		}
-		result[key] = val
+	result := make(map[string]string, len(vars))
+	for k, v := range vars {
+		result[k] = v
 	}
-
-	if len(missing) > 0 {
-		return nil, fmt.Errorf("variable(s) %s not found in 1Password Environment %s - check the Environment in the 1Password app (Developer > Environments)", strings.Join(missing, ", "), envID)
-	}
-
 	return result, nil
 }
 

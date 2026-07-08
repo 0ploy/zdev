@@ -1,32 +1,46 @@
-# 1Password Secrets Integration (`op-env://`)
+# 1Password Secrets Integration (`op-env`)
 
-zdev resolves secrets from a **1Password Environment** - a key-value table managed in the
+zdev resolves secrets from **1Password Environments** - key-value tables managed in the
 1Password app (Developer section), separate from vault items. The project config commits only
-non-secret references; real values are fetched by the `op` CLI when containers are created.
+non-secret Environment IDs and references; real values are fetched by the `op` CLI when
+containers are created.
 
 ## Mental model
 
 ```
 1Password app                        .zdev/config.yaml (committed)
-┌─ Environment "myapp dev" ─┐        secrets:
-│ API_KEY   = sk-abc123     │  ←──   op-env: b7qmzx3kfpwj4hn2c6t8vydl5a
+┌─ Environment "myapp dev" ─┐        variables:
+│ API_KEY   = sk-abc123     │  ←──     op-env: b7qmzx3kfpwj4hn2c6t8vydl5a
 │ DB_PASS   = hunter2       │
 │ LOG_LEVEL = debug         │        services:
 └───────────────────────────┘          app:
-                                         environment:
-     resolved at container                 API_KEY: op-env://API_KEY
-     creation, one op call                 DB_PASS: op-env://DB_PASS
+                                         op-env: ${op-env}    # inject ALL variables
+     resolved at container               environment:
+     creation, one op call                 API_URL: https://plain-value.example
+     per Environment                       EXTRA: op-env://${op-env}/EXTRA
 ```
 
-- `secrets.op-env` is the Environment's **ID** - not secret, safe to commit. One per project.
-- Any env value `op-env://<NAME>` is replaced with that variable's value from the Environment.
-  The env var name and the Environment key don't have to match (`DB_PASS: op-env://MYSQL_PASSWORD`).
-- Plain values and `op-env://` references mix freely in the same `environment:` block. Works at
-  project level and service level.
+Two forms of one token:
+
+- **`services.<name>.op-env: <environment-id>`** injects EVERY variable of the Environment
+  into the container env. Explicit `environment:` entries (plain values and references alike)
+  always win over injected variables.
+- **`op-env://<environment-id>/<VARIABLE>`** as an env value injects a single variable. The env
+  var name and the variable name don't have to match (`DB_PASS: op-env://<id>/MYSQL_PASSWORD`).
+
+Rules that follow:
+
+- The Environment **ID** is not secret, safe to commit. References are self-contained (they
+  carry their ID), so one project can mix variables from multiple Environments.
+- Keep the ID DRY with `${VAR}` substitution - it runs first, at config load:
+  `variables: {op-env: <id>}`, then `op-env: ${op-env}` and `op-env://${op-env}/VARIABLE`.
+- Plain values and references mix freely in the same `environment:` block. References work at
+  project level and service level; `op-env:` is service-level only (deliberate: injecting app
+  secrets into db/redis containers risks colliding with image-magic vars like
+  `MYSQL_ROOT_PASSWORD`).
 - A reference must be the ENTIRE env value - there is no mid-string interpolation
-  (`mysql://dev:op-env://DB_PASS@db/...` does not work). For composite values like a
+  (`mysql://dev:op-env://<id>/DB_PASS@db/...` does not work). For composite values like a
   `DATABASE_URL`, store the whole assembled string in the Environment and reference that.
-- `${VAR}` substitution composes (it runs first, at config load).
 
 ## Requirements
 
@@ -35,8 +49,8 @@ non-secret references; real values are fetched by the `op` CLI when containers a
   it, zdev offers the brew install itself on an interactive terminal.
 - 1Password desktop app with the CLI integration on: **Settings > Developer > Integrate with
   1Password CLI**. First resolution pops an authorization prompt (Touch ID).
-- zdev >= the release that shipped `secrets.op-env` - older binaries reject the unknown config
-  field with a config parse error. Don't add it to a team project before that release is out.
+- zdev >= the release that shipped `op-env` - older binaries reject the unknown config field
+  with a config parse error. Don't add it to a team project before that release is out.
 
 ## Setting up a project
 
@@ -46,52 +60,57 @@ non-secret references; real values are fetched by the `op` CLI when containers a
 3. Wire the project:
 
 ```yaml
-secrets:
+variables:
   op-env: <environment-id>
 
 services:
   app:
+    op-env: ${op-env}                    # every variable of the Environment
     environment:
-      API_URL: https://example.com/api      # plain value, untouched
-      API_KEY: op-env://API_KEY             # resolved from the Environment
+      API_URL: https://example.com/api   # plain value, wins over injection
+      EXTRA: op-env://${op-env}/EXTRA    # single-variable form (any Environment)
 ```
 
 4. `zdev start`. Approve the 1Password prompt when it appears.
 
 When converting an existing project that passes secrets via a gitignored `.env` or
 `.zdev/local/config.yaml`: import the `.env` into a new Environment (step 1 supports file import),
-replace the secret values in `environment:` with `op-env://` references, and delete the local
-copies. Non-secret env vars can stay as plain values - only move what's actually secret.
+attach it with `op-env:`, and delete the local copies. Non-secret env vars can stay as plain
+values - explicit entries win, so nothing injected can override them.
 
 ## When resolution happens (and when it doesn't)
 
 Secrets are resolved **only when a container is created**. This is deliberate: the container's
-config hash covers the *unresolved* reference string, so routine commands never contact 1Password
-and never pop auth prompts.
+config hash covers the *unresolved* reference string and the attached Environment ID (a
+`zdev.op-env` label), so routine commands never contact 1Password and never pop auth prompts -
+while changing the wiring (attach/detach/change ID, add/remove references) still recreates.
 
 | Command | Contacts 1Password? |
 |---------|--------------------|
 | `zdev start` (container exists, stopped) | No - env already baked in |
 | `zdev restart`, `zdev stop`, `zdev status` | No |
 | `zdev update` with no config changes | No |
-| First start / after `zdev down` / recreate on config change | Yes - one call |
-| `zdev update --refresh-secrets` | Yes - one call |
+| First start / after `zdev down` / recreate on config change | Yes - one call per Environment |
+| `zdev update --refresh-secrets` | Yes - one call per Environment |
 
-All references resolve in a single `op environment read` per operation regardless of count, so
-worst case is one auth prompt.
+Each distinct Environment is fetched once per operation (`op environment read`, cached per
+process) no matter how many services and references use it, so the typical worst case is one
+auth prompt. On recreates, resolution happens BEFORE the old container is removed - a failure
+(signed out, deleted Environment) leaves the running service intact.
 
-## Rotated secrets
+## Changed secrets
 
-Rotation is NOT auto-detected (that would require a 1Password call on every update check).
-After changing values in the 1Password app:
+Changes in 1Password are NOT auto-detected (that would require a 1Password call on every update
+check). After rotating values or adding/removing variables in the 1Password app:
 
 ```bash
 zdev update --refresh-secrets
 ```
 
 This fetches fresh values, compares them against a one-way hash stamped on each container
-(`zdev.secrets-hash` label - no secret material stored), and recreates **only** the services whose
-values actually changed. Unchanged services print "Secrets unchanged" and are left alone, so the
+(`zdev.secrets-hash` label - no secret material stored), and recreates **only** the services
+whose injected set actually changed - rotated values, and variables added to or removed from an
+attached Environment. Unchanged services print "Secrets unchanged" and are left alone, so the
 flag is cheap to run habitually.
 
 Common trap: `zdev restart` does NOT refresh secrets - it stops and starts the existing container
@@ -117,9 +136,9 @@ failures become actionable errors instead of hangs.
 | `authorization timeout` | The 1Password app's approval dialog went unanswered - unlock the app, rerun, approve the popup |
 | `not signed in` / `no accounts configured` | On a TTY zdev drives `op signin` / `op account add` interactively; otherwise enable the desktop-app CLI integration or set `OP_SERVICE_ACCOUNT_TOKEN` |
 | `does not support Environments` | Stable `op` build installed - Environments need the beta (`1password-cli@beta`) |
-| `variable(s) X not found in 1Password Environment` | Key missing in the Environment (names are case-sensitive) - check Developer > Environments in the app |
-| `secrets.op-env is not set` | Config uses `op-env://` values but no Environment ID - add the `secrets:` block |
-| Team member's zdev errors on `secrets:` field | Their zdev predates the feature - they must update zdev |
+| `expected op-env://<environment-id>/<VARIABLE>` | Reference is missing its Environment ID segment - the old single-segment form (`op-env://KEY`) is not valid |
+| `variable X not found in 1Password Environment` | Variable missing in that Environment (names are case-sensitive) - check Developer > Environments in the app |
+| Team member's zdev errors on `op-env` field | Their zdev predates the feature - they must update zdev |
 | Container has the literal `op-env://...` string | Same cause: a pre-feature zdev binary passes references through unresolved |
 
 `zdev systemcheck` reports the op CLI, whether it supports Environments, and sign-in state.

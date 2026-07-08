@@ -36,16 +36,16 @@ Changes detected (via a config hash stamped on each container):
 - Labels, network aliases, and published ports
 - Stale dockerfile: images (Dockerfile contents changed)
 
-Rotated 1Password secrets (op-env:// references in environment:) are NOT
-detected automatically - pass --refresh-secrets to check 1Password and
-recreate only the services whose secret values changed.`,
+Changed 1Password secrets (op-env: attachments and op-env:// references)
+are NOT detected automatically - pass --refresh-secrets to check
+1Password and recreate only the services whose secret values changed.`,
 	RunE: runUpdate,
 }
 
 func init() {
 	updateCmd.Flags().BoolVar(&updateBuild, "build", false, "Force rebuilding images for services with a dockerfile: config")
 	updateCmd.Flags().BoolVar(&updateNoBuild, "no-build", false, "Never build images; fail if a dockerfile: image is missing")
-	updateCmd.Flags().BoolVar(&updateRefreshSecrets, "refresh-secrets", false, "Re-resolve op-env:// secret references and recreate services whose values rotated")
+	updateCmd.Flags().BoolVar(&updateRefreshSecrets, "refresh-secrets", false, "Re-resolve 1Password secrets and recreate services whose values changed")
 	updateCmd.MarkFlagsMutuallyExclusive("build", "no-build")
 	rootCmd.AddCommand(updateCmd)
 }
