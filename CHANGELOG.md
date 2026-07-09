@@ -1,3 +1,9 @@
+## v0.9.2
+
+### Bug Fixes
+
+- **`zdev self-update` run from a locally built binary no longer hijacks the global install.** The legacy-layout migration ran before the version check and unconditionally copied the running binary to `~/.zdev/bin/zdev` - so invoking `self-update` from a source build silently replaced the installed zdev with the dev build (usually followed by "Already up to date") and turned the local build artifact into a symlink. Migration now only runs when the executable is the zdev that `PATH` resolves to; from any other location, `self-update` still updates the canonical install but never copies itself there or touches the local file.
+
 ## v0.9.1
 
 ### Improvements
