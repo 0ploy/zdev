@@ -4,11 +4,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -154,11 +156,41 @@ func newTestEnv(t *testing.T, tag string, installable bool) *testEnv {
 	return &testEnv{home: home, apiSrv: apiSrv, dlSrv: dlSrv, binBody: binBody}
 }
 
+// captureStderr redirects os.Stderr for the duration of fn and returns
+// everything written to it.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	prev := os.Stderr
+	os.Stderr = w
+	defer func() { os.Stderr = prev }()
+
+	fn()
+
+	w.Close()
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read stderr: %v", err)
+	}
+	return string(out)
+}
+
 func TestRefreshAndInstallDownloadsAndInstalls(t *testing.T) {
 	env := newTestEnv(t, "v9.9.9", true)
 
 	path := filepath.Join(env.home, "cache.json")
-	refreshAndInstall(path, nil, "v0.1.0")
+	stderr := captureStderr(t, func() {
+		refreshAndInstall(path, nil, "v0.1.0")
+	})
+	if !strings.Contains(stderr, "v9.9.9 is available") {
+		t.Errorf("stderr missing install announcement: %q", stderr)
+	}
+	if !strings.Contains(stderr, "updated to v9.9.9") {
+		t.Errorf("stderr missing success message: %q", stderr)
+	}
 
 	c, err := loadCache(path)
 	if err != nil {
@@ -192,7 +224,12 @@ func TestRefreshAndInstallSkipsWhenNotNewer(t *testing.T) {
 	env := newTestEnv(t, "v0.1.0", true)
 
 	path := filepath.Join(env.home, "cache.json")
-	refreshAndInstall(path, nil, "v0.1.0")
+	stderr := captureStderr(t, func() {
+		refreshAndInstall(path, nil, "v0.1.0")
+	})
+	if stderr != "" {
+		t.Errorf("expected silence when not newer, got %q", stderr)
+	}
 
 	c, err := loadCache(path)
 	if err != nil {

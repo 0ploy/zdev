@@ -9,10 +9,10 @@
 //   - If the cache is older than cacheTTL (or missing), it does a conditional
 //     GET (ETag) against the GitHub API synchronously, bounded by apiTimeout.
 //     If a newer release exists AND the running binary is in the symlink
-//     layout, it downloads the matching asset and atomically replaces
-//     ~/.zdev/bin/zdev. No sudo. No re-exec. The current process keeps
-//     running its in-memory code; the NEXT zdev invocation transparently
-//     uses the new binary via the symlink.
+//     layout, it announces the update on stderr, downloads the matching
+//     asset, and atomically replaces ~/.zdev/bin/zdev. No sudo. No re-exec.
+//     The current process keeps running its in-memory code; the NEXT zdev
+//     invocation transparently uses the new binary via the symlink.
 //
 // Blocking is deliberate: an earlier fire-and-forget goroutine version got
 // killed when main() returned on fast commands (version/list/status), so the
@@ -70,7 +70,8 @@ type releaseAsset struct {
 // installed a newer version, and performs a synchronous refresh (check +
 // download + install) if the cache is stale. Cache-hit path is fast and
 // network-free; stale-cache path blocks up to totalTimeout (at most once per
-// cacheTTL). All failures are silent.
+// cacheTTL). Check failures (network, rate limit) are silent; once an install
+// has been announced, its outcome is reported either way.
 func MaybeAutoUpdate(currentVersion string) {
 	if shouldSkip(currentVersion) {
 		return
@@ -90,10 +91,10 @@ func MaybeAutoUpdate(currentVersion string) {
 				"\x1b[33m✓ zdev updated to %s; next run will use it.\x1b[0m\n",
 				c.InstalledTag)
 		case c.LatestTag != "" && IsNewer(c.LatestTag, currentVersion):
-			// Seen a newer release but haven't installed it (likely on a
-			// legacy layout that needs migration). Fall back to a notify.
+			// Seen a newer release but haven't installed it (legacy layout
+			// that needs migration, or a failed install). Fall back to a notify.
 			fmt.Fprintf(os.Stderr,
-				"\x1b[33m→ zdev %s is available. Run `zdev self-update` to migrate.\x1b[0m\n",
+				"\x1b[33m→ zdev %s is available. Run `zdev self-update` to install it.\x1b[0m\n",
 				c.LatestTag)
 		}
 	}
@@ -135,9 +136,22 @@ func refreshAndInstall(path string, prev *cache, currentVersion string) {
 		next.LatestTag = rel.TagName
 
 		if IsNewer(rel.TagName, currentVersion) && canInstallFn() {
+			// Announce before downloading: the install blocks the current
+			// command for up to totalTimeout, and an unexplained pause looks
+			// like a hang. Once announced, the outcome is reported either way.
+			fmt.Fprintf(os.Stderr,
+				"\x1b[33m→ zdev %s is available, installing update...\x1b[0m\n",
+				rel.TagName)
 			installCtx, installCancel := context.WithTimeout(context.Background(), totalTimeout)
 			if err := installAsset(installCtx, rel); err == nil {
 				next.InstalledTag = rel.TagName
+				fmt.Fprintf(os.Stderr,
+					"\x1b[33m✓ zdev updated to %s; the next zdev command will use it.\x1b[0m\n",
+					rel.TagName)
+			} else {
+				fmt.Fprintf(os.Stderr,
+					"\x1b[33m! automatic update to %s failed; run `zdev self-update` to update manually\x1b[0m\n",
+					rel.TagName)
 			}
 			installCancel()
 		}
