@@ -166,6 +166,45 @@ func TestMigrateIfNeededNoOpWhenAlreadySymlinked(t *testing.T) {
 	}
 }
 
+func TestIsPATHInstall(t *testing.T) {
+	dir := t.TempDir()
+	installed := filepath.Join(dir, "zdev")
+	if err := os.WriteFile(installed, []byte("bin"), 0o755); err != nil {
+		t.Fatalf("seed installed binary: %v", err)
+	}
+	t.Setenv("PATH", dir)
+
+	if !isPATHInstall(installed) {
+		t.Errorf("expected true for the PATH-resolved binary")
+	}
+
+	// A dev build outside PATH must not count as installed, even though a
+	// zdev exists on PATH.
+	devDir := t.TempDir()
+	devBuild := filepath.Join(devDir, "zdev")
+	if err := os.WriteFile(devBuild, []byte("dev"), 0o755); err != nil {
+		t.Fatalf("seed dev build: %v", err)
+	}
+	if isPATHInstall(devBuild) {
+		t.Errorf("expected false for a binary outside PATH")
+	}
+
+	// A symlink on PATH pointing at the executable still counts.
+	linkDir := t.TempDir()
+	if err := os.Symlink(installed, filepath.Join(linkDir, "zdev")); err != nil {
+		t.Fatalf("seed symlink: %v", err)
+	}
+	t.Setenv("PATH", linkDir)
+	if !isPATHInstall(installed) {
+		t.Errorf("expected true when PATH resolves via symlink to the executable")
+	}
+
+	t.Setenv("PATH", "")
+	if isPATHInstall(installed) {
+		t.Errorf("expected false when zdev is not on PATH")
+	}
+}
+
 func TestMigrateIfNeededConvertsLegacyLayout(t *testing.T) {
 	dir := t.TempDir()
 	canonical := filepath.Join(dir, "canonical", "zdev")

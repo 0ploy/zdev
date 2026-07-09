@@ -62,9 +62,16 @@ func runSelfUpdate(ctx context.Context) error {
 		return fmt.Errorf("cannot determine executable path: %w", err)
 	}
 	// Silently migrate legacy installs (plain file at /usr/local/bin/zdev)
-	// to the symlink layout so subsequent updates don't need sudo.
-	if err := migrateIfNeeded(execPath, canonical); err != nil {
-		return err
+	// to the symlink layout so subsequent updates don't need sudo. Only
+	// applies when the running executable is what PATH resolves to: a
+	// binary run from a build or download dir was never installed, and
+	// migrating it would copy a dev build over the canonical install (then
+	// exit "already up to date", leaving it there) and turn the local file
+	// into a symlink.
+	if isPATHInstall(execPath) {
+		if err := migrateIfNeeded(execPath, canonical); err != nil {
+			return err
+		}
 	}
 
 	currentVersion := strings.TrimPrefix(Version, "v")
@@ -150,6 +157,25 @@ func runSelfUpdate(ctx context.Context) error {
 		fmt.Fprintf(os.Stderr, "warning: could not exec new binary: %v\n", err)
 	}
 	return nil
+}
+
+// isPATHInstall reports whether execPath is the zdev that PATH resolves to.
+// False for a binary run from a build tree or via an explicit path that
+// isn't the installed one, and when zdev isn't on PATH at all.
+func isPATHInstall(execPath string) bool {
+	pathBin, err := exec.LookPath("zdev")
+	if err != nil {
+		return false
+	}
+	realExec, err := filepath.EvalSymlinks(execPath)
+	if err != nil {
+		realExec = execPath
+	}
+	realPathBin, err := filepath.EvalSymlinks(pathBin)
+	if err != nil {
+		realPathBin = pathBin
+	}
+	return realExec == realPathBin
 }
 
 // migrateIfNeeded ensures execPath resolves to canonical. If not, it copies
