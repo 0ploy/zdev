@@ -1,3 +1,9 @@
+## v0.9.1
+
+### Improvements
+
+- **Automatic updates now announce themselves.** The once-a-day auto-updater used to download and install new versions completely silently - the only clue was an unexplained pause of up to a minute, and the "updated" banner intended for the next run could never fire on the standard install layout. zdev now prints a one-line notice to stderr when it starts installing an update ("zdev vX.Y.Z is available, installing update..."), confirms success ("updated to vX.Y.Z; the next zdev command will use it"), and on a failed install points to `zdev self-update` instead of staying silent.
+
 ## v0.9.0
 
 ### Features
