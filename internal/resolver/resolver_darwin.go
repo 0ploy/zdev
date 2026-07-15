@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // resolverFilePath is the macOS per-domain resolver file. macOS routes all
@@ -17,8 +18,10 @@ func resolverFilePath(domain string) string {
 }
 
 func resolverFileContent(port int) string {
-	return fmt.Sprintf("# Managed by zdev - local DNS fallback.\nnameserver 127.0.0.1\nport %d\n", port)
+	return fmt.Sprintf("# %s - local DNS fallback.\nnameserver 127.0.0.1\nport %d\n", managedMarker, port)
 }
+
+const resolverDir = "/etc/resolver"
 
 // Supported reports whether zdev can configure split DNS here. macOS always
 // supports /etc/resolver.
@@ -59,13 +62,54 @@ func Install(domain string, port int) error {
 	return runSudoScript(explain, script)
 }
 
-// Remove deletes the resolver file, reverting to normal DNS for the domain.
-func Remove(domain string) error {
-	if err := validateDomain(domain); err != nil {
+// Remove deletes every zdev-managed resolver file, reverting to normal DNS.
+// It removes ALL files zdev wrote (identified by the managed marker), not
+// just the current domain's, so changing the configured domain and then
+// disabling still leaves no orphaned route behind. No-op (and no sudo
+// prompt) when there is nothing to remove; leaves resolver files the user
+// wrote by hand untouched.
+func Remove() error {
+	managed, err := managedResolverFiles()
+	if err != nil {
 		return err
 	}
-	dst := resolverFilePath(domain)
-	explain := fmt.Sprintf("zdev needs sudo to remove the local DNS fallback route at %s", dst)
-	script := fmt.Sprintf("rm -f %q", dst)
+	if len(managed) == 0 {
+		return nil
+	}
+
+	quoted := make([]string, len(managed))
+	for i, p := range managed {
+		quoted[i] = fmt.Sprintf("%q", p)
+	}
+	explain := fmt.Sprintf("zdev needs sudo to remove the local DNS fallback route(s): %s", strings.Join(managed, ", "))
+	script := "rm -f " + strings.Join(quoted, " ")
 	return runSudoScript(explain, script)
+}
+
+// managedResolverFiles returns the /etc/resolver files zdev created,
+// identified by the managed marker in their contents. Files are world
+// readable (mode 0644), so no privilege is needed to scan them.
+func managedResolverFiles() ([]string, error) {
+	entries, err := os.ReadDir(resolverDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var managed []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		p := filepath.Join(resolverDir, e.Name())
+		data, err := os.ReadFile(p)
+		if err != nil {
+			continue // unreadable entry - not ours to reason about
+		}
+		if strings.Contains(string(data), managedMarker) {
+			managed = append(managed, p)
+		}
+	}
+	return managed, nil
 }

@@ -190,6 +190,8 @@ zdev dns enable    # one sudo prompt to configure the host resolver
 
 This runs a tiny local DNS container and points your OS at it **for the zdev domain only** (via `/etc/resolver` on macOS, systemd-resolved on Linux) - the router is bypassed for that domain and all other DNS is untouched. `zdev dns status` shows the current state; `zdev dns disable` reverts it.
 
+The fallback covers your global zdev domain and every subdomain under it (so all your projects are handled by a single `zdev dns enable`). A project that overrides its `domain:` to a *different base domain* is not covered - it would still need that domain to resolve to `127.0.0.1` by other means.
+
 ### Team Secrets from 1Password
 
 The classic onboarding wall: the app needs API keys and passwords, so someone digs up the current `.env` and sends it over Slack - and from that moment every developer has their own drifting, plaintext copy. zdev removes the handoff entirely: secrets live in a [1Password Environment](https://www.1password.dev/environments) your team already shares, and the committed config only holds references.

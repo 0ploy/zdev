@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 // dropInPath is the systemd-resolved drop-in that configures split DNS for
@@ -21,8 +22,12 @@ func dropInPath(domain string) string {
 // using the link's normal DNS (its default ~. catch-all route). no-resolv
 // on the dnsmasq side is therefore safe - unrelated queries never arrive.
 func dropInContent(domain string, port int) string {
-	return fmt.Sprintf("# Managed by zdev - local DNS fallback.\n[Resolve]\nDNS=127.0.0.1:%d\nDomains=~%s\n", port, domain)
+	return fmt.Sprintf("# %s - local DNS fallback.\n[Resolve]\nDNS=127.0.0.1:%d\nDomains=~%s\n", managedMarker, port, domain)
 }
+
+// dropInGlob matches every zdev-managed resolved.conf drop-in, regardless of
+// which domain it was written for.
+const dropInGlob = "/etc/systemd/resolved.conf.d/zdev-*.conf"
 
 // systemdResolvedActive reports whether systemd-resolved is the active
 // resolver. Split DNS via a drop-in only works when it is.
@@ -86,13 +91,25 @@ func Install(domain string, port int) error {
 	return runSudoScript(explain, script)
 }
 
-// Remove deletes the drop-in and restarts systemd-resolved.
-func Remove(domain string) error {
-	if err := validateDomain(domain); err != nil {
+// Remove deletes every zdev-managed drop-in and restarts systemd-resolved.
+// It removes ALL drop-ins zdev wrote (matched by the zdev- prefix), not just
+// the current domain's, so changing the configured domain and then disabling
+// still leaves no orphaned route behind. No-op (and no sudo prompt) when
+// there is nothing to remove.
+func Remove() error {
+	matches, err := filepath.Glob(dropInGlob)
+	if err != nil {
 		return err
 	}
-	dst := dropInPath(domain)
-	explain := fmt.Sprintf("zdev needs sudo to remove the local DNS fallback route at %s", dst)
-	script := fmt.Sprintf("rm -f %q && systemctl restart systemd-resolved", dst)
+	if len(matches) == 0 {
+		return nil
+	}
+
+	quoted := make([]string, len(matches))
+	for i, p := range matches {
+		quoted[i] = fmt.Sprintf("%q", p)
+	}
+	explain := fmt.Sprintf("zdev needs sudo to remove the local DNS fallback route(s): %s", strings.Join(matches, ", "))
+	script := "rm -f " + strings.Join(quoted, " ") + " && systemctl restart systemd-resolved"
 	return runSudoScript(explain, script)
 }

@@ -570,6 +570,13 @@ func checkDNS(ctx context.Context, cfg *config.GlobalConfig) int {
 	fmt.Print("DNS:           ")
 
 	installed, _ := resolver.IsInstalled(cfg.Domain)
+	if installed {
+		// The fallback is configured, so resolution depends on the
+		// container being up. Bring it back (mirroring `zdev start`) before
+		// we verify, so a merely-stopped container isn't misreported as a
+		// broken fallback.
+		ensureDNSFallbackRunning(ctx, cfg)
+	}
 
 	result, err := config.VerifyDomainDNS(cfg.Domain)
 	if err == nil {

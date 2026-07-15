@@ -1,3 +1,9 @@
+## Unreleased
+
+### Features
+
+- **Local DNS fallback for routers that block the wildcard record.** zdev's URLs rely on `*.0ploy.dev` resolving to `127.0.0.1`; some routers enforce DNS rebinding protection and strip that loopback answer, so projects fail to resolve on those networks. `zdev systemcheck` now detects this and offers to fix it, or run `zdev dns enable` directly: a small local dnsmasq container answers the zdev domain authoritatively, and your OS is pointed at it **for that domain only** (via `/etc/resolver` on macOS, a systemd-resolved drop-in on Linux) - the router is bypassed for the zdev domain while all other DNS is untouched. One `sudo` prompt configures the host resolver. `zdev dns status` shows the current state and `zdev dns disable` reverts it (cleaning up all host resolver config zdev wrote). The fallback covers the configured domain and every subdomain under it; a project that overrides its domain to a different base domain is not covered.
+
 ## v0.9.2
 
 ### Bug Fixes

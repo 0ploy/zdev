@@ -17,7 +17,7 @@ func Install(domain string, port int) error {
 	return ErrUnsupported
 }
 
-// Remove is unsupported on this platform.
-func Remove(domain string) error {
-	return ErrUnsupported
+// Remove is a no-op: nothing could have been installed here.
+func Remove() error {
+	return nil
 }

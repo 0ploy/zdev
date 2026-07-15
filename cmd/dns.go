@@ -76,11 +76,11 @@ func runDNSDisable(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to load global config: %w", err)
 		}
 
-		installed, _ := resolver.IsInstalled(cfg.Domain)
-		if installed {
-			if err := resolver.Remove(cfg.Domain); err != nil {
-				return fmt.Errorf("failed to remove host resolver config: %w", err)
-			}
+		// Remove ALL zdev-managed resolver config (idempotent, and covers a
+		// domain that was changed since enabling), not just the current
+		// domain's - otherwise disable could leave an orphaned route behind.
+		if err := resolver.Remove(); err != nil {
+			return fmt.Errorf("failed to remove host resolver config: %w", err)
 		}
 
 		mgr := services.NewManager(cfg)

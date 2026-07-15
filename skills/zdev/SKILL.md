@@ -363,6 +363,8 @@ network's router likely enforces DNS rebinding protection - it drops the wildcar
 `127.0.0.1` answer. Run `zdev dns enable` (or let `zdev systemcheck` offer it): a local dnsmasq
 container answers the zdev domain and the OS is pointed at it for that domain only (one sudo prompt;
 `/etc/resolver` on macOS, systemd-resolved on Linux). `zdev dns status` / `zdev dns disable` manage it.
+Covers the global zdev domain and all subdomains (one enable handles every project); a project that
+overrides `domain:` to a different base domain is not covered.
 
 **File sync issues (macOS):** `zdev mutagen status` / `zdev mutagen reset`
 

@@ -26,6 +26,12 @@ import (
 // no automated split-DNS mechanism zdev knows how to drive.
 var ErrUnsupported = errors.New("automatic host DNS configuration is not supported on this platform")
 
+// managedMarker is written into the first line of every host resolver file
+// zdev creates, so Remove can identify and clean up ALL zdev-managed config
+// (even for a domain the global config no longer uses) without touching
+// files the user wrote by hand.
+const managedMarker = "Managed by zdev"
+
 // domainPattern guards the domain before it is interpolated into file
 // paths and sudo shell scripts. Labels are alphanumeric with internal
 // hyphens, separated by dots.

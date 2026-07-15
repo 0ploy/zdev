@@ -109,6 +109,8 @@ This has multiple touch points that are easy to miss:
 5. Add the opt-in flag to `ProjectSharedConfig` in `internal/config/config.go` and reference it in the registry entry's `ProjectEnabled` closure
 6. Update `cmd/info.go` and `cmd/status.go` to display the service status
 
+**Not every shared container belongs in the registry.** The registry exists for services that attach to project networks (that's what its `Connect`/`Disconnect`/`ProjectEnabled` closures are for). A container that publishes host ports and is queried by the host directly - the DNS fallback (`internal/services/dns.go`) is the current example - has none of that and is also conditional on being enabled, so it stays OUT of `AllSharedServices()` with dedicated `StartDNS`/`StopDNS`/`DNSStatus` methods and its own `cmd/dns.go` command instead. Don't add it to the registry. See the CLAUDE.md architecture anchor for the full reasoning.
+
 ## Link Networks
 
 Link networks enable cross-project container communication. The implementation spans:
