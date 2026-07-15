@@ -70,6 +70,9 @@ zdev mail / db / redis          # Open in browser
 zdev services status            # Check shared services
 zdev services recreate          # Rebuild shared containers
 
+# Local DNS fallback (only if the router blocks the wildcard - see Debugging)
+zdev dns enable / disable / status
+
 # Cross-project networks (links) — see "Linking projects" below
 zdev link create <name>         # Make a shared Docker network
 zdev link join <name> <proj>[.<svc>] ...   # Attach a whole project or one service
@@ -354,6 +357,12 @@ those, run `zdev update --build` to force the rebuild.
 **Redirects to docs page:** Either the container isn't running or `routing.port` doesn't match the
 app's port. For shared service UIs (mail, db, redis), also check `zdev services status` - the
 service needs to be running AND the project must have the corresponding `shared.*` option enabled.
+
+**`https://*.0ploy.dev` won't resolve at all (DNS verification failed on `zdev start`):** the
+network's router likely enforces DNS rebinding protection - it drops the wildcard record's
+`127.0.0.1` answer. Run `zdev dns enable` (or let `zdev systemcheck` offer it): a local dnsmasq
+container answers the zdev domain and the OS is pointed at it for that domain only (one sudo prompt;
+`/etc/resolver` on macOS, systemd-resolved on Linux). `zdev dns status` / `zdev dns disable` manage it.
 
 **File sync issues (macOS):** `zdev mutagen status` / `zdev mutagen reset`
 

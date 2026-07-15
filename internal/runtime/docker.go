@@ -145,6 +145,11 @@ func (d *DockerCLI) CreateContainer(ctx context.Context, cfg ContainerConfig) (s
 		args = append(args, "-p", port)
 	}
 
+	// Add restart policy
+	if cfg.RestartPolicy != "" {
+		args = append(args, "--restart", cfg.RestartPolicy)
+	}
+
 	// Add network
 	if cfg.NetworkName != "" {
 		args = append(args, "--network", cfg.NetworkName)

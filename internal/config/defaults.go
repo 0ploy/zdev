@@ -9,6 +9,13 @@ const (
 	// GlobalConfigFilename is the filename for the global config
 	// Distinct from project config.yaml to avoid confusion
 	GlobalConfigFilename = "global-config.yaml"
+
+	// DNSResolverPort is the loopback host port the local DNS fallback
+	// container publishes (container listens on 53). Deliberately NOT 5353
+	// (macOS mDNSResponder/Bonjour holds that) and not privileged 53; the
+	// host resolver config (/etc/resolver on macOS, systemd-resolved on
+	// Linux) points at 127.0.0.1 on this port.
+	DNSResolverPort = 5335
 )
 
 // Shared service image versions
@@ -27,6 +34,13 @@ const (
 
 	// LogsImage is the default Dozzle log viewer image
 	LogsImage = "amir20/dozzle:latest"
+
+	// DNSImage is the dnsmasq image used for the optional local DNS
+	// fallback (see internal/resolver). It reads /etc/dnsmasq.conf, which
+	// zdev generates and bind-mounts, and answers *.<domain> -> 127.0.0.1
+	// authoritatively with no upstream. Only pulled when a user enables
+	// the fallback for a rebinding-protecting router.
+	DNSImage = "dockurr/dnsmasq:latest"
 
 	// TestImage is the lightweight image used for integration tests
 	// Keep in sync with testdata/projects/*/config.yaml fixtures

@@ -12,6 +12,12 @@ type ContainerConfig struct {
 	Ports       []string          // Port mappings (e.g., "5432:5432", "127.0.0.1:3306:3306")
 	NetworkName string            // Network to attach to
 	Aliases     []string          // Network aliases for DNS
+	// RestartPolicy maps to `docker create --restart` (e.g. "unless-stopped").
+	// Deliberately NOT part of ComputeConfigHash (the hash payload is
+	// explicit, so this field is invisible to it) - it's set once at
+	// creation and never a drift signal. Empty means no policy (Docker
+	// default "no").
+	RestartPolicy string
 }
 
 // VolumeMount defines a volume or bind mount

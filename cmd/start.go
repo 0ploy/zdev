@@ -50,14 +50,17 @@ func runStart(cmd *cobra.Command, args []string) error {
 }
 
 func runStartImpl(ctx context.Context, proj *project.Project, args []string) error {
-	// Verify domain DNS resolves to 127.0.0.1
-	if _, err := config.VerifyDomainDNS(proj.Config.Domain); err != nil {
-		return fmt.Errorf("DNS verification failed: %w", err)
-	}
-
 	plainMode := false
 	if gcfg, err := config.LoadGlobalConfig(); err == nil && gcfg != nil {
 		plainMode = ui.PlainMode(gcfg.Terminal.Plain)
+		// If the local DNS fallback is enabled, make sure its container is
+		// up before we verify resolution - system DNS resolves through it.
+		ensureDNSFallbackRunning(ctx, gcfg)
+	}
+
+	// Verify domain DNS resolves to 127.0.0.1
+	if _, err := config.VerifyDomainDNS(proj.Config.Domain); err != nil {
+		return fmt.Errorf("DNS verification failed: %w", err)
 	}
 
 	if len(args) == 1 {

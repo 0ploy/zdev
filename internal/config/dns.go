@@ -63,13 +63,16 @@ func VerifyDomainDNS(domain string) (*DNSCheckResult, error) {
 	// Check if public DNS resolved to 127.0.0.1
 	if publicErr == nil && containsLoopback(publicIPs) {
 		result.ResolvesTo127 = true
-		// Domain is correctly configured, but system DNS isn't working
-		// This must be an error because the router won't work without local DNS resolution
+		// Domain is correctly configured, but system DNS isn't working.
+		// This is the DNS rebinding-protection signature: the router
+		// strips the loopback answer from upstream responses.
 		msg := fmt.Sprintf("domain %q is correctly configured (resolves to 127.0.0.1 via public DNS)\n"+
-			"but your system DNS cannot resolve it.\n\n"+
-			"Fix by adding this line to /etc/hosts:\n"+
-			"  127.0.0.1 %s\n\n"+
-			"Or flush your DNS cache and try again.",
+			"but your system DNS cannot resolve it. Your router likely blocks answers\n"+
+			"pointing at 127.0.0.1 (DNS rebinding protection).\n\n"+
+			"Fix by enabling the local DNS fallback, which routes *.%s through a local\n"+
+			"DNS container and bypasses your router for that domain only:\n"+
+			"  zdev dns enable\n\n"+
+			"Or run 'zdev systemcheck', which offers to set this up for you.",
 			domain, domain)
 		return result, fmt.Errorf("%s", ui.Color(msg, "red", false))
 	}

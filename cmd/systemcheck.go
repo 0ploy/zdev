@@ -10,6 +10,7 @@ import (
 
 	"github.com/0ploy/zdev/internal/config"
 	"github.com/0ploy/zdev/internal/firstrun"
+	"github.com/0ploy/zdev/internal/resolver"
 	"github.com/0ploy/zdev/internal/secrets"
 	"github.com/0ploy/zdev/internal/services"
 	"github.com/0ploy/zdev/internal/ssl"
@@ -107,6 +108,10 @@ func openDocsAfterFirstRun(ctx context.Context, cfg *config.GlobalConfig) {
 	// Start other services
 	_ = mgr.StartMail(ctx)
 	_ = mgr.StartDBUI(ctx)
+
+	// Bring the local DNS fallback container back up if the host is
+	// configured to use it (otherwise *.<domain> would stop resolving).
+	ensureDNSFallbackRunning(ctx, cfg)
 
 	// Build docs URL
 	url := fmt.Sprintf("%s://docs.shared.%s", schemeFor(cfg), cfg.Domain)
@@ -210,6 +215,10 @@ func runSystemcheck(cmd *cobra.Command, args []string) error {
 
 	// Check router status
 	issues += checkRouter(ctx, globalCfg)
+
+	// Check domain DNS resolution (and offer the local fallback if a
+	// rebinding-protecting router is blocking the wildcard record)
+	issues += checkDNS(ctx, globalCfg)
 
 	// Summary
 	fmt.Println()
@@ -551,4 +560,61 @@ func checkRouter(ctx context.Context, cfg *config.GlobalConfig) int {
 
 	fmt.Printf("%s (ports 80, 443%s)\n", statusText("running"), tlsInfo)
 	return 0
+}
+
+// checkDNS verifies the project domain resolves to 127.0.0.1 via system
+// DNS. When a rebinding-protecting router is blocking the wildcard record
+// (the domain resolves via public DNS but not system DNS), it offers to
+// enable the local DNS fallback interactively.
+func checkDNS(ctx context.Context, cfg *config.GlobalConfig) int {
+	fmt.Print("DNS:           ")
+
+	installed, _ := resolver.IsInstalled(cfg.Domain)
+
+	result, err := config.VerifyDomainDNS(cfg.Domain)
+	if err == nil {
+		if installed {
+			fmt.Printf("%s (*.%s via local fallback)\n", statusText("OK"), cfg.Domain)
+		} else {
+			fmt.Printf("%s (*.%s resolves to 127.0.0.1)\n", statusText("OK"), cfg.Domain)
+		}
+		return 0
+	}
+
+	// The domain resolves to loopback via public DNS but not system DNS:
+	// the classic rebinding-protection signature.
+	if result != nil && result.ResolvesTo127 {
+		fmt.Printf("%s (system DNS can't resolve *.%s)\n", statusText("MISSING"), cfg.Domain)
+
+		if installed {
+			fmt.Println("               Local DNS fallback is configured but not resolving.")
+			fmt.Println("               Check the DNS container: zdev dns status")
+			return 1
+		}
+
+		fmt.Println("               Your router appears to block answers pointing at 127.0.0.1")
+		fmt.Println("               (DNS rebinding protection).")
+
+		if supported, reason := resolver.Supported(); !supported {
+			fmt.Printf("               Automatic fallback unavailable: %s\n", reason)
+			fmt.Println("               Enable manually - see 'zdev dns enable'.")
+			return 1
+		}
+
+		fmt.Printf("               zdev can route *.%s through a local DNS container,\n", cfg.Domain)
+		fmt.Println("               bypassing your router for that domain only.")
+		if !confirm("               Enable the local DNS fallback now? [y/N]: ") {
+			fmt.Println("               Skipped. Enable later with: zdev dns enable")
+			return 1
+		}
+		if err := enableDNSFallback(ctx, cfg); err != nil {
+			fmt.Printf("               %s %v\n", statusText("FAILED"), err)
+			return 1
+		}
+		fmt.Printf("               %s local DNS fallback enabled for *.%s\n", statusText("OK"), cfg.Domain)
+		return 0
+	}
+
+	fmt.Printf("%s (*.%s does not resolve to 127.0.0.1)\n", statusText("MISSING"), cfg.Domain)
+	return 1
 }

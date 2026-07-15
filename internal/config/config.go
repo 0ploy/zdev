@@ -11,6 +11,17 @@ type GlobalConfig struct {
 	Shared   SharedConfig         `yaml:"shared"`
 	Terminal TerminalConfig       `yaml:"terminal"`
 	Mutagen  MutagenGlobalConfig  `yaml:"mutagen"`
+	DNS      DNSFallbackConfig    `yaml:"dns"`
+}
+
+// DNSFallbackConfig configures the optional local DNS fallback used when
+// a router blocks the public wildcard record from resolving to 127.0.0.1
+// (DNS rebinding protection). Whether the fallback is ACTIVE is not stored
+// here - it is derived from the presence of the host resolver config (see
+// internal/resolver), so it can never drift from what actually resolves.
+// Only the container image is configurable.
+type DNSFallbackConfig struct {
+	Image string `yaml:"image"`
 }
 
 // MutagenGlobalConfig defines global Mutagen file sync settings

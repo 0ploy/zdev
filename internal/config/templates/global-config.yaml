@@ -39,3 +39,9 @@ mutagen:
   enabled: auto       # auto = enabled on macOS, disabled on Linux
                       # Set to "true" or "false" to override
   sync_mode: two-way-safe  # Sync mode: two-way-safe, two-way-resolved, one-way-safe
+
+# Local DNS fallback (only for routers that block the wildcard record from
+# resolving to 127.0.0.1). Enable with `zdev dns enable`; whether it is
+# active is determined by your host resolver config, not by this file.
+dns:
+  image: ${DNSImage}

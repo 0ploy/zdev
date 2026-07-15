@@ -320,6 +320,9 @@ func newDefaultGlobalConfig() GlobalConfig {
 		Terminal: TerminalConfig{
 			Plain: false,
 		},
+		DNS: DNSFallbackConfig{
+			Image: DNSImage,
+		},
 	}
 }
 
@@ -394,6 +397,7 @@ func generateDefaultGlobalConfig() string {
 		"DBUIImage":          DBUIImage,
 		"RedisInsightsImage": RedisInsightsImage,
 		"LogsImage":          LogsImage,
+		"DNSImage":           DNSImage,
 	}
 	return substituteConfigVars(defaultGlobalConfig, vars)
 }
@@ -512,6 +516,39 @@ func EnsureTraefikConfig() (string, error) {
 	}
 
 	return traefikDir, nil
+}
+
+// GetDNSConfigDir returns the path to the local DNS fallback config directory
+func GetDNSConfigDir() string {
+	return filepath.Join(getZdevHome(), "dnsmasq")
+}
+
+// EnsureDNSConfig writes the dnsmasq config for the local DNS fallback and
+// returns the absolute path to the config FILE (bind-mounted at
+// /etc/dnsmasq.conf - the dockurr/dnsmasq entrypoint reads that path). The
+// config makes dnsmasq authoritative for *.<domain> -> 127.0.0.1 with no
+// upstream: the host resolver only routes <domain> queries here, so
+// unrelated names never reach it. Rewritten on every start so a domain
+// change is picked up (the container also recreates - the domain is stamped
+// as a label, see services.DNSContainerConfig).
+func EnsureDNSConfig(domain string) (string, error) {
+	dnsDir := GetDNSConfigDir()
+	if err := os.MkdirAll(dnsDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create dns config directory: %w", err)
+	}
+
+	content := fmt.Sprintf("# Managed by zdev - do not edit.\n"+
+		"address=/%s/127.0.0.1\n"+
+		"no-resolv\n"+
+		"no-hosts\n"+
+		"cache-size=0\n", domain)
+
+	configPath := filepath.Join(dnsDir, "dnsmasq.conf")
+	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+		return "", fmt.Errorf("failed to write dns config: %w", err)
+	}
+
+	return configPath, nil
 }
 
 // GetDocsDir returns the path to the docs directory
