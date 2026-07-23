@@ -16,11 +16,32 @@ my-template/
 ```
 
 **Static templates** (e.g. Express) also include source files (`app.js`, `package.json`, `.gitignore`).
-**Scaffold templates** (e.g. Nuxt, Symfony) ship only `.zdev/` - the framework's create command generates app files during setup.
+**Scaffold templates** (e.g. Nuxt, Symfony) ship only `.zdev/` - the framework's create command generates the app files.
 
-## The .setup-complete Pattern
+There are two ways a scaffold template can generate those files: a **create-time scaffold hook** (`.zdev/scaffold.sh`, preferred - keeps scaffolding out of the created project), or scaffolding inside **`setup.just`** (the older approach, with a `.setup-complete` gate). New templates should prefer the hook.
 
-Templates must solve a circular dependency: the container needs to be running for `zdev exec`
+## Create-time scaffold hook (`.zdev/scaffold.sh`) - preferred (zdev >= v0.11.0)
+
+Ship a `.zdev/scaffold.sh`. `zdev create` runs it **once**, right after copying the template, inside a throwaway container built from your `.zdev/Dockerfile` with the entrypoint overridden to a plain shell (`docker run --entrypoint sh`). The image's normal init (zpinit, a PHP entrypoint) is bypassed, so the hook only generates the project. The project dir is bind-mounted at `/app`, so files land on the host synchronously (no Mutagen session).
+
+```sh
+# .zdev/scaffold.sh - runs inside the throwaway container (cwd /app)
+#!/bin/sh
+set -eu
+# --template is required: a non-interactive terminal can't answer the prompt.
+pnpm dlx nuxi@latest init . --template minimal --no-install --packageManager pnpm --gitInit=false --force
+```
+
+- **Scaffold source only; install at boot.** Use `--no-install`; install deps in the boot path (a zpinit `entrypoint.d/` step, or the container `command:`) so a clone just runs `zdev start` and pulled dependency changes are picked up. Install-at-scaffold-time only populates the throwaway bind mount, not the persistent volume.
+- **No gate, no `.setup-complete`.** Because scaffolding happens at create time, the steady-state image needs no wait loop and the created project carries no re-scaffolding `setup.just`.
+- **zdev auto-disables the hook** after a successful run (renames `scaffold.sh` -> `scaffold.sh.disabled`, never deletes it). A `.disabled` hook is skipped, so reusing the project as a template won't re-scaffold. Safe even if the user never reads the create output.
+- The scaffold runs in the sole service, or the one named `app`. It requires Docker (build/pull + run).
+
+The reference implementation is `0ploy/zdev-template-nuxt4`. The rest of this file covers the older `setup.just` scaffolding approach.
+
+## The .setup-complete Pattern (setup.just scaffolding)
+
+Scaffolding inside `setup.just` must solve a circular dependency: the container needs to be running for `zdev exec`
 (used by setup), but the app can't start until setup completes.
 
 **In config.yaml command:**
@@ -103,18 +124,20 @@ When the framework has a create command that expects an empty directory:
 On macOS with Mutagen, `.zdev` is ignored so the container sees an empty `/app`. On Linux,
 `.zdev/` is visible but scaffolding tools just add their own files alongside it.
 
-Example - Nuxt:
+Example - Nuxt (current `nuxi init` needs an explicit `--template` in a non-TTY):
 
 ```just
-zdev exec app pnpm dlx nuxi@latest init . --packageManager pnpm --gitInit=false --force
-zdev exec app npx nuxi prepare          # triggers module dep prompts interactively
-zdev exec app pnpm approve-builds --all  # approves native module build scripts
+zdev exec app pnpm dlx nuxi@latest init . --template minimal --packageManager pnpm --gitInit=false --force
+zdev exec app npx nuxi prepare           # triggers module dep prompts interactively
+zdev exec app pnpm approve-builds --all  # approves native module build scripts (esbuild etc.)
 zdev exec app sh -c "echo '.setup-complete' >> .gitignore && touch .setup-complete"
 ```
 
 `npx nuxi prepare` is critical - it runs Nuxt module initialization which may prompt for
 missing dependencies (e.g. `better-sqlite3` for `@nuxt/content`). Without it, those prompts
-fire in the entrypoint where there's no TTY, crashing the container.
+fire in the entrypoint where there's no TTY, crashing the container. `pnpm approve-builds --all`
+is the interactive equivalent of the boot-path `pnpm install --config.dangerouslyAllowAllBuilds=true`
+(see `stack-gotchas.md`) - pnpm blocks native build scripts by default and errors in a non-TTY.
 
 ### Scaffold in /tmp (when tool requires empty directory)
 
@@ -152,6 +175,9 @@ adding zdev to an existing project.
 Name repos `zdev-template-<name>`. The `0ploy` org has shorthand:
 `zdev create express` -> `0ploy/zdev-template-express`
 
-Test locally: `zdev create ./my-template test-app && cd test-app && zdev setup`
+Test locally: `zdev create ./my-template test-app && cd test-app && zdev start`
+(a `scaffold.sh` runs during `zdev create`; older `setup.just` templates need `zdev setup` instead).
 
-Verify: setup completes, URL loads, `zdev restart` works, file changes reflected.
+Verify: create scaffolds, `zdev start` serves the URL, `zdev restart` works, file changes reflected.
+
+**Iterating gotcha:** editing a file the Dockerfile `COPY`s into the image (e.g. `.zdev/zpinit/entrypoint.d/*`, baked config) does NOT trigger a rebuild on the next `zdev start` — build staleness hashes the Dockerfile *contents* only, not the build context. Force it with `zdev start --build` (or `zdev update --build`). A fresh `zdev create` builds from scratch, so end users creating a new project never hit this; it bites template authors iterating locally. See `stack-gotchas.md`.

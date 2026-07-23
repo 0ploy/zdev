@@ -175,6 +175,43 @@ func (d *DockerCLI) CreateContainer(ctx context.Context, cfg ContainerConfig) (s
 	return strings.TrimSpace(out), nil
 }
 
+// RunContainer runs a one-shot container in the foreground (docker run --rm),
+// streaming stdout/stderr to the caller's terminal and returning when it exits.
+// A non-zero exit surfaces as an error. --rm removes the container afterward.
+func (d *DockerCLI) RunContainer(ctx context.Context, cfg RunConfig) error {
+	args := []string{"run", "--rm"}
+
+	if cfg.Entrypoint != "" {
+		args = append(args, "--entrypoint", cfg.Entrypoint)
+	}
+
+	for k, v := range cfg.Env {
+		args = append(args, "-e", fmt.Sprintf("%s=%s", k, v))
+	}
+
+	for _, vol := range cfg.Volumes {
+		mount := fmt.Sprintf("%s:%s", vol.Source, vol.Target)
+		if vol.ReadOnly {
+			mount += ":ro"
+		}
+		args = append(args, "-v", mount)
+	}
+
+	if cfg.WorkingDir != "" {
+		args = append(args, "-w", cfg.WorkingDir)
+	}
+
+	args = append(args, cfg.Image)
+	args = append(args, cfg.Command...)
+
+	cmd := d.command(ctx, args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	return cmd.Run()
+}
+
 // StartContainer starts an existing container
 func (d *DockerCLI) StartContainer(ctx context.Context, nameOrID string) error {
 	_, err := d.run(ctx, "start", nameOrID)

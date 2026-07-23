@@ -21,11 +21,11 @@ type MockRuntime struct {
 	Calls []MockCall
 
 	// State maps - tests can pre-populate these and assert against them after calls
-	ContainersExist  map[string]bool
+	ContainersExist   map[string]bool
 	ContainersRunning map[string]bool
-	NetworksExist    map[string]bool
-	VolumesExist     map[string]bool
-	ImagesExist      map[string]bool
+	NetworksExist     map[string]bool
+	VolumesExist      map[string]bool
+	ImagesExist       map[string]bool
 
 	// Containers stores container configs that were created (keyed by name)
 	Containers map[string]ContainerConfig
@@ -119,6 +119,12 @@ func (m *MockRuntime) CreateContainer(_ context.Context, cfg ContainerConfig) (s
 	m.Containers[cfg.Name] = cfg
 	m.ContainersExist[cfg.Name] = true
 	return fmt.Sprintf("mock-%s", cfg.Name), nil
+}
+
+// RunContainer records a one-shot foreground run
+func (m *MockRuntime) RunContainer(_ context.Context, cfg RunConfig) error {
+	m.record("RunContainer", cfg.Image, cfg)
+	return m.err("RunContainer")
 }
 
 // StartContainer starts a container

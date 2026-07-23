@@ -35,6 +35,19 @@ type ImageBuildConfig struct {
 	Labels     map[string]string // Labels stamped on the image (--label)
 }
 
+// RunConfig defines a one-shot foreground container (docker run --rm). Used for
+// short-lived jobs like the create-time scaffold hook. Entrypoint overrides the
+// image's ENTRYPOINT, which lets a caller bypass a process manager baked into
+// the image (e.g. run a plain shell instead of the image's init).
+type RunConfig struct {
+	Image      string
+	Entrypoint string            // Overrides the image ENTRYPOINT; empty keeps it
+	Command    []string          // Args passed after the image
+	Env        map[string]string // Environment variables
+	Volumes    []VolumeMount     // Volume/bind mounts
+	WorkingDir string            // Working directory inside the container
+}
+
 // Container represents a running or stopped container
 type Container struct {
 	ID      string

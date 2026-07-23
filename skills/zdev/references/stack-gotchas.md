@@ -8,9 +8,15 @@ For template-authoring patterns (`.setup-complete`, scaffolding, `setup.just`), 
 
 - Set `COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"` in config.yaml environment (not in each command).
   Without it, `corepack enable` prompts interactively in the no-TTY entrypoint and hangs.
-- `pnpm approve-builds --all` after install to approve native module prebuilt binaries. pnpm v10
-  blocks build scripts by default — without approval, native modules (`better-sqlite3`, `esbuild`,
-  `@parcel/watcher`) silently fail to install their prebuilt binaries.
+- Native module build scripts must be approved. pnpm blocks them by default — and in a **non-TTY
+  boot path** (entrypoint/`entrypoint.d`) it can't prompt, so pnpm v11 **exits non-zero**
+  (`ERR_PNPM_IGNORED_BUILDS`), which fails a `set -e` script and aborts the container. So at boot use
+  `pnpm install --config.dangerouslyAllowAllBuilds=true` (native modules like `esbuild`,
+  `better-sqlite3`, `@parcel/watcher` need this). In an interactive `setup.just` (with a TTY via
+  `zdev exec`), the equivalent is `pnpm approve-builds --all` after install.
+- Scaffolding with `nuxi init` (create-nuxt): a non-TTY requires an explicit `-t/--template`
+  (e.g. `--template minimal`) — without it, it errors "Missing required argument: --template".
+  Use `--no-install` when scaffolding at create time (install happens at boot).
 - `HOST: "0.0.0.0"` in environment so dev server is accessible from outside the container.
   Otherwise Traefik gets connection-refused — the dev server only bound to loopback.
 - Add to mutagen ignore: `node_modules`, `.pnpm-store`, `.zdev`, `.setup-complete`.
@@ -118,3 +124,19 @@ environment:
 ```
 
 Identical for every stack — no auth, no TLS. See `config-examples.md` for the full table.
+
+## Custom dev images (`dockerfile:`) — rebuild staleness
+
+- Build staleness is a hash of the **Dockerfile contents only**, not the build context. Editing a
+  file the Dockerfile `COPY`s into the image (baked config, e.g. `.zdev/zpinit/entrypoint.d/*`,
+  zpinit `services/*.toml`) does NOT trigger a rebuild on the next `zdev start`. Force it with
+  `zdev start --build` (or `zdev update --build`). A fresh `zdev create` builds from scratch, so a
+  user creating a new project never hits this — it bites template authors iterating on baked config.
+- App **source** is bind-mounted at runtime, not `COPY`d, so source edits never need a rebuild —
+  that's the reason build staleness ignores the context. Keep dev images to toolchain/system deps +
+  baked config; never `COPY` app source into a `dockerfile:` dev image.
+- **Sync-ready gate is only auto-injected around a config `command:`.** zdev wraps a `command:` with
+  a `while [ ! -f /.zdev-sync-ready ]` wait so the app doesn't start before Mutagen's initial sync.
+  A `dockerfile:` image that runs via `ENTRYPOINT`/`CMD` (no config `command:`) does NOT get that
+  wrap — so a boot step that reads synced files (e.g. `pnpm install` needing `package.json`) must
+  wait for `/.zdev-sync-ready` itself. zdev still touches the marker after the first flush regardless.

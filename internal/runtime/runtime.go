@@ -7,6 +7,8 @@ import "context"
 type Runtime interface {
 	// Container operations
 	CreateContainer(ctx context.Context, cfg ContainerConfig) (string, error)
+	// RunContainer runs a one-shot container in the foreground to completion.
+	RunContainer(ctx context.Context, cfg RunConfig) error
 	StartContainer(ctx context.Context, nameOrID string) error
 	StopContainer(ctx context.Context, nameOrID string) error
 	RemoveContainer(ctx context.Context, nameOrID string) error

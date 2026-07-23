@@ -202,7 +202,8 @@ Don't duplicate information across docs. README has config reference and example
 Templates enable `zdev create <template> <name>` for one-command project scaffolding. See the [Template Authoring Guide](templates/README.md) for the full reference.
 
 Key patterns:
-- **`.setup-complete` marker** solves the container startup vs setup circular dependency
+- **Create-time scaffold hook** (`.zdev/scaffold.sh`, preferred) - `zdev create` runs it once in a throwaway container (entrypoint overridden to a shell) to generate the project, then auto-disables it. Keeps scaffolding machinery out of the created project (no `.setup-complete`, no re-scaffolding `setup.just`). Wired in `cmd/create.go` + `internal/project/scaffold.go`.
+- **`.setup-complete` marker** (older setup.just scaffolding) solves the container startup vs setup circular dependency
 - **Scaffold in-place** (`--force`) for frameworks that support non-empty dirs (Nuxt)
 - **Scaffold in /tmp** for frameworks that require empty dirs (Symfony) - safe for PHP, not for Node.js
 - **`setup.just`** runs on host with interactive terminal - framework prompts work here but not in the container entrypoint

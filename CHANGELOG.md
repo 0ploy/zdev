@@ -1,3 +1,9 @@
+## v0.11.0
+
+### Features
+
+- **Create-time scaffold hooks (`.zdev/scaffold.sh`).** A template can ship a `.zdev/scaffold.sh` that `zdev create` runs once, right after copying the template, to generate the project (framework scaffolders like `nuxi init` or `composer create-project`). It runs inside a throwaway container built from the template's dev image, with the entrypoint overridden to a plain shell — so whatever init the image normally runs (zpinit, a PHP entrypoint, …) is bypassed, and dependency install stays a boot concern rather than a scaffold one. The project directory is bind-mounted at `/app`, so scaffolded files land on the host synchronously (no Mutagen session involved). The hook is process-manager agnostic. After a successful run zdev **renames it to `scaffold.sh.disabled`** (never deletes it) — kept for reference but inert, so it can't re-run if the project is later reused as a template; delete it whenever you like. A `.disabled` hook is skipped by `zdev create`. This lets a template ship a clean steady state with no `.setup-complete` gate and no re-scaffolding `setup.just` left inside the created project: `zdev create` scaffolds, `zdev start` installs and runs. The scaffold service is the sole service, or the one named `app`. Requires Docker (it builds/pulls an image and runs a container); with no `scaffold.sh`, `zdev create` is unchanged (still a pure copy — no config parse, no Docker). Note: for templates that ship a hook, `zdev create` now runs that hook's code in a throwaway, project-scoped container — so a template you don't trust executes its scaffold at create time rather than later at `zdev start`.
+
 ## v0.10.0
 
 ### Features

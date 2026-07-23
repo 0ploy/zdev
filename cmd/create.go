@@ -119,6 +119,16 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	success = true
 	fmt.Printf("Project created: %s\n", name)
 
+	// Run the template's create-time scaffold hook (if any) before auto-start /
+	// auto-setup and the printed next steps, so they all act on a generated
+	// project.
+	scaffolded, err := runScaffoldHook(targetDir)
+	if err != nil {
+		// targetDir is kept (success=true) so the user can inspect and retry.
+		fmt.Printf("\nProject left at %s for inspection. Remove it and re-run `zdev create` to retry.\n", targetDir)
+		return err
+	}
+
 	// Auto-setup implies auto-start
 	if createAutoSetup {
 		createAutoStart = true
@@ -145,10 +155,69 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		fmt.Println()
 		fmt.Println("Next steps:")
 		fmt.Printf("  cd %s\n", name)
-		fmt.Println("  zdev setup")
+		if scaffolded {
+			// The scaffold hook already generated the project; the app just
+			// needs to start (deps install on boot).
+			fmt.Println("  zdev start")
+		} else {
+			fmt.Println("  zdev setup")
+		}
 	}
 
 	return nil
+}
+
+// runScaffoldHook runs a template's create-time scaffold hook
+// (.zdev/scaffold.sh) inside a throwaway container, if the template ships one,
+// and reports whether it ran. The hook file is left in place afterward for the
+// user to review and then keep (rename to .disabled) or delete - zdev never
+// removes it.
+func runScaffoldHook(projectDir string) (bool, error) {
+	// Stat the hook before loading the project: a template without a scaffold
+	// hook must keep `zdev create` a pure copy (no config parse, no Docker), so a
+	// template using a config field this zdev version can't parse still creates.
+	// (An exact-name stat also skips a `.disabled` hook for free.)
+	if _, err := os.Stat(filepath.Join(projectDir, ".zdev", project.ScaffoldHookName)); err != nil {
+		return false, nil
+	}
+
+	proj, err := project.LoadFromDir(projectDir)
+	if err != nil {
+		return false, fmt.Errorf("failed to load project: %w", err)
+	}
+	if proj.ScaffoldHookPath() == "" {
+		return false, nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+
+	// Scaffolding builds/pulls an image and runs a container - fail fast with
+	// the friendly message if Docker isn't available.
+	if err := requireDocker(ctx); err != nil {
+		return false, err
+	}
+
+	if err := proj.RunScaffold(ctx); err != nil {
+		return false, fmt.Errorf("scaffold hook (.zdev/%s) failed: %w", project.ScaffoldHookName, err)
+	}
+
+	fmt.Println()
+	fmt.Println("Scaffolding complete.")
+
+	// Disable the hook automatically so it never re-runs (e.g. if the project
+	// is later reused as a template). Kept, not deleted, so it stays for
+	// reference. Non-fatal if it fails - the project is already scaffolded.
+	hookRel := filepath.Join(".zdev", project.ScaffoldHookName)
+	if _, err := proj.DisableScaffoldHook(); err != nil {
+		fmt.Printf("Note: could not disable the scaffold hook (%v). Rename it yourself\n", err)
+		fmt.Printf("so it won't re-run if this project is reused as a template:\n")
+		fmt.Printf("  mv %s %s.disabled\n", hookRel, hookRel)
+	} else {
+		fmt.Printf("The scaffold script has been disabled (renamed to %s.disabled) and kept\n", hookRel)
+		fmt.Printf("for reference. Remove it if you don't need it: rm %s.disabled\n", hookRel)
+	}
+	return true, nil
 }
 
 // promptProjectName interactively asks the user for a project name

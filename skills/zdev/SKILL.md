@@ -88,7 +88,9 @@ zdev create ./local-dir my-app          # Local directory
 zdev create express my-app --branch dev # Specific branch/tag
 ```
 
-After `zdev create`: `cd my-app && zdev setup`
+After `zdev create`: `cd my-app && zdev start` for templates with a create-time scaffold hook
+(`.zdev/scaffold.sh`, which `zdev create` runs automatically); `cd my-app && zdev setup` for older
+`setup.just`-based templates. `zdev create --help` and the printed next-steps tell you which.
 
 ## Project Configuration
 
@@ -395,13 +397,19 @@ wrong binaries (glibc vs musl) break the container on image changes.
 
 Templates enable `zdev create <template> my-app` for one-command project scaffolding.
 
-**For template authoring: read `references/templates.md`** for the `.setup-complete` pattern,
-scaffolding strategies, and `setup.just` conventions. For the stack-specific runtime behaviors the
-template entrypoint must handle (Node, PHP, PHP framework landmines), read
-`references/stack-gotchas.md`. Key concepts:
+**For template authoring: read `references/templates.md`** for the create-time scaffold hook
+(`.zdev/scaffold.sh`, preferred), the older `.setup-complete` / `setup.just` pattern, and
+scaffolding strategies. For the stack-specific runtime behaviors the template entrypoint must
+handle (Node, PHP, PHP framework landmines, pnpm build-script approval, the `dockerfile:` rebuild
+gotcha), read `references/stack-gotchas.md`. Key concepts:
 
-- **`.setup-complete` marker pattern** - solves the container startup vs setup circular dependency.
-  Container waits in a loop until setup creates the marker, then starts the app.
+- **Create-time scaffold hook (`.zdev/scaffold.sh`, preferred)** - `zdev create` runs it once in a
+  throwaway container (entrypoint overridden to a shell, so the image's init is bypassed) to
+  generate the project, then auto-renames it to `.disabled`. Scaffold source only (`--no-install`);
+  install deps at boot. Leaves a clean project with no `.setup-complete` gate. See templates.md.
+- **`.setup-complete` marker pattern** (the older setup.just-scaffolding approach) - solves the
+  container startup vs setup circular dependency. Container waits in a loop until setup creates the
+  marker, then starts the app.
 - **`setup.just`** runs on the host with `zdev exec` for container commands. Interactive terminal
   means framework prompts work (unlike the container entrypoint which has no TTY).
 - **`@zdev step "<msg>"` for phase headers** in setup.just, not `@echo`. Setup output is a wall of
@@ -409,7 +417,11 @@ template entrypoint must handle (Node, PHP, PHP framework landmines), read
   `▶` + bold so each phase stands out. Auto-plain on non-TTY / `NO_COLOR`.
 - **Scaffold in-place** (`--force`) when the framework supports it (Nuxt). Scaffold in `/tmp` and
   copy back when the tool requires an empty dir (Symfony) - safe for PHP, not for Node.js/pnpm.
-- **`pnpm approve-builds --all`** after install for native module prebuilt binaries (pnpm v10).
-- **`npx nuxi prepare`** for Nuxt to trigger module dependency prompts during setup (not at runtime).
+- **Native pnpm build scripts** need approval: `pnpm approve-builds --all` in an interactive
+  `setup.just`, or `pnpm install --config.dangerouslyAllowAllBuilds=true` in the non-TTY boot path
+  (where pnpm otherwise errors `ERR_PNPM_IGNORED_BUILDS` and aborts the container).
+- **`nuxi init` needs `--template`** (e.g. `minimal`) in a non-TTY; `npx nuxi prepare` triggers
+  module dependency prompts during interactive setup.
 
-Test locally: `zdev create ./my-template test-app && cd test-app && zdev setup`
+Test locally: `zdev create ./my-template test-app && cd test-app && zdev start` (or `zdev setup`
+for older setup.just templates).

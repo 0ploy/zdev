@@ -260,6 +260,8 @@ services:
 
 `zdev start` builds automatically when the image is missing or when the Dockerfile changed - a fresh clone needs no manual build step. The build context is always the project root, so `COPY`/`ADD` paths in the Dockerfile resolve from there no matter where the Dockerfile lives. The image is tagged `zdev-<project>-<service>:latest` unless you set `image:` alongside `dockerfile:` to pick the tag.
 
+> **Iterating on baked files:** rebuild-staleness hashes the **Dockerfile contents only**, not the build context. If you edit a file the Dockerfile `COPY`s into the image (baked config like a zpinit `entrypoint.d/` script) without changing the Dockerfile, `zdev start` won't rebuild — force it with `zdev start --build`. A fresh `zdev create` always builds, so end users don't hit this; it's a template-author iteration gotcha.
+
 This is for dev containers only: build args, multi-stage targets, custom contexts, multi-arch, build secrets, and registry push are out of scope. Templates that need those should keep a custom build command (e.g. `.zdev/commands/build-image.just`) producing the `image:` tag.
 
 ## Commands (justfiles)
@@ -336,7 +338,33 @@ default:
 
 Frameworks like Nuxt and Symfony have their own scaffolding commands (`nuxi init`, `symfony new`). These commands typically expect an empty directory, which conflicts with `.zdev/` already being there.
 
-There are two approaches depending on whether the scaffolding tool supports a force flag.
+There are two families of approach: a **create-time scaffold hook** (`.zdev/scaffold.sh`, preferred — keeps scaffolding out of the created project entirely), or scaffolding inside **`setup.just`** (in-place or via `/tmp`). Pick the hook when you want the generated project to be a clean steady state; pick `setup.just` when scaffolding should be a persistent project command.
+
+### Create-time scaffold hook (`.zdev/scaffold.sh`) — preferred
+
+Ship a `.zdev/scaffold.sh`. `zdev create` runs it **once**, right after copying the template, inside a throwaway container built from your `.zdev/Dockerfile`, with the entrypoint overridden to a plain shell (`docker run --entrypoint sh`). Because the image's normal entrypoint is bypassed, whatever process manager it bakes in (zpinit, a PHP entrypoint) does not run — the hook generates the project and nothing else. The project directory is bind-mounted at `/app`, so files land on the host synchronously.
+
+```sh
+# .zdev/scaffold.sh — runs inside the throwaway container (cwd /app)
+#!/bin/sh
+set -eu
+# --template is required: a non-interactive terminal can't answer the prompt.
+pnpm dlx nuxi@latest init . --template minimal --no-install --packageManager pnpm --gitInit=false --force
+```
+
+Key points:
+
+- **Install is NOT the hook's job.** Scaffold source only (`--no-install`); install dependencies at boot instead (e.g. a `zpinit` `entrypoint.d/` step, or the container `command:`). That way a teammate who clones the generated project just runs `zdev start` — no re-scaffold — and pulled dependency changes are picked up on boot. Install-at-scaffold-time would only populate the one-time bind mount, not the persistent volume.
+- **No gate, no marker.** Because scaffolding happens at create time, the steady-state image needs no `.setup-complete` wait loop and the created project carries no re-scaffolding `setup.just`.
+- **zdev disables the hook automatically, never deletes it.** After a successful run zdev renames `scaffold.sh` to `scaffold.sh.disabled` — retained for reference but inert. A `.disabled` hook is skipped by `zdev create`, so reusing a scaffolded project as a template won't re-scaffold over your work. Delete it whenever you like. (Auto-disabling means it's safe even if the user never reads the create output.)
+- **Trust:** because the hook runs during `zdev create` (not later at `zdev start`), a user creating from your template executes its scaffold code at create time. It runs in a throwaway container with only the project dir bind-mounted, but note the timing — the same trust considerations as any `setup.just` apply, just earlier.
+- The scaffold runs in the sole service, or the one named `app`. It requires Docker (build/pull + run).
+
+The rest of this section covers the alternative: scaffolding from within `setup.just`.
+
+### Scaffolding from setup.just
+
+There are two `setup.just` approaches depending on whether the scaffolding tool supports a force flag.
 
 ### Scaffold in-place (when the tool supports --force)
 
@@ -353,7 +381,7 @@ default:
     @zdev step "Installing tools"
     zdev exec app sh -c "corepack enable && apk add --no-cache git"
     @zdev step "Scaffolding Nuxt project"
-    zdev exec app pnpm dlx nuxi@latest init . --packageManager pnpm --gitInit=false --force
+    zdev exec app pnpm dlx nuxi@latest init . --template minimal --packageManager pnpm --gitInit=false --force
     @zdev step "Preparing Nuxt modules"
     zdev exec app npx nuxi prepare
     @zdev step "Approving native module builds"

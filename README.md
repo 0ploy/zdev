@@ -130,6 +130,8 @@ zdev create symfony my-app            # Symfony
 zdev create myorg/my-template my-app  # Any GitHub repo
 ```
 
+Some templates scaffold the project during `zdev create` itself (via a `.zdev/scaffold.sh` hook) — for those, `cd my-app && zdev start` is all that's left. Others do their setup in a `zdev setup` step. Each template's README (and the next-steps `zdev create` prints) tells you which.
+
 Browse all available templates on GitHub: [0ploy repositories matching `zdev-template-`](https://github.com/orgs/0ploy/repositories?q=zdev-template-). Each template's README explains what it includes and how to use it.
 
 Want to create your own template? See the [Template Authoring Guide](templates/README.md).
