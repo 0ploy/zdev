@@ -1,8 +1,10 @@
 package state
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -170,5 +172,38 @@ func TestManager_UpdateExistingProject(t *testing.T) {
 	}
 	if !entry2.LastStarted.After(firstTime) && entry2.LastStarted != firstTime {
 		t.Error("expected LastStarted to be updated")
+	}
+}
+
+func TestManager_MultipleInstancesDoNotLoseConcurrentUpdates(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "state.yaml")
+
+	const count = 40
+	var wg sync.WaitGroup
+	errs := make(chan error, count)
+	for i := 0; i < count; i++ {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			manager := NewManager(statePath)
+			name := fmt.Sprintf("project-%d", index)
+			errs <- manager.RegisterProject(name, "/tmp/"+name)
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("RegisterProject() error: %v", err)
+		}
+	}
+
+	projects, err := NewManager(statePath).ListProjects()
+	if err != nil {
+		t.Fatalf("ListProjects() error: %v", err)
+	}
+	if len(projects) != count {
+		t.Fatalf("got %d projects, want %d", len(projects), count)
 	}
 }

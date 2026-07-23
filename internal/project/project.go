@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/0ploy/zdev/internal/config"
@@ -253,7 +254,7 @@ func (p *Project) checkPortAvailability(ctx context.Context, services map[string
 		// Not owned by any project - check if port is available on host
 		// (could be used by another Docker container or system service)
 		hostPort := fmt.Sprintf("0.0.0.0:%d", port)
-		if !isPortAvailable(hostPort) {
+		if !isPortAvailable(protocol, hostPort) {
 			return fmt.Errorf("service %s: port %d is already in use on your system\nStop the process using this port or choose a different host_port",
 				serviceName, port)
 		}
@@ -261,15 +262,21 @@ func (p *Project) checkPortAvailability(ctx context.Context, services map[string
 	return nil
 }
 
+// isPortAvailable checks whether a TCP or UDP port is available for binding.
+func isPortAvailable(protocol, hostPort string) bool {
+	if protocol == "udp" {
+		conn, err := net.ListenPacket("udp", hostPort)
+		if err != nil {
+			return false
+		}
+		return conn.Close() == nil
+	}
 
-// isPortAvailable checks if a port is available for binding
-func isPortAvailable(hostPort string) bool {
-	ln, err := net.Listen("tcp", hostPort)
+	listener, err := net.Listen("tcp", hostPort)
 	if err != nil {
 		return false
 	}
-	ln.Close()
-	return true
+	return listener.Close() == nil
 }
 
 // Start starts all project services
@@ -619,34 +626,97 @@ func (p *Project) teardownContainers(ctx context.Context) error {
 	// Disconnect shared services (do this first, before removing network)
 	p.disconnectEnabledSharedServices(ctx)
 
-	for serviceName := range p.Config.Services {
-		containerName := p.ContainerName(serviceName)
-
-		exists, err := p.Runtime.ContainerExists(ctx, containerName)
-		if err != nil {
+	containerNames, err := p.projectContainerNames(ctx)
+	if err != nil {
+		return err
+	}
+	for _, containerName := range containerNames {
+		if err := p.removeProjectContainer(ctx, containerName); err != nil {
 			return err
-		}
-		if !exists {
-			continue
-		}
-
-		running, err := p.Runtime.IsContainerRunning(ctx, containerName)
-		if err != nil {
-			return err
-		}
-		if running {
-			fmt.Printf("Stopping service %s...\n", serviceName)
-			if err := p.Runtime.StopContainer(ctx, containerName); err != nil {
-				return fmt.Errorf("failed to stop service %s: %w", serviceName, err)
-			}
-		}
-
-		fmt.Printf("Removing service %s...\n", serviceName)
-		if err := p.Runtime.RemoveContainer(ctx, containerName); err != nil {
-			return fmt.Errorf("failed to remove service %s: %w", serviceName, err)
 		}
 	}
 	return nil
+}
+
+// projectContainerNames returns all labeled project containers and also checks
+// the currently configured names for compatibility with older containers.
+func (p *Project) projectContainerNames(ctx context.Context) ([]string, error) {
+	names, err := p.Runtime.ListContainers(ctx, "label=zdev.project="+p.Config.Name)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list project containers: %w", err)
+	}
+
+	seen := make(map[string]bool, len(names)+len(p.Config.Services))
+	for _, name := range names {
+		seen[name] = true
+	}
+	for serviceName := range p.Config.Services {
+		name := p.ContainerName(serviceName)
+		if seen[name] {
+			continue
+		}
+		exists, err := p.Runtime.ContainerExists(ctx, name)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check container %s: %w", name, err)
+		}
+		if exists {
+			seen[name] = true
+		}
+	}
+
+	names = names[:0]
+	for name := range seen {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+func (p *Project) removeProjectContainer(ctx context.Context, containerName string) error {
+	running, err := p.Runtime.IsContainerRunning(ctx, containerName)
+	if err != nil {
+		return fmt.Errorf("failed to inspect container %s: %w", containerName, err)
+	}
+	if running {
+		fmt.Printf("Stopping container %s...\n", containerName)
+		if err := p.Runtime.StopContainer(ctx, containerName); err != nil {
+			return fmt.Errorf("failed to stop container %s: %w", containerName, err)
+		}
+	}
+
+	fmt.Printf("Removing container %s...\n", containerName)
+	if err := p.Runtime.RemoveContainer(ctx, containerName); err != nil {
+		return fmt.Errorf("failed to remove container %s: %w", containerName, err)
+	}
+	return nil
+}
+
+// removeStaleProjectContainers removes containers whose services no longer
+// exist in the current config. This keeps routes and host ports from lingering
+// after a service is removed or renamed.
+func (p *Project) removeStaleProjectContainers(ctx context.Context) (bool, error) {
+	names, err := p.Runtime.ListContainers(ctx, "label=zdev.project="+p.Config.Name)
+	if err != nil {
+		return false, fmt.Errorf("failed to list project containers: %w", err)
+	}
+
+	current := make(map[string]bool, len(p.Config.Services))
+	for serviceName := range p.Config.Services {
+		current[p.ContainerName(serviceName)] = true
+	}
+
+	removed := false
+	for _, name := range names {
+		if current[name] {
+			continue
+		}
+		fmt.Printf("Removing stale project container %s...\n", name)
+		if err := p.removeProjectContainer(ctx, name); err != nil {
+			return removed, err
+		}
+		removed = true
+	}
+	return removed, nil
 }
 
 // Down stops and removes all project containers and the network.
@@ -671,40 +741,40 @@ func (p *Project) Down(ctx context.Context, removeVolumes bool) error {
 
 	// Remove volumes if requested
 	if removeVolumes {
-		// Remove project volumes
-		for _, volumeName := range p.NamedVolumes() {
-			fullName := p.VolumeName(volumeName)
-			exists, err := p.Runtime.VolumeExists(ctx, fullName)
-			if err != nil {
-				return fmt.Errorf("failed to check volume %s: %w", volumeName, err)
-			}
-
-			if exists {
-				fmt.Printf("Removing volume %s...\n", fullName)
-				if err := p.Runtime.RemoveVolume(ctx, fullName); err != nil {
-					return fmt.Errorf("failed to remove volume %s: %w", volumeName, err)
-				}
-			}
+		volumes, err := p.Runtime.ListVolumes(ctx, "name=.zdev")
+		if err != nil {
+			return fmt.Errorf("failed to list project volumes: %w", err)
 		}
-
-		// Remove Mutagen sync volumes
-		if p.IsMutagenEnabled() {
-			p.removeMutagenVolumes(ctx)
+		suffix := "." + p.Config.Name + ".zdev"
+		for _, volume := range volumes {
+			if !strings.HasSuffix(volume.Name, suffix) {
+				continue
+			}
+			fmt.Printf("Removing volume %s...\n", volume.Name)
+			if err := p.Runtime.RemoveVolume(ctx, volume.Name); err != nil {
+				return fmt.Errorf("failed to remove volume %s: %w", volume.Name, err)
+			}
 		}
 	}
 
 	// Unregister from global state
 	stateMgr, err := state.DefaultManager()
-	if err == nil {
-		_ = stateMgr.UnregisterProject(p.Config.Name)
+	if err != nil {
+		return fmt.Errorf("failed to load state after removing project resources: %w", err)
+	}
+	if err := stateMgr.UnregisterProject(p.Config.Name); err != nil {
+		return fmt.Errorf("failed to unregister project after removing resources: %w", err)
 	}
 
 	// Refresh router to release any TCP/UDP ports this project was using
 	if p.Config.Shared.Router {
 		globalCfg, err := config.LoadGlobalConfig()
-		if err == nil {
-			mgr := services.NewManager(globalCfg)
-			_ = mgr.RefreshRouter(ctx)
+		if err != nil {
+			return fmt.Errorf("project removed, but failed to load router config: %w", err)
+		}
+		mgr := services.NewManager(globalCfg)
+		if err := mgr.RefreshRouter(ctx); err != nil {
+			return fmt.Errorf("project removed, but failed to refresh router ports: %w", err)
 		}
 	}
 
@@ -720,9 +790,14 @@ func (p *Project) Update(ctx context.Context) (bool, error) {
 		return false, errConfigRenameDetected(registered, p.Config.Name)
 	}
 
+	updated, err := p.removeStaleProjectContainers(ctx)
+	if err != nil {
+		return false, err
+	}
+
 	// Check port availability for new ports
 	if err := p.checkPortAvailability(ctx, nil); err != nil {
-		return false, err
+		return updated, err
 	}
 
 	// Ensure network exists
@@ -779,90 +854,13 @@ func (p *Project) Update(ctx context.Context) (bool, error) {
 		return p.startServiceWithMutagen(ctx, serviceName, svc, mDaemon != nil, mutagenMountMap)
 	}
 
-	updated := false
-
 	// Check each service for changes
 	for serviceName, svc := range p.Config.Services {
-		containerName := p.ContainerName(serviceName)
-
-		exists, err := p.Runtime.ContainerExists(ctx, containerName)
+		changed, err := p.updateService(ctx, serviceName, svc, startService)
 		if err != nil {
-			return false, err
+			return updated, err
 		}
-
-		if !exists {
-			// Container doesn't exist, create it
-			fmt.Printf("Creating service %s...\n", serviceName)
-			if err := startService(serviceName, svc); err != nil {
-				return false, fmt.Errorf("failed to start service %s: %w", serviceName, err)
-			}
-			updated = true
-			continue
-		}
-
-		// Check if container needs recreation
-		needsRecreate, err := p.serviceNeedsRecreate(ctx, serviceName, svc)
-		if err != nil {
-			return false, err
-		}
-
-		// A stale `dockerfile:` image counts as a change too - the tag stays
-		// the same so the config hash can't see it. The rebuild itself
-		// happens on the recreate path (startService -> ensureBuiltImage).
-		if !needsRecreate {
-			stale, err := p.serviceBuildStale(ctx, serviceName, svc)
-			if err != nil {
-				return false, err
-			}
-			needsRecreate = stale
-		}
-
-		// --refresh-secrets: resolve secrets fresh and recreate only when
-		// the values actually changed (compared via the stamped secrets
-		// hash). Without the flag secrets stay untouched.
-		if !needsRecreate && p.RefreshSecrets {
-			stale, err := p.serviceSecretsStale(ctx, serviceName, svc)
-			if err != nil {
-				return false, err
-			}
-			if !stale && p.serviceUsesSecrets(svc) {
-				fmt.Printf("Secrets unchanged for service %s\n", serviceName)
-			}
-			needsRecreate = stale
-		}
-
-		if needsRecreate {
-			fmt.Printf("Recreating service %s...\n", serviceName)
-
-			// Resolve secrets BEFORE touching the old container, so a
-			// resolution failure (not signed in, deleted Environment,
-			// unknown variable) aborts while the running service is still
-			// intact. The resolver caches per Environment, so the later
-			// create pays nothing extra.
-			if err := p.prefetchSecrets(ctx, serviceName, svc); err != nil {
-				return false, err
-			}
-
-			// Stop and remove old container
-			if err := p.removeServiceContainer(ctx, serviceName); err != nil {
-				return false, err
-			}
-
-			// Create new container
-			if err := startService(serviceName, svc); err != nil {
-				return false, fmt.Errorf("failed to start service %s: %w", serviceName, err)
-			}
-			updated = true
-		} else {
-			// Ensure container is running
-			running, _ := p.Runtime.IsContainerRunning(ctx, containerName)
-			if !running {
-				fmt.Printf("Starting service %s...\n", serviceName)
-				if err := p.Runtime.StartContainer(ctx, containerName); err != nil {
-					return false, fmt.Errorf("failed to start service %s: %w", serviceName, err)
-				}
-			}
-		}
+		updated = updated || changed
 	}
 
 	// Always run prepare+finalize so Mutagen-only changes (per-service
@@ -879,6 +877,70 @@ func (p *Project) Update(ctx context.Context) (bool, error) {
 	}
 
 	return updated, p.registerAndConnect(ctx)
+}
+
+type updateServiceStarter func(string, config.ServiceConfig) error
+
+func (p *Project) updateService(ctx context.Context, serviceName string, svc config.ServiceConfig, start updateServiceStarter) (bool, error) {
+	containerName := p.ContainerName(serviceName)
+	exists, err := p.Runtime.ContainerExists(ctx, containerName)
+	if err != nil {
+		return false, err
+	}
+	if !exists {
+		fmt.Printf("Creating service %s...\n", serviceName)
+		if err := start(serviceName, svc); err != nil {
+			return false, fmt.Errorf("failed to start service %s: %w", serviceName, err)
+		}
+		return true, nil
+	}
+
+	needsRecreate, err := p.serviceNeedsRecreate(ctx, serviceName, svc)
+	if err != nil {
+		return false, err
+	}
+	if !needsRecreate {
+		needsRecreate, err = p.serviceBuildStale(ctx, serviceName, svc)
+		if err != nil {
+			return false, err
+		}
+	}
+	if !needsRecreate && p.RefreshSecrets {
+		needsRecreate, err = p.serviceSecretsStale(ctx, serviceName, svc)
+		if err != nil {
+			return false, err
+		}
+		if !needsRecreate && p.serviceUsesSecrets(svc) {
+			fmt.Printf("Secrets unchanged for service %s\n", serviceName)
+		}
+	}
+
+	if needsRecreate {
+		fmt.Printf("Recreating service %s...\n", serviceName)
+		// Resolve before touching the old container so failures preserve it.
+		if err := p.prefetchSecrets(ctx, serviceName, svc); err != nil {
+			return false, err
+		}
+		if err := p.removeServiceContainer(ctx, serviceName); err != nil {
+			return false, err
+		}
+		if err := start(serviceName, svc); err != nil {
+			return false, fmt.Errorf("failed to start service %s: %w", serviceName, err)
+		}
+		return true, nil
+	}
+
+	running, err := p.Runtime.IsContainerRunning(ctx, containerName)
+	if err != nil {
+		return false, err
+	}
+	if !running {
+		fmt.Printf("Starting service %s...\n", serviceName)
+		if err := p.Runtime.StartContainer(ctx, containerName); err != nil {
+			return false, fmt.Errorf("failed to start service %s: %w", serviceName, err)
+		}
+	}
+	return false, nil
 }
 
 // serviceNeedsRecreate checks if a service container needs to be recreated.
@@ -1149,8 +1211,8 @@ func (p *Project) ServiceNames() []string {
 
 // VolumeInfo contains information about a project volume
 type VolumeInfo struct {
-	Name            string
-	FullName        string
+	Name     string
+	FullName string
 	Exists   bool
 }
 

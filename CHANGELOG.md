@@ -2,7 +2,19 @@
 
 ### Features
 
-- **Create-time scaffold hooks (`.zdev/scaffold.sh`).** A template can ship a `.zdev/scaffold.sh` that `zdev create` runs once, right after copying the template, to generate the project (framework scaffolders like `nuxi init` or `composer create-project`). It runs inside a throwaway container built from the template's dev image, with the entrypoint overridden to a plain shell — so whatever init the image normally runs (zpinit, a PHP entrypoint, …) is bypassed, and dependency install stays a boot concern rather than a scaffold one. The project directory is bind-mounted at `/app`, so scaffolded files land on the host synchronously (no Mutagen session involved). The hook is process-manager agnostic. After a successful run zdev **renames it to `scaffold.sh.disabled`** (never deletes it) — kept for reference but inert, so it can't re-run if the project is later reused as a template; delete it whenever you like. A `.disabled` hook is skipped by `zdev create`. This lets a template ship a clean steady state with no `.setup-complete` gate and no re-scaffolding `setup.just` left inside the created project: `zdev create` scaffolds, `zdev start` installs and runs. The scaffold service is the sole service, or the one named `app`. Requires Docker (it builds/pulls an image and runs a container); with no `scaffold.sh`, `zdev create` is unchanged (still a pure copy — no config parse, no Docker). Note: for templates that ship a hook, `zdev create` now runs that hook's code in a throwaway, project-scoped container — so a template you don't trust executes its scaffold at create time rather than later at `zdev start`.
+- **Create-time scaffold hooks (`.zdev/scaffold.sh`).** A template can ship a `.zdev/scaffold.sh` that `zdev create` runs once, right after copying the template, to generate the project (framework scaffolders like `nuxi init` or `composer create-project`). It runs inside a throwaway container built from the template's dev image, with the entrypoint overridden to a plain shell - so whatever init the image normally runs (zpinit, a PHP entrypoint, …) is bypassed, and dependency install stays a boot concern rather than a scaffold one. The project directory is bind-mounted at `/app`, so scaffolded files land on the host synchronously (no Mutagen session involved). The hook is process-manager agnostic. After a successful run zdev **renames it to `scaffold.sh.disabled`** (never deletes it) - kept for reference but inert, so it can't re-run if the project is later reused as a template; delete it whenever you like. A `.disabled` hook is skipped by `zdev create`. This lets a template ship a clean steady state with no `.setup-complete` gate and no re-scaffolding `setup.just` left inside the created project: `zdev create` scaffolds, `zdev start` installs and runs. The scaffold service is the sole service, or the one named `app`. When `zdev create` runs from a terminal the hook gets an interactive TTY, so a scaffolder can prompt (e.g. Nuxt's template/module picker); piped/CI runs get no TTY, so the hook must handle that (the nuxt template falls back to a fixed template). Requires Docker (it builds/pulls an image and runs a container); with no `scaffold.sh`, `zdev create` is unchanged (still a pure copy - no config parse, no Docker). Note: for templates that ship a hook, `zdev create` now runs that hook's code in a throwaway, project-scoped container - so a template you don't trust executes its scaffold at create time rather than later at `zdev start`.
+
+### Bug Fixes
+
+- **Removed services no longer leave containers, routes, or host ports behind.** `zdev update` now reconciles all containers labeled for the project against the current config, and `zdev down` removes containers and volumes that belonged to services no longer present in the file.
+- **UDP host-port conflicts are detected correctly.** Port checks now bind using the configured transport instead of always probing TCP.
+- **`zdev rename` supports dockerfile-only projects.** Generated local image tags can now be used for the temporary volume migration container.
+
+### Improvements
+
+- **Downloaded helper tools are verified before installation.** mkcert, just, and Mutagen release artifacts are pinned by platform-specific SHA-256 digests and rejected before extraction or execution on any mismatch.
+- **Configuration errors fail early with actionable messages.** Project routing, required service images, Mutagen modes, project names, and duplicate host ports are validated during load; unknown global config fields are rejected too.
+- **Concurrent zdev commands can safely update global state.** State changes now use a cross-process file lock and atomic file replacement.
 
 ## v0.10.0
 
@@ -363,9 +375,9 @@ There is no automatic state migration from scdev. Old `~/.scdev/state.yaml` refe
 
 ### Improvements
 
-- Shared service registry pattern — adding a new shared service is now one entry instead of editing 6+ locations
+- Shared service registry pattern - adding a new shared service is now one entry instead of editing 6+ locations
 - Split `project.go` god file (1400→868 lines) into `shared_services.go` and `mutagen_sync.go`
-- Single source of truth for global config defaults (`newDefaultGlobalConfig()`) — fixes RedisInsights image missing bug
+- Single source of truth for global config defaults (`newDefaultGlobalConfig()`) - fixes RedisInsights image missing bug
 - Removed unused `StartRouterWithPorts` parameters and unnecessary `ConnectToProject`/`DisconnectFromProject` aliases
 - Fixed `scdev info` not showing shared services section when only `redis_insights` is enabled
 - Consistent display names across all shared service methods
@@ -374,9 +386,9 @@ There is no automatic state migration from scdev. Old `~/.scdev/state.yaml` refe
 
 ### Improvements
 
-- Auto-discover named volumes from service definitions — no more redundant top-level `volumes:` section in project config
-- Streamlined CLAUDE.md and planning docs — removed stale TODOs, marked completed phases
-- Removed TODO comments from code — all tracked as Completo tickets
+- Auto-discover named volumes from service definitions - no more redundant top-level `volumes:` section in project config
+- Streamlined CLAUDE.md and planning docs - removed stale TODOs, marked completed phases
+- Removed TODO comments from code - all tracked as Completo tickets
 
 ## v0.1.0
 

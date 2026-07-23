@@ -3,6 +3,8 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
 	"sync"
 )
 
@@ -187,6 +189,46 @@ func (m *MockRuntime) IsContainerRunning(_ context.Context, name string) (bool, 
 	return m.ContainersRunning[name], nil
 }
 
+// ListContainers returns existing containers matching an optional Docker-style
+// label filter. It includes stopped containers.
+func (m *MockRuntime) ListContainers(_ context.Context, filter string) ([]string, error) {
+	m.record("ListContainers", filter)
+	if err := m.err("ListContainers"); err != nil {
+		return nil, err
+	}
+
+	labelKey, labelValue := "", ""
+	if strings.HasPrefix(filter, "label=") {
+		labelFilter := strings.TrimPrefix(filter, "label=")
+		labelKey, labelValue, _ = strings.Cut(labelFilter, "=")
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var names []string
+	for name, exists := range m.ContainersExist {
+		if !exists {
+			continue
+		}
+		if labelKey != "" {
+			labels := m.ContainerLabels[name]
+			if labels == nil {
+				if cfg, ok := m.Containers[name]; ok {
+					labels = cfg.Labels
+				}
+			}
+			value, ok := labels[labelKey]
+			if !ok || (labelValue != "" && value != labelValue) {
+				continue
+			}
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
 // GetContainer returns a mock Container
 func (m *MockRuntime) GetContainer(_ context.Context, name string) (*Container, error) {
 	m.record("GetContainer", name)
@@ -343,13 +385,30 @@ func (m *MockRuntime) CopyVolume(_ context.Context, srcVolume, dstVolume, image 
 	return nil
 }
 
-// ListVolumes returns an empty list (override by setting a custom error or extending mock)
+// ListVolumes returns existing volumes matching Docker's name substring filter.
 func (m *MockRuntime) ListVolumes(_ context.Context, filter string) ([]Volume, error) {
 	m.record("ListVolumes", filter)
 	if err := m.err("ListVolumes"); err != nil {
 		return nil, err
 	}
-	return []Volume{}, nil
+
+	nameFilter := strings.TrimPrefix(filter, "name=")
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var names []string
+	for name, exists := range m.VolumesExist {
+		if exists && (nameFilter == "" || strings.Contains(name, nameFilter)) {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+
+	volumes := make([]Volume, 0, len(names))
+	for _, name := range names {
+		volumes = append(volumes, Volume{Name: name})
+	}
+	return volumes, nil
 }
 
 // PullImage records the call

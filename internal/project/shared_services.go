@@ -39,6 +39,7 @@ func (p *Project) connectEnabledSharedServices(ctx context.Context) {
 func (p *Project) disconnectEnabledSharedServices(ctx context.Context) {
 	mgr, err := p.sharedManager()
 	if err != nil {
+		fmt.Printf("Warning: failed to load shared service config during disconnect: %v\n", err)
 		return
 	}
 	registry := services.AllSharedServices()
@@ -47,7 +48,9 @@ func (p *Project) disconnectEnabledSharedServices(ctx context.Context) {
 		if !svc.ProjectEnabled(&p.Config.Shared) {
 			continue
 		}
-		_ = svc.Disconnect(ctx, mgr, p.NetworkName())
+		if err := svc.Disconnect(ctx, mgr, p.NetworkName()); err != nil {
+			fmt.Printf("Warning: failed to disconnect shared %s: %v\n", svc.Name, err)
+		}
 	}
 }
 

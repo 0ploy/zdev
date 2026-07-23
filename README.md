@@ -68,7 +68,7 @@ This teaches your agent the full zdev CLI, config format, debugging workflows, a
 curl -fsSL https://raw.githubusercontent.com/0ploy/zdev/main/install.sh | sh
 ```
 
-The installer places the real binary at `~/.zdev/bin/zdev` and symlinks it into `/usr/local/bin` (one-time sudo prompt). After that, zdev keeps itself up to date: a background task on every invocation (at most once per 24h) checks GitHub for a new release and, if found, silently downloads and installs it into the user-owned canonical path - the current command keeps running on the old in-memory binary, the next invocation uses the new one. Set `ZDEV_NO_UPDATE_CHECK=1` to disable. `zdev self-update` still works for on-demand updates and auto-migrates legacy installs to the symlink layout.
+The installer places the real binary at `~/.zdev/bin/zdev` and symlinks it into `/usr/local/bin` (one-time sudo prompt). After that, zdev checks GitHub at most once per 24 hours during command startup. When a new release exists it announces the update, downloads and verifies it synchronously, then installs it into the user-owned canonical path. The current command keeps running its in-memory version; the next invocation uses the new binary. Set `ZDEV_NO_UPDATE_CHECK=1` to disable. `zdev self-update` still works for on-demand updates and auto-migrates legacy installs to the symlink layout.
 
 ### 2. First-time setup
 
@@ -130,7 +130,7 @@ zdev create symfony my-app            # Symfony
 zdev create myorg/my-template my-app  # Any GitHub repo
 ```
 
-Some templates scaffold the project during `zdev create` itself (via a `.zdev/scaffold.sh` hook) — for those, `cd my-app && zdev start` is all that's left. Others do their setup in a `zdev setup` step. Each template's README (and the next-steps `zdev create` prints) tells you which.
+Some templates scaffold the project during `zdev create` itself (via a `.zdev/scaffold.sh` hook) - for those, `cd my-app && zdev start` is all that's left. Others do their setup in a `zdev setup` step. Each template's README (and the next-steps `zdev create` prints) tells you which.
 
 Browse all available templates on GitHub: [0ploy repositories matching `zdev-template-`](https://github.com/orgs/0ploy/repositories?q=zdev-template-). Each template's README explains what it includes and how to use it.
 
@@ -311,7 +311,7 @@ volumes:
   - data:/app/data                   # SQLite, uploads, etc.
 ```
 
-Named volumes persist across `zdev stop`/`zdev start` AND `zdev down`. Only removed with `zdev down -v`. No separate declaration needed - zdev discovers them automatically.
+Named volumes persist across `zdev stop`/`zdev start` AND `zdev down`. Only removed with `zdev down -v`. That command also removes project-scoped volumes left by services deleted from the config. No separate declaration needed - zdev discovers them automatically.
 
 ### Custom Dev Images (`dockerfile:`)
 
@@ -397,7 +397,7 @@ zdev stop               # Stop containers (keeps them for quick restart)
 zdev stop <service>     # Stop a single service container
 zdev restart            # Stop + start every service
 zdev restart <service>  # Bounce a single service container in-place
-zdev update             # Apply config changes (recreates only drifted services)
+zdev update             # Apply config changes and remove services deleted from config
 zdev update --refresh-secrets  # Also check 1Password and recreate services whose secrets changed
 zdev down        # Remove containers and network
 zdev down -v     # Remove everything including volumes
@@ -619,6 +619,8 @@ mutagen:
 | `routing.port` | int | 80 (http), 443 (https) | Container port to route to |
 | `routing.host_port` | int | - | Host port for TCP/UDP (required for tcp/udp) |
 | `routing.domain` | string | project domain | Custom domain for this service (http/https only) |
+
+Config loading validates project and service names, requires every service to set `image:` or `dockerfile:`, checks routing protocols and port ranges, rejects duplicate TCP/UDP host ports, and validates Mutagen file modes. Unknown fields are rejected in both project and global config files.
 | `labels` | map | - | Docker labels |
 | `mutagen.user` | string | - | Owner stamped on synced files inside the container (e.g. `www-data`). Use when the in-container process runs as a non-root user that must read/write the synced tree |
 | `mutagen.group` | string | - | Group stamped on synced files inside the container |

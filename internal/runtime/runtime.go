@@ -16,6 +16,7 @@ type Runtime interface {
 	// Container inspection
 	ContainerExists(ctx context.Context, name string) (bool, error)
 	IsContainerRunning(ctx context.Context, name string) (bool, error)
+	ListContainers(ctx context.Context, filter string) ([]string, error)
 	GetContainer(ctx context.Context, name string) (*Container, error)
 	GetContainerLabels(ctx context.Context, name string) (map[string]string, error)
 

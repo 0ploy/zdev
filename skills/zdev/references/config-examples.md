@@ -42,7 +42,7 @@ services:
       WEB_DOCUMENT_ROOT: /app/public
       DATABASE_URL: mysql://root:${DB_PASSWORD}@db:3306/${DB_NAME}
       MAILER_DSN: smtp://mail:1025                  # Mailpit (see Email SMTP below)
-      SYMFONY_TRUSTED_PROXIES: private_ranges       # REQUIRED for Symfony behind Traefik — see below
+      SYMFONY_TRUSTED_PROXIES: private_ranges       # REQUIRED for Symfony behind Traefik - see below
     routing:
       port: 80
 
@@ -148,7 +148,7 @@ Key points:
 - **Worker pattern**: same `image:` and bind-mounted `/app` as the app service, only the `command:`
   differs. Add more workers (email dispatcher, import processor) by duplicating and changing the
   command. Because workers hold a TTY-less long-running process, don't try to scaffold things in
-  their command — keep scaffolding in `setup.just`.
+  their command - keep scaffolding in `setup.just`.
 - **Per-service routing domain** (see SKILL.md → "Multiple routed services in one project"): without
   `routing.domain` on `rabbitmq`, the management UI would collide with the app on the same host and
   only one would work.
@@ -156,7 +156,7 @@ Key points:
   inside the project's Docker network. No IPs, no `localhost`.
 - **AMQP from the host**: if you need a desktop AMQP client, add a TCP routing entry:
   `routing: { protocol: tcp, port: 5672, host_port: 5672 }` (also works alongside the HTTP UI
-  routing — use two separate services if needed, or omit the UI).
+  routing - use two separate services if needed, or omit the UI).
 
 ## Python + PostgreSQL (Django/FastAPI)
 
@@ -195,7 +195,7 @@ mutagen:
 ## Custom Dev Image (`dockerfile:`)
 
 When a stock image is missing system packages, extensions, or tooling, write a dev Dockerfile in
-`.zdev/` and point the service at it — zdev builds it automatically on start and rebuilds when
+`.zdev/` and point the service at it - zdev builds it automatically on start and rebuilds when
 the Dockerfile changes. The build context is always the project root (so `COPY` paths resolve
 from there); the tag defaults to `zdev-<project>-<service>:latest`, or set `image:` to name it.
 
@@ -219,14 +219,14 @@ mutagen:
 ```
 
 ```dockerfile
-# .zdev/Dockerfile — dev-only image: toolchain and system deps, no app code
+# .zdev/Dockerfile - dev-only image: toolchain and system deps, no app code
 # (source is bind-mounted at runtime)
 FROM node:24-alpine
 RUN apk add --no-cache openssl git
 ```
 
 Dev containers only: build args, multi-stage targets, custom contexts, secrets, and registry push
-are out of scope — for those, keep a custom build command (justfile) producing the `image:` tag.
+are out of scope - for those, keep a custom build command (justfile) producing the `image:` tag.
 Files the Dockerfile `COPY`s are not change-detected; after editing them run `zdev update --build`.
 
 ## Mutagen Ignore by Stack
@@ -242,7 +242,7 @@ Files the Dockerfile `COPY`s are not change-detected; after editing them run `zd
 ## Email SMTP Config by Stack
 
 Configure your app to use zdev's shared Mailpit. From inside any project container, the hostname
-is `mail` on port `1025` (no auth, no TLS) — identical across stacks:
+is `mail` on port `1025` (no auth, no TLS) - identical across stacks:
 
 - Node.js (nodemailer): `{ host: 'mail', port: 1025, secure: false }`
 - PHP (Symfony/Sylius): `MAILER_DSN=smtp://mail:1025`

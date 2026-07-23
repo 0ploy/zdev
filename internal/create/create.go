@@ -8,9 +8,12 @@ import (
 	"io"
 	"net/http"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/0ploy/zdev/internal/config"
 )
 
 const (
@@ -30,24 +33,12 @@ type TemplateSource struct {
 	Ref   string // github: branch or tag (empty = repo default)
 }
 
-// nameRegex validates DNS-safe project names:
-// - lowercase alphanumeric + hyphens
-// - no leading/trailing hyphens
-// - 1-63 characters
-var nameRegex = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
-
 // githubIdentRegex validates GitHub owner and repo names
 var githubIdentRegex = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
 
 // ValidateName checks that a project name is DNS-safe
 func ValidateName(name string) error {
-	if name == "" {
-		return fmt.Errorf("project name cannot be empty")
-	}
-	if !nameRegex.MatchString(name) {
-		return fmt.Errorf("project name %q is invalid: must contain only lowercase letters, numbers, and hyphens (no leading/trailing hyphens, max 63 chars)", name)
-	}
-	return nil
+	return config.ValidateProjectName(name)
 }
 
 // ResolveTemplate parses a template argument into a TemplateSource
@@ -165,9 +156,31 @@ func CopyLocal(src, dst string) error {
 			return os.MkdirAll(targetPath, 0755)
 		}
 
+		if d.Type()&os.ModeSymlink != 0 {
+			linkTarget, err := os.Readlink(path)
+			if err != nil {
+				return fmt.Errorf("failed to read symlink %s: %w", path, err)
+			}
+			if filepath.IsAbs(linkTarget) || !pathWithin(src, filepath.Join(filepath.Dir(path), linkTarget)) {
+				return fmt.Errorf("template symlink %s -> %s escapes the template directory", rel, linkTarget)
+			}
+			if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+				return fmt.Errorf("failed to create symlink parent: %w", err)
+			}
+			if err := os.Symlink(linkTarget, targetPath); err != nil {
+				return fmt.Errorf("failed to copy symlink %s: %w", rel, err)
+			}
+			return nil
+		}
+
 		// Copy file
 		return copyFile(path, targetPath)
 	})
+}
+
+func pathWithin(root, candidate string) bool {
+	rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(candidate))
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // copyFile copies a single file preserving permissions
@@ -243,6 +256,14 @@ func extractTarGz(r io.Reader, dst string) error {
 	// The first entry is the root directory (e.g. "owner-repo-sha/")
 	// We need to detect and strip it
 	var rootPrefix string
+	var totalSize int64
+	var entryCount int
+
+	const (
+		maxArchiveEntries = 100_000
+		maxFileSize       = int64(1 << 30)
+		maxArchiveSize    = int64(4 << 30)
+	)
 
 	for {
 		header, err := tr.Next()
@@ -257,23 +278,42 @@ func extractTarGz(r io.Reader, dst string) error {
 		if header.Typeflag == tar.TypeXGlobalHeader || header.Typeflag == tar.TypeXHeader {
 			continue
 		}
+		entryCount++
+		if entryCount > maxArchiveEntries {
+			return fmt.Errorf("template archive contains more than %d entries", maxArchiveEntries)
+		}
+
+		cleanArchiveName := pathpkg.Clean(header.Name)
+		if cleanArchiveName == "." || cleanArchiveName == ".." ||
+			strings.HasPrefix(cleanArchiveName, "../") || pathpkg.IsAbs(cleanArchiveName) {
+			return fmt.Errorf("tar entry %q attempts path traversal", header.Name)
+		}
 
 		// Detect root prefix from the first real entry
 		if rootPrefix == "" {
-			rootPrefix = strings.SplitN(header.Name, "/", 2)[0] + "/"
+			root := strings.SplitN(cleanArchiveName, "/", 2)[0]
+			if root == "" || root == "." || root == ".." {
+				return fmt.Errorf("tar entry %q has an invalid root directory", header.Name)
+			}
+			rootPrefix = root + "/"
 		}
 
 		// Strip root prefix
-		name := strings.TrimPrefix(header.Name, rootPrefix)
-		if name == "" {
-			continue // Skip the root directory itself
+		rootName := strings.TrimSuffix(rootPrefix, "/")
+		if cleanArchiveName != rootName && !strings.HasPrefix(cleanArchiveName, rootPrefix) {
+			return fmt.Errorf("tar entry %q is outside archive root %q", header.Name, strings.TrimSuffix(rootPrefix, "/"))
 		}
+		if cleanArchiveName == rootName {
+			continue
+		}
+		name := strings.TrimPrefix(cleanArchiveName, rootPrefix)
 
-		targetPath := filepath.Join(dst, name)
-
-		// Prevent path traversal
-		if !strings.HasPrefix(filepath.Clean(targetPath), filepath.Clean(dst)) {
+		targetPath := filepath.Join(dst, filepath.FromSlash(name))
+		if !pathWithin(dst, targetPath) {
 			return fmt.Errorf("tar entry %q attempts path traversal", header.Name)
+		}
+		if err := ensureNoSymlinkPath(dst, targetPath); err != nil {
+			return fmt.Errorf("tar entry %q: %w", header.Name, err)
 		}
 
 		switch header.Typeflag {
@@ -283,6 +323,14 @@ func extractTarGz(r io.Reader, dst string) error {
 			}
 
 		case tar.TypeReg:
+			if header.Size < 0 || header.Size > maxFileSize {
+				return fmt.Errorf("tar entry %q exceeds the %d byte file limit", header.Name, maxFileSize)
+			}
+			if header.Size > maxArchiveSize-totalSize {
+				return fmt.Errorf("template archive exceeds the %d byte extraction limit", maxArchiveSize)
+			}
+			totalSize += header.Size
+
 			// Ensure parent directory exists
 			if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
 				return fmt.Errorf("failed to create parent directory: %w", err)
@@ -299,13 +347,18 @@ func extractTarGz(r io.Reader, dst string) error {
 				return fmt.Errorf("failed to create file %s: %w", name, err)
 			}
 
-			// Limit file size to 1GB to prevent tar bombs
-			const maxFileSize = 1 << 30
-			if _, err := io.Copy(f, io.LimitReader(tr, maxFileSize)); err != nil {
+			written, err := io.CopyN(f, tr, header.Size)
+			if err != nil {
 				f.Close()
 				return fmt.Errorf("failed to write file %s: %w", name, err)
 			}
-			f.Close()
+			if written != header.Size {
+				f.Close()
+				return fmt.Errorf("failed to write file %s: wrote %d of %d bytes", name, written, header.Size)
+			}
+			if err := f.Close(); err != nil {
+				return fmt.Errorf("failed to close file %s: %w", name, err)
+			}
 
 		case tar.TypeSymlink:
 			if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
@@ -316,16 +369,42 @@ func extractTarGz(r io.Reader, dst string) error {
 			if filepath.IsAbs(linkTarget) {
 				return fmt.Errorf("tar entry %q contains absolute symlink target %q", header.Name, linkTarget)
 			}
-			resolvedLink := filepath.Join(filepath.Dir(targetPath), linkTarget)
-			if !strings.HasPrefix(filepath.Clean(resolvedLink), filepath.Clean(dst)) {
+			resolvedLink := filepath.Join(filepath.Dir(targetPath), filepath.FromSlash(linkTarget))
+			if !pathWithin(dst, resolvedLink) {
 				return fmt.Errorf("tar entry %q symlink target %q escapes destination", header.Name, linkTarget)
 			}
 			if err := os.Symlink(header.Linkname, targetPath); err != nil {
 				return fmt.Errorf("failed to create symlink %s: %w", name, err)
 			}
+		case tar.TypeRegA:
+			return fmt.Errorf("tar entry %q uses an unsupported legacy file type", header.Name)
+		case tar.TypeLink:
+			return fmt.Errorf("tar entry %q uses an unsupported hard link", header.Name)
 		}
 	}
 
+	return nil
+}
+
+func ensureNoSymlinkPath(root, target string) error {
+	rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(target))
+	if err != nil {
+		return err
+	}
+	current := filepath.Clean(root)
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("path %q traverses an existing symlink", rel)
+		}
+	}
 	return nil
 }
 

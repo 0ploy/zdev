@@ -1,33 +1,35 @@
 # Stack Gotchas
 
 Runtime behaviors that bite when running a language/framework stack inside an zdev container.
-These apply to **any** zdev project — scaffolded from a template or added to an existing repo.
+These apply to **any** zdev project - scaffolded from a template or added to an existing repo.
 For template-authoring patterns (`.setup-complete`, scaffolding, `setup.just`), see `templates.md`.
 
 ## Node.js / pnpm
 
 - Set `COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"` in config.yaml environment (not in each command).
   Without it, `corepack enable` prompts interactively in the no-TTY entrypoint and hangs.
-- Native module build scripts must be approved. pnpm blocks them by default — and in a **non-TTY
+- Native module build scripts must be approved. pnpm blocks them by default - and in a **non-TTY
   boot path** (entrypoint/`entrypoint.d`) it can't prompt, so pnpm v11 **exits non-zero**
   (`ERR_PNPM_IGNORED_BUILDS`), which fails a `set -e` script and aborts the container. So at boot use
   `pnpm install --config.dangerouslyAllowAllBuilds=true` (native modules like `esbuild`,
   `better-sqlite3`, `@parcel/watcher` need this). In an interactive `setup.just` (with a TTY via
   `zdev exec`), the equivalent is `pnpm approve-builds --all` after install.
-- Scaffolding with `nuxi init` (create-nuxt): a non-TTY requires an explicit `-t/--template`
-  (e.g. `--template minimal`) — without it, it errors "Missing required argument: --template".
-  Use `--no-install` when scaffolding at create time (install happens at boot).
+- Scaffolding with `nuxi init` (create-nuxt): with a TTY it prompts for the template and official
+  modules; a non-TTY requires an explicit `-t/--template` (e.g. `--template minimal`) or it errors
+  "Missing required argument: --template". A create-time scaffold hook gets a TTY when `zdev create`
+  runs from a terminal, so branch on `[ -t 0 ]` (interactive) vs `--template <x>` (fallback). Use
+  `--no-install` when scaffolding at create time (install happens at boot).
 - `HOST: "0.0.0.0"` in environment so dev server is accessible from outside the container.
-  Otherwise Traefik gets connection-refused — the dev server only bound to loopback.
+  Otherwise Traefik gets connection-refused - the dev server only bound to loopback.
 - Add to mutagen ignore: `node_modules`, `.pnpm-store`, `.zdev`, `.setup-complete`.
-  `.pnpm-store` especially — it's a ~500 MB content-addressable store with platform-specific native
+  `.pnpm-store` especially - it's a ~500 MB content-addressable store with platform-specific native
   binaries. Syncing it breaks the container when the image changes (glibc vs musl mismatch).
 - Framework build artifacts to ignore: `.nuxt`, `.output` (Nuxt), `.next` (Next.js).
 - File watching: Node 22+ has `node --watch`; frameworks have their own HMR.
 
 ## PHP / Composer
 
-- `php:8.3-cli-alpine` doesn't include Composer or Symfony CLI — install at runtime in the
+- `php:8.3-cli-alpine` doesn't include Composer or Symfony CLI - install at runtime in the
   entrypoint (guard with `command -v` so restarts don't reinstall):
   ```sh
   wget -qO- https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
@@ -39,7 +41,7 @@ For template-authoring patterns (`.setup-complete`, scaffolding, `setup.just`), 
   `--no-tls` because zdev terminates TLS via Traefik; `--allow-all-ip` binds to `0.0.0.0`.
 - Add to mutagen ignore: `vendor`, `var`, `.zdev`, `.setup-complete`.
 
-## PHP frameworks (Symfony / Sylius / Shopware / Laravel / Akeneo) — runtime gotchas
+## PHP frameworks (Symfony / Sylius / Shopware / Laravel / Akeneo) - runtime gotchas
 
 The five landmines below are the most common causes of "container runs, browser shows a wrong
 page" on PHP framework projects. Worth applying proactively, not just when debugging.
@@ -61,7 +63,7 @@ re-create the file.
 
 Traefik terminates HTTPS and forwards plain HTTP to the app. Without a trusted-proxy config,
 Symfony can't tell the outer request was HTTPS and generates `http://` URLs inside the HTTPS
-page — the browser blocks them as mixed content. Symptoms: Web Debug Toolbar stuck on "Loading…",
+page - the browser blocks them as mixed content. Symptoms: Web Debug Toolbar stuck on "Loading…",
 admin login bounces, asset manifest URLs 404, password-reset emails link to `http://`.
 
 Set this in the app service environment for any Symfony / Sylius / Shopware project:
@@ -123,20 +125,20 @@ environment:
   # MAIL_HOST=mail MAIL_PORT=1025    # Laravel
 ```
 
-Identical for every stack — no auth, no TLS. See `config-examples.md` for the full table.
+Identical for every stack - no auth, no TLS. See `config-examples.md` for the full table.
 
-## Custom dev images (`dockerfile:`) — rebuild staleness
+## Custom dev images (`dockerfile:`) - rebuild staleness
 
 - Build staleness is a hash of the **Dockerfile contents only**, not the build context. Editing a
   file the Dockerfile `COPY`s into the image (baked config, e.g. `.zdev/zpinit/entrypoint.d/*`,
   zpinit `services/*.toml`) does NOT trigger a rebuild on the next `zdev start`. Force it with
   `zdev start --build` (or `zdev update --build`). A fresh `zdev create` builds from scratch, so a
-  user creating a new project never hits this — it bites template authors iterating on baked config.
-- App **source** is bind-mounted at runtime, not `COPY`d, so source edits never need a rebuild —
+  user creating a new project never hits this - it bites template authors iterating on baked config.
+- App **source** is bind-mounted at runtime, not `COPY`d, so source edits never need a rebuild -
   that's the reason build staleness ignores the context. Keep dev images to toolchain/system deps +
   baked config; never `COPY` app source into a `dockerfile:` dev image.
 - **Sync-ready gate is only auto-injected around a config `command:`.** zdev wraps a `command:` with
   a `while [ ! -f /.zdev-sync-ready ]` wait so the app doesn't start before Mutagen's initial sync.
   A `dockerfile:` image that runs via `ENTRYPOINT`/`CMD` (no config `command:`) does NOT get that
-  wrap — so a boot step that reads synced files (e.g. `pnpm install` needing `package.json`) must
+  wrap - so a boot step that reads synced files (e.g. `pnpm install` needing `package.json`) must
   wait for `/.zdev-sync-ready` itself. zdev still touches the marker after the first flush regardless.

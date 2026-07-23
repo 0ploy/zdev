@@ -56,12 +56,12 @@ type cache struct {
 	InstalledTag string    `json:"installed_tag,omitempty"`
 }
 
-type release struct {
-	TagName string         `json:"tag_name"`
-	Assets  []releaseAsset `json:"assets"`
+type Release struct {
+	TagName string  `json:"tag_name"`
+	Assets  []Asset `json:"assets"`
 }
 
-type releaseAsset struct {
+type Asset struct {
 	Name               string `json:"name"`
 	BrowserDownloadURL string `json:"browser_download_url"`
 }
@@ -121,7 +121,11 @@ func refreshAndInstall(path string, prev *cache, currentVersion string) {
 		next.InstalledTag = prev.InstalledTag
 	}
 
-	rel, etag, err := fetchLatest(apiCtx, prev)
+	previousETag := ""
+	if prev != nil {
+		previousETag = prev.ETag
+	}
+	rel, etag, notModified, err := FetchLatestRelease(apiCtx, apiURL, previousETag)
 	if err != nil {
 		// Rate-limit (403), transient network error, or non-2xx. Still
 		// record the attempt so we respect cacheTTL; otherwise every
@@ -131,7 +135,7 @@ func refreshAndInstall(path string, prev *cache, currentVersion string) {
 		return
 	}
 
-	if rel != nil {
+	if !notModified {
 		next.ETag = etag
 		next.LatestTag = rel.TagName
 
@@ -161,49 +165,63 @@ func refreshAndInstall(path string, prev *cache, currentVersion string) {
 	_ = saveCache(path, &next)
 }
 
-// fetchLatest performs a conditional GET against the GitHub API. Returns
+// FetchLatestRelease performs a conditional GET against the GitHub API. Returns
 // (nil, "", nil) on 304 Not Modified - caller must fall back to prev values.
-func fetchLatest(ctx context.Context, prev *cache) (*release, string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
+func FetchLatestRelease(ctx context.Context, url, etag string) (*Release, string, bool, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	if prev != nil && prev.ETag != "" {
-		req.Header.Set("If-None-Match", prev.ETag)
+	if etag != "" {
+		req.Header.Set("If-None-Match", etag)
 	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
 	defer resp.Body.Close()
 
 	switch resp.StatusCode {
 	case http.StatusNotModified:
-		return nil, "", nil
+		return nil, "", true, nil
 	case http.StatusOK:
-		var rel release
+		var rel Release
 		if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
-			return nil, "", err
+			return nil, "", false, err
 		}
-		return &rel, resp.Header.Get("ETag"), nil
+		return &rel, resp.Header.Get("ETag"), false, nil
 	default:
-		return nil, "", fmt.Errorf("unexpected status %d", resp.StatusCode)
+		return nil, "", false, fmt.Errorf("unexpected status %d", resp.StatusCode)
 	}
 }
 
-// installAsset finds the asset matching this OS/arch, downloads it to
-// canonical+".update", verifies it against the release's checksums.txt,
-// chmods, and atomically renames into place. Overwrites the currently-
-// running binary's canonical target; on Unix this is safe because the
-// running process has the file open and keeps executing its in-memory copy.
+// installAsset finds the asset matching this OS/arch, stages it beside the
+// canonical executable, verifies it against the release's checksums.txt, chmods,
+// and atomically renames it into place. Overwrites the currently-running
+// binary's canonical target; on Unix this is safe because the running process
+// has the file open and keeps executing its in-memory copy.
 //
 // If the release lacks checksums.txt (older releases) the binary is
 // rejected - silent installs without integrity checks are not worth the
 // supply-chain risk.
-func installAsset(ctx context.Context, rel *release) error {
-	assetName := "zdev-" + runtime.GOOS + "-" + runtime.GOARCH
+func installAsset(ctx context.Context, rel *Release) error {
+	canonical, err := CanonicalPath()
+	if err != nil {
+		return err
+	}
+	return InstallRelease(ctx, rel, canonical)
+}
+
+func BinaryAssetName() string {
+	return "zdev-" + runtime.GOOS + "-" + runtime.GOARCH
+}
+
+// InstallRelease downloads, verifies, and atomically installs the current
+// platform's binary from rel at canonical.
+func InstallRelease(ctx context.Context, rel *Release, canonical string) error {
+	assetName := BinaryAssetName()
 	var downloadURL, checksumsURL string
 	for _, a := range rel.Assets {
 		switch a.Name {
@@ -220,10 +238,6 @@ func installAsset(ctx context.Context, rel *release) error {
 		return fmt.Errorf("release %s has no %s - refusing to install without integrity check", rel.TagName, ChecksumsAssetName)
 	}
 
-	canonical, err := CanonicalPath()
-	if err != nil {
-		return err
-	}
 	if err := os.MkdirAll(filepath.Dir(canonical), 0o755); err != nil {
 		return err
 	}
@@ -235,17 +249,24 @@ func installAsset(ctx context.Context, rel *release) error {
 		return err
 	}
 
-	tmpPath := canonical + ".update"
-	if err := downloadTo(ctx, downloadURL, tmpPath); err != nil {
+	tmp, err := os.CreateTemp(filepath.Dir(canonical), ".zdev-update-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	if err := tmp.Close(); err != nil {
 		os.Remove(tmpPath)
+		return err
+	}
+	defer os.Remove(tmpPath)
+
+	if err := downloadTo(ctx, downloadURL, tmpPath); err != nil {
 		return err
 	}
 	if err := VerifyFile(tmpPath, expectedHex); err != nil {
-		os.Remove(tmpPath)
 		return err
 	}
 	if err := os.Chmod(tmpPath, 0o755); err != nil {
-		os.Remove(tmpPath)
 		return err
 	}
 	return os.Rename(tmpPath, canonical)
@@ -289,11 +310,21 @@ func downloadTo(ctx context.Context, url, dest string) error {
 		return fmt.Errorf("download returned %d", resp.StatusCode)
 	}
 
-	f, err := os.Create(dest)
+	f, err := os.OpenFile(dest, os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(f, resp.Body); err != nil {
+	const maxBinarySize = int64(256 << 20)
+	written, err := io.Copy(f, io.LimitReader(resp.Body, maxBinarySize+1))
+	if err != nil {
+		f.Close()
+		return err
+	}
+	if written > maxBinarySize {
+		f.Close()
+		return fmt.Errorf("download exceeds %d bytes", maxBinarySize)
+	}
+	if err := f.Sync(); err != nil {
 		f.Close()
 		return err
 	}

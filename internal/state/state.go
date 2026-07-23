@@ -71,28 +71,33 @@ func NewManager(path string) *Manager {
 func (m *Manager) Load() (*State, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.loadLocked()
+
+	var state *State
+	err := m.withFileLock(false, func() error {
+		var err error
+		state, err = m.loadLocked()
+		return err
+	})
+	return state, err
 }
 
 // Mutate atomically loads the state, applies fn, and saves the result.
-// The entire load-modify-save cycle holds the manager's lock, so concurrent
-// goroutines in the same process cannot clobber each other's changes.
-// (Cross-process concurrency is not protected - callers running multiple
-// zdev invocations simultaneously on the same state file can still race.)
+// The entire load-modify-save cycle holds both the manager's in-process mutex
+// and a filesystem lock shared by every zdev process using this state path.
 func (m *Manager) Mutate(fn func(*State) error) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	state, err := m.loadLocked()
-	if err != nil {
-		return err
-	}
-
-	if err := fn(state); err != nil {
-		return err
-	}
-
-	return m.saveLocked(state)
+	return m.withFileLock(true, func() error {
+		state, err := m.loadLocked()
+		if err != nil {
+			return err
+		}
+		if err := fn(state); err != nil {
+			return err
+		}
+		return m.saveLocked(state)
+	})
 }
 
 // loadLocked reads and parses the state file. Caller must hold m.mu.
@@ -137,8 +142,30 @@ func (m *Manager) saveLocked(state *State) error {
 		return fmt.Errorf("failed to create state directory: %w", err)
 	}
 
-	if err := os.WriteFile(m.path, data, 0644); err != nil {
-		return fmt.Errorf("failed to write state file: %w", err)
+	tmp, err := os.CreateTemp(dir, ".state-*.tmp")
+	if err != nil {
+		return fmt.Errorf("failed to create temporary state file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+
+	if err := tmp.Chmod(0644); err != nil {
+		tmp.Close()
+		return fmt.Errorf("failed to set state file permissions: %w", err)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return fmt.Errorf("failed to write temporary state file: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return fmt.Errorf("failed to sync temporary state file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("failed to close temporary state file: %w", err)
+	}
+	if err := os.Rename(tmpPath, m.path); err != nil {
+		return fmt.Errorf("failed to replace state file: %w", err)
 	}
 
 	return nil

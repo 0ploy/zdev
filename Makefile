@@ -34,7 +34,7 @@ test:
 # Run integration tests (requires Docker)
 # -count=1 disables caching since these tests interact with external systems
 test-integration:
-	go test -v -tags=integration -count=1 ./...
+	go test -p 1 -v -tags=integration -count=1 ./...
 
 # Clean build artifacts
 clean:

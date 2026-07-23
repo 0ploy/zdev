@@ -181,6 +181,13 @@ func (d *DockerCLI) CreateContainer(ctx context.Context, cfg ContainerConfig) (s
 func (d *DockerCLI) RunContainer(ctx context.Context, cfg RunConfig) error {
 	args := []string{"run", "--rm"}
 
+	// Attach an interactive TTY only when the caller opts in AND stdin is a real
+	// terminal - otherwise `docker run -it` fails with "the input device is not a
+	// TTY" in CI/piped runs. Mirrors Exec's TTY detection.
+	if cfg.Interactive && term.IsTerminal(int(os.Stdin.Fd())) {
+		args = append(args, "-it")
+	}
+
 	if cfg.Entrypoint != "" {
 		args = append(args, "--entrypoint", cfg.Entrypoint)
 	}

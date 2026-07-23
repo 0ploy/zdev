@@ -30,7 +30,7 @@ func TestRunScaffoldHook_NoHookDoesNotLoadConfig(t *testing.T) {
 	}
 }
 
-// A disabled hook (scaffold.sh.disabled) must be ignored — no scaffold runs.
+// A disabled hook (scaffold.sh.disabled) must be ignored - no scaffold runs.
 func TestRunScaffoldHook_DisabledHookIgnored(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, ".zdev"), 0o755); err != nil {

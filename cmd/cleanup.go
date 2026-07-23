@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"os"
 	"sort"
-	"strings"
 	"time"
 
+	"github.com/0ploy/zdev/internal/config"
+	"github.com/0ploy/zdev/internal/project"
 	"github.com/0ploy/zdev/internal/runtime"
 	"github.com/0ploy/zdev/internal/state"
 	"github.com/spf13/cobra"
@@ -20,12 +21,13 @@ var cleanupCmd = &cobra.Command{
 	Short: "Remove unused containers, volumes and stale project registrations",
 	Long: `Prune resources no longer associated with any live project:
 
-  - Orphaned Docker containers (labelled zdev.project but no matching registration)
-  - Orphaned Docker volumes (not owned by any registered project)
+  - Orphaned Docker containers (not present in a live project's current config)
+  - Orphaned Docker volumes (not referenced by a live project's current config)
   - Stale state entries whose project directory no longer exists on disk
 
-Resources belonging to still-registered projects are never touched - remove those
-explicitly with zdev remove.
+Resources used by the current configuration of registered projects are retained.
+Stale resources left behind by removed services are included in the confirmation
+list before deletion.
 
 Use --force to skip the confirmation prompt.`,
 	RunE: runCleanup,
@@ -53,14 +55,30 @@ func runCleanup(cmd *cobra.Command, args []string) error {
 			path string
 		}
 		var staleProjects []staleProject
-		liveNames := make(map[string]bool)
+		knownContainers := make(map[string]bool)
+		knownVolumes := make(map[string]bool)
 
 		for name, entry := range projects {
-			if _, err := os.Stat(entry.Path); os.IsNotExist(err) {
-				staleProjects = append(staleProjects, staleProject{name: name, path: entry.Path})
-				continue
+			if _, err := os.Stat(entry.Path); err != nil {
+				if os.IsNotExist(err) {
+					staleProjects = append(staleProjects, staleProject{name: name, path: entry.Path})
+					continue
+				}
+				return fmt.Errorf("failed to inspect project %s at %s: %w", name, entry.Path, err)
 			}
-			liveNames[name] = true
+
+			cfg, err := config.LoadProject(entry.Path)
+			if err != nil {
+				return fmt.Errorf("failed to load live project %s at %s: %w", name, entry.Path, err)
+			}
+			loaded := &project.Project{Config: cfg}
+			for serviceName := range cfg.Services {
+				knownContainers[project.ContainerNameFor(serviceName, cfg.Name)] = true
+				knownVolumes[project.MutagenVolumeNameFor(serviceName, cfg.Name)] = true
+			}
+			for _, volumeName := range loaded.NamedVolumes() {
+				knownVolumes[project.VolumeNameFor(volumeName, cfg.Name)] = true
+			}
 		}
 
 		docker := runtime.NewDockerCLI()
@@ -72,7 +90,7 @@ func runCleanup(cmd *cobra.Command, args []string) error {
 
 		var orphanContainers []string
 		for _, name := range containers {
-			if !ownedByLiveProject(name, liveNames) {
+			if !knownContainers[name] {
 				orphanContainers = append(orphanContainers, name)
 			}
 		}
@@ -84,7 +102,7 @@ func runCleanup(cmd *cobra.Command, args []string) error {
 
 		var orphanVolumes []string
 		for _, vol := range dockerVolumes {
-			if !ownedByLiveProject(vol.Name, liveNames) {
+			if !knownVolumes[vol.Name] {
 				orphanVolumes = append(orphanVolumes, vol.Name)
 			}
 		}
@@ -107,7 +125,7 @@ func runCleanup(cmd *cobra.Command, args []string) error {
 		}
 
 		if len(orphanContainers) > 0 {
-			fmt.Printf("Orphaned containers (%d) - not owned by any registered project:\n", len(orphanContainers))
+			fmt.Printf("Orphaned containers (%d) - absent from live project configs:\n", len(orphanContainers))
 			for _, name := range orphanContainers {
 				fmt.Printf("  - %s\n", name)
 			}
@@ -115,7 +133,7 @@ func runCleanup(cmd *cobra.Command, args []string) error {
 		}
 
 		if len(orphanVolumes) > 0 {
-			fmt.Printf("Orphaned volumes (%d) - not owned by any registered project:\n", len(orphanVolumes))
+			fmt.Printf("Orphaned volumes (%d) - absent from live project configs:\n", len(orphanVolumes))
 			for _, name := range orphanVolumes {
 				fmt.Printf("  - %s\n", name)
 			}
@@ -169,20 +187,4 @@ func runCleanup(cmd *cobra.Command, args []string) error {
 
 		return nil
 	})
-}
-
-// ownedByLiveProject reports whether a zdev resource name
-// (<base>.<projectname>.zdev - shared by containers and volumes)
-// belongs to a currently-registered project whose directory still
-// exists on disk.
-func ownedByLiveProject(name string, liveNames map[string]bool) bool {
-	if !strings.HasSuffix(name, ".zdev") {
-		return false
-	}
-	trimmed := strings.TrimSuffix(name, ".zdev")
-	dot := strings.LastIndex(trimmed, ".")
-	if dot < 0 {
-		return false
-	}
-	return liveNames[trimmed[dot+1:]]
 }

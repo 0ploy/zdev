@@ -44,11 +44,11 @@ zdev stop                       # Stop all containers
 zdev stop <service>             # Stop one service container
 zdev restart                    # Stop + start every service
 zdev restart <service>          # Bounce one service container in-place
-zdev update                     # Apply config.yaml + Dockerfile changes (recreates only drifted services)
+zdev update                     # Apply config changes; recreate drifted and remove deleted services
 zdev start/update --build       # Force rebuilding dockerfile: images
 zdev start/update --no-build    # Never build; fail if a dockerfile: image is missing
 zdev down                       # Remove containers and network
-zdev down -v                    # Remove everything including volumes
+zdev down -v                    # Remove everything including stale project volumes
 
 # Run commands in containers
 zdev exec <service> <command>   # e.g. zdev exec app pnpm test
@@ -73,7 +73,7 @@ zdev services recreate          # Rebuild shared containers
 # Local DNS fallback (only if the router blocks the wildcard - see Debugging)
 zdev dns enable / disable / status
 
-# Cross-project networks (links) — see "Linking projects" below
+# Cross-project networks (links) - see "Linking projects" below
 zdev link create <name>         # Make a shared Docker network
 zdev link join <name> <proj>[.<svc>] ...   # Attach a whole project or one service
 zdev link leave <name> <member> ...
@@ -245,7 +245,7 @@ registry push need a custom build command plus `image:` instead.
 **Mutagen** (macOS) - fast file sync. Always ignore dependency dirs (`node_modules`, `vendor`) and
 build artifacts. Without ignores, installs take 5-10x longer.
 
-**`command:` is wrapped in `sh -c`** — zdev runs the value of `command:` as a shell command, not
+**`command:` is wrapped in `sh -c`** - zdev runs the value of `command:` as a shell command, not
 as a Docker CMD array. Bare `--flag` arguments meant for the image's default entrypoint fail with
 `sh: 0: Illegal option --` and the container exits silently. If you need to pass flags to the
 image's binary (e.g. MariaDB tuning), either invoke the binary explicitly (`exec mariadbd
@@ -294,7 +294,7 @@ the legacy behavior holds (first arg is the recipe name), so simple multi-recipe
 ## Linking projects
 
 When two zdev projects need to reach each other (a monolith calling a local microservice, split
-front-end/back-end, shared gateway), create a named **link** — a shared Docker network any project
+front-end/back-end, shared gateway), create a named **link** - a shared Docker network any project
 can join. `zdev link create/join/status/leave/delete` manages them. Cross-project DNS is
 `<service>.<project>.zdev` (FQDN, not the short alias), and cross-project URLs are plain HTTP to
 the internal port, not `https://*.0ploy.dev` (that wildcard resolves to the container's
@@ -304,28 +304,28 @@ granularity), read `references/linking.md`.
 ## Setting Up zdev for an Existing Project
 
 Different from template scaffolding: the source code is already on the host, so the container's
-`command:` doesn't need the `.setup-complete` wait loop — just install deps and exec the dev
+`command:` doesn't need the `.setup-complete` wait loop - just install deps and exec the dev
 server. `setup.just` is optional; only create one if there's a multi-step onboarding (migrations,
 seed data, asset build).
 
 1. **Read the existing stack.** `package.json` / `composer.json` / `requirements.txt` for framework
    and dev command. `.env` / `.env.example` for `DATABASE_URL`, `MAILER_DSN`, `HOST`, `PORT`,
-   `APP_URL`. Existing `docker-compose.yml` / `Dockerfile` as a hint (ports, volumes) — not source
+   `APP_URL`. Existing `docker-compose.yml` / `Dockerfile` as a hint (ports, volumes) - not source
    of truth. README for any manual setup steps.
 2. **Pick a starting config** from `references/config-examples.md` matching the stack. Prefer a
    stock image; if the app needs system packages or tooling baked in (or compose has a `build:`
    section), write a dev Dockerfile in `.zdev/` and point the service at it with
-   `dockerfile: .zdev/Dockerfile` — zdev builds it automatically, no build script needed.
-3. **Bind the dev server to all interfaces** in the `command:` — otherwise the container port isn't
+   `dockerfile: .zdev/Dockerfile` - zdev builds it automatically, no build script needed.
+3. **Bind the dev server to all interfaces** in the `command:` - otherwise the container port isn't
    reachable from Traefik: `HOST=0.0.0.0` (Node), `--host 0.0.0.0` (Vite), `--allow-all-ip`
    (Symfony CLI), `0.0.0.0` (Django `runserver`).
 4. **Rewire env for the zdev network.** Change `DATABASE_URL` host from `localhost` / `127.0.0.1`
    / compose's service name to the zdev service name you declared (commonly `db`). Set
    `MAILER_DSN: "smtp://mail:1025"` so outbound mail is caught by Mailpit. **For any Symfony /
-   Sylius / Shopware / Laravel project**, also set `SYMFONY_TRUSTED_PROXIES: private_ranges` now —
+   Sylius / Shopware / Laravel project**, also set `SYMFONY_TRUSTED_PROXIES: private_ranges` now -
    without it, the debug toolbar and login flows break behind Traefik (see Debugging → "Symfony/Sylius
    behind Traefik"). Laravel equivalent: `TRUSTED_PROXIES=*`.
-5. **Mirror the existing DB** (image, version, credentials, database name) — the app's `.env`
+5. **Mirror the existing DB** (image, version, credentials, database name) - the app's `.env`
    usually tells you all three.
 6. **`mutagen.ignore`** for dependency and build artifact dirs: `node_modules`, `.pnpm-store`,
    `vendor`, `var/cache`, `.nuxt`, `.next`, framework-specific build output. Without this, installs
@@ -338,7 +338,7 @@ seed data, asset build).
 
 For stack-specific landmines when writing the config or entrypoint (Node corepack, pnpm build
 scripts, PHP `memory_limit`, PHP extensions, Symfony `TRUSTED_PROXIES`, Webpack Encore / Vite
-rebuild, mailer DSN), read `references/stack-gotchas.md` — those patterns apply whether you're
+rebuild, mailer DSN), read `references/stack-gotchas.md` - those patterns apply whether you're
 wrapping an existing repo or authoring a template.
 
 ## Debugging
@@ -348,12 +348,12 @@ container; `zdev restart` does the whole project. `zdev down && zdev start` for 
 
 **Config changes aren't taking effect:** `zdev restart` (with or without a service name) just
 stops+starts the existing container, so edits to `environment:`, `image:`, `command:`, routing, or
-volume mounts don't apply. Use `zdev update` — it diffs the config against the running containers
-and recreates only the services that actually changed. Code changes are live via bind mount /
-Mutagen — no restart or update needed.
+volume mounts don't apply. Use `zdev update` - it diffs the config against the running containers,
+recreates only the services that actually changed, and removes services deleted or renamed in the
+config. Code changes are live via bind mount / Mutagen - no restart or update needed.
 
 **Dockerfile changes aren't taking effect:** `zdev update` (or `start`) detects edits to the
-Dockerfile itself and rebuilds. But files the Dockerfile `COPY`s are NOT hashed — after changing
+Dockerfile itself and rebuilds. But files the Dockerfile `COPY`s are NOT hashed - after changing
 those, run `zdev update --build` to force the rebuild.
 
 **Redirects to docs page:** Either the container isn't running or `routing.port` doesn't match the
@@ -373,20 +373,20 @@ overrides `domain:` to a different base domain is not covered.
 **DB connection refused:** Use service name (`db`), not `localhost`. Example: `postgres://postgres:postgres@db:5432/app`
 
 **Can't reach `https://other-project.0ploy.dev` from inside a container:** `*.0ploy.dev`
-is a wildcard that resolves to `127.0.0.1` — from inside a container that's its own loopback, not
+is a wildcard that resolves to `127.0.0.1` - from inside a container that's its own loopback, not
 the host's Traefik. Container-to-container traffic must go HTTP-direct using the container name:
 `http://<service>.<project>.zdev:<internal-port>`. Both projects must be joined to a shared link
 (see "Linking projects").
 
-**Symfony/Sylius behind Traefik — stuck "Loading…" debug toolbar, broken admin login, mixed-content
+**Symfony/Sylius behind Traefik - stuck "Loading…" debug toolbar, broken admin login, mixed-content
 errors in the console:** Traefik terminates TLS and forwards HTTP to the app. Without trusted-proxy
 config, Symfony can't tell the outer request was HTTPS and generates `http://` URLs inside the HTTPS
-page — the browser blocks them. Fix: add `SYMFONY_TRUSTED_PROXIES: private_ranges` to the app service
+page - the browser blocks them. Fix: add `SYMFONY_TRUSTED_PROXIES: private_ranges` to the app service
 `environment:` (Symfony 6.3+ shorthand for RFC1918 + 127.0.0.1). Laravel equivalent: `TRUSTED_PROXIES=*`
 for the TrustProxies middleware. Any framework that generates absolute URLs needs similar awareness.
 
 **`curl 200 OK` isn't enough for HTML apps:** mixed-content, CSP failures, and JS errors are
-browser-only failure modes — curl can't see them. After finishing a web template or UI change, open
+browser-only failure modes - curl can't see them. After finishing a web template or UI change, open
 the project in a browser via the chrome-devtools MCP tools (`new_page`, `list_console_messages`,
 `list_network_requests`) and confirm the console is clean and all requests are `https://`.
 

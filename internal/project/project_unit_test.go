@@ -238,9 +238,9 @@ func TestTransformVolumesForMutagen_MixedVolumes(t *testing.T) {
 		},
 	}
 	volumes := []string{
-		"db_data:/var/lib/data",  // named volume
-		".:/app",                 // bind mount with Mutagen match
-		"./logs:/var/log/app",    // bind mount without Mutagen match
+		"db_data:/var/lib/data", // named volume
+		".:/app",                // bind mount with Mutagen match
+		"./logs:/var/log/app",   // bind mount without Mutagen match
 	}
 
 	result := p.transformVolumesForMutagen("app", volumes, mutagenMounts)
@@ -943,6 +943,50 @@ func TestDown_WithRemoveVolumes(t *testing.T) {
 	}
 	if !mock.CalledWith("RemoveVolume", "data.testproject.zdev") {
 		t.Error("RemoveVolume was not called with data.testproject.zdev")
+	}
+}
+
+func TestDown_WithRemoveVolumesRemovesStaleProjectVolumes(t *testing.T) {
+	cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	mock := runtime.NewMockRuntime()
+	mock.VolumesExist["removed.testproject.zdev"] = true
+	mock.VolumesExist["data.other.zdev"] = true
+
+	p := newTestProject(mock)
+	if err := p.Down(context.Background(), true); err != nil {
+		t.Fatalf("Down(removeVolumes=true) error: %v", err)
+	}
+
+	if !mock.CalledWith("RemoveVolume", "removed.testproject.zdev") {
+		t.Error("stale project volume was not removed")
+	}
+	if mock.CalledWith("RemoveVolume", "data.other.zdev") {
+		t.Error("volume from another project must not be removed")
+	}
+}
+
+func TestUpdateRemovesContainerForDeletedService(t *testing.T) {
+	cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	mock := runtime.NewMockRuntime()
+	mock.NetworksExist["testproject.zdev"] = true
+	mock.ContainersExist["old.testproject.zdev"] = true
+	mock.ContainersRunning["old.testproject.zdev"] = true
+	mock.ContainerLabels["old.testproject.zdev"] = map[string]string{
+		"zdev.project": "testproject",
+		"zdev.service": "old",
+	}
+
+	p := newTestProject(mock)
+	if _, err := p.Update(context.Background()); err != nil {
+		t.Fatalf("Update() error: %v", err)
+	}
+
+	if !mock.CalledWith("RemoveContainer", "old.testproject.zdev") {
+		t.Error("container for deleted service was not removed")
 	}
 }
 

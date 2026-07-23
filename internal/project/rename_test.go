@@ -5,7 +5,26 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/0ploy/zdev/internal/config"
+	"github.com/0ploy/zdev/internal/runtime"
 )
+
+func TestFirstServiceImageSupportsDockerfileOnlyService(t *testing.T) {
+	p := &Project{
+		Config: &config.ProjectConfig{
+			Name: "demo",
+			Services: map[string]config.ServiceConfig{
+				"app": {Dockerfile: "Dockerfile"},
+			},
+		},
+		Runtime: runtime.NewMockRuntime(),
+	}
+
+	if got, want := p.firstServiceImage(), "zdev-demo-app:latest"; got != want {
+		t.Fatalf("firstServiceImage() = %q, want %q", got, want)
+	}
+}
 
 func TestUpdateConfigName_ReplacesExisting(t *testing.T) {
 	dir := t.TempDir()

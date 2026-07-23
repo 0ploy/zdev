@@ -4,6 +4,8 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -25,6 +27,7 @@ type ToolInfo struct {
 	ArchiveType string                                              // "", "tar.gz", or "zip" - empty means bare binary
 	URLBuilder  func(template, version, goos, goarch string) string // Custom URL builder, nil uses default
 	ExtraFiles  []string                                            // Additional files to extract from archive (e.g., mutagen-agents.tar.gz)
+	Checksums   map[string]string                                   // SHA-256 by "<goos>/<goarch>"
 }
 
 // Manager handles tool downloads and verification
@@ -65,7 +68,16 @@ func (m *Manager) ToolExists(tool ToolInfo) bool {
 		return false
 	}
 	// Check if it's executable
-	return info.Mode()&0111 != 0
+	if info.Mode()&0111 == 0 {
+		return false
+	}
+	for _, extra := range tool.ExtraFiles {
+		info, err := os.Stat(filepath.Join(m.binDir, extra))
+		if err != nil || !info.Mode().IsRegular() {
+			return false
+		}
+	}
+	return true
 }
 
 // EnsureTool downloads a tool if not present, returns path to binary
@@ -94,6 +106,13 @@ func (m *Manager) EnsureTool(ctx context.Context, tool ToolInfo) (string, error)
 func (m *Manager) downloadTool(ctx context.Context, tool ToolInfo) error {
 	url := buildDownloadURL(tool)
 	destPath := m.GetToolPath(tool)
+	checksum, ok := tool.Checksums[runtime.GOOS+"/"+runtime.GOARCH]
+	if !ok || checksum == "" {
+		return fmt.Errorf("no SHA-256 checksum configured for %s %s/%s", tool.Name, runtime.GOOS, runtime.GOARCH)
+	}
+	if _, err := hex.DecodeString(checksum); err != nil || len(checksum) != sha256.Size*2 {
+		return fmt.Errorf("invalid SHA-256 checksum configured for %s %s/%s", tool.Name, runtime.GOOS, runtime.GOARCH)
+	}
 
 	// Create HTTP request with context
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
@@ -120,12 +139,30 @@ func (m *Manager) downloadTool(ctx context.Context, tool ToolInfo) error {
 	tmpPath := tmpFile.Name()
 	defer os.Remove(tmpPath) // Clean up on failure
 
-	// Write to temp file
-	if _, err := io.Copy(tmpFile, resp.Body); err != nil {
+	// Hash while downloading, cap the response, and verify before extracting
+	// or marking any bytes executable.
+	const maxToolDownloadSize = int64(512 << 20)
+	hasher := sha256.New()
+	written, err := io.Copy(io.MultiWriter(tmpFile, hasher), io.LimitReader(resp.Body, maxToolDownloadSize+1))
+	if err != nil {
 		tmpFile.Close()
 		return fmt.Errorf("failed to write file: %w", err)
 	}
-	tmpFile.Close()
+	if written > maxToolDownloadSize {
+		tmpFile.Close()
+		return fmt.Errorf("download exceeds %d bytes", maxToolDownloadSize)
+	}
+	if err := tmpFile.Sync(); err != nil {
+		tmpFile.Close()
+		return fmt.Errorf("failed to sync downloaded file: %w", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("failed to close downloaded file: %w", err)
+	}
+	actualChecksum := hex.EncodeToString(hasher.Sum(nil))
+	if !strings.EqualFold(actualChecksum, checksum) {
+		return fmt.Errorf("checksum mismatch: got %s, want %s", actualChecksum, checksum)
+	}
 
 	// Handle archive extraction if needed
 	if tool.ArchiveType == "tar.gz" {
@@ -175,6 +212,12 @@ func (m *Manager) extractTarGz(archivePath, binaryName, destPath string, extraFi
 	}
 
 	extracted := make(map[string]bool)
+	staged := make(map[string]string)
+	defer func() {
+		for _, path := range staged {
+			_ = os.Remove(path)
+		}
+	}()
 
 	// Find and extract the files
 	for {
@@ -188,9 +231,12 @@ func (m *Manager) extractTarGz(archivePath, binaryName, destPath string, extraFi
 
 		// Check if this is a file we're looking for
 		name := filepath.Base(header.Name)
-		destFile, wanted := filesToExtract[name]
+		_, wanted := filesToExtract[name]
 		if !wanted || header.Typeflag != tar.TypeReg {
 			continue
+		}
+		if extracted[name] {
+			return fmt.Errorf("archive contains duplicate required file %q", name)
 		}
 
 		// Create temp file for extraction
@@ -206,7 +252,10 @@ func (m *Manager) extractTarGz(archivePath, binaryName, destPath string, extraFi
 			os.Remove(tmpPath)
 			return fmt.Errorf("failed to extract %s: %w", name, err)
 		}
-		tmpFile.Close()
+		if err := tmpFile.Close(); err != nil {
+			os.Remove(tmpPath)
+			return fmt.Errorf("failed to close extracted %s: %w", name, err)
+		}
 
 		// Make executable if it's the main binary
 		if name == binaryName {
@@ -216,18 +265,26 @@ func (m *Manager) extractTarGz(archivePath, binaryName, destPath string, extraFi
 			}
 		}
 
-		// Move to final location
-		if err := os.Rename(tmpPath, destFile); err != nil {
-			os.Remove(tmpPath)
-			return fmt.Errorf("failed to install %s: %w", name, err)
-		}
-
 		extracted[name] = true
+		staged[name] = tmpPath
 	}
 
-	// Check if main binary was extracted
-	if !extracted[binaryName] {
-		return fmt.Errorf("binary %q not found in archive", binaryName)
+	for name := range filesToExtract {
+		if !extracted[name] {
+			return fmt.Errorf("required file %q not found in archive", name)
+		}
+	}
+
+	// Install supporting files first and the executable last. ToolExists only
+	// sees a completed installation, so a failed extra-file move cannot leave
+	// a binary that permanently skips repair on the next run.
+	installOrder := append([]string(nil), extraFiles...)
+	installOrder = append(installOrder, binaryName)
+	for _, name := range installOrder {
+		if err := os.Rename(staged[name], filesToExtract[name]); err != nil {
+			return fmt.Errorf("failed to install %s: %w", name, err)
+		}
+		delete(staged, name)
 	}
 
 	return nil

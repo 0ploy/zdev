@@ -140,12 +140,13 @@ func (p *Project) copyVolumeData(ctx context.Context, oldName, newName, image st
 	return true, nil
 }
 
-// firstServiceImage returns the image of the first service in the config.
-// Used for volume migration - project images are guaranteed local since the project was running.
+// firstServiceImage returns a runnable image from the project config. Generated
+// tags for dockerfile-only services are local because rename requires the
+// project to have been started.
 func (p *Project) firstServiceImage() string {
-	for _, svc := range p.Config.Services {
-		if svc.Image != "" {
-			return svc.Image
+	for name, svc := range p.Config.Services {
+		if image := p.serviceImage(name, svc); image != "" {
+			return image
 		}
 	}
 	return ""

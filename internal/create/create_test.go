@@ -1,8 +1,12 @@
 package create
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -242,6 +246,97 @@ func TestCopyLocal(t *testing.T) {
 	if string(data) != "version: 1" {
 		t.Errorf("config content = %q, want %q", string(data), "version: 1")
 	}
+}
+
+func TestCopyLocalPreservesSafeSymlink(t *testing.T) {
+	srcDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(srcDir, "target.txt"), []byte("safe"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("target.txt", filepath.Join(srcDir, "link.txt")); err != nil {
+		t.Fatal(err)
+	}
+
+	dstDir := t.TempDir()
+	if err := CopyLocal(srcDir, dstDir); err != nil {
+		t.Fatalf("CopyLocal() error: %v", err)
+	}
+	target, err := os.Readlink(filepath.Join(dstDir, "link.txt"))
+	if err != nil {
+		t.Fatalf("copied link is not a symlink: %v", err)
+	}
+	if target != "target.txt" {
+		t.Fatalf("copied symlink target = %q, want target.txt", target)
+	}
+}
+
+func TestCopyLocalRejectsEscapingSymlink(t *testing.T) {
+	srcDir := t.TempDir()
+	if err := os.Symlink("../secret", filepath.Join(srcDir, "link")); err != nil {
+		t.Fatal(err)
+	}
+
+	err := CopyLocal(srcDir, t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "escapes") {
+		t.Fatalf("CopyLocal() error = %v, want escaping symlink error", err)
+	}
+}
+
+func TestExtractTarGzRejectsTraversalAsFirstEntry(t *testing.T) {
+	archive := makeTarGz(t, []tar.Header{
+		{Name: "../escape", Typeflag: tar.TypeReg, Mode: 0644},
+	})
+	if err := extractTarGz(bytes.NewReader(archive), t.TempDir()); err == nil {
+		t.Fatal("extractTarGz() accepted a traversal entry")
+	}
+}
+
+func TestExtractTarGzRejectsSymlinkPivot(t *testing.T) {
+	var archive bytes.Buffer
+	gz := gzip.NewWriter(&archive)
+	tw := tar.NewWriter(gz)
+	if err := tw.WriteHeader(&tar.Header{Name: "root/", Typeflag: tar.TypeDir, Mode: 0755}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.WriteHeader(&tar.Header{Name: "root/link", Typeflag: tar.TypeSymlink, Linkname: "directory"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.WriteHeader(&tar.Header{Name: "root/link/file", Typeflag: tar.TypeReg, Mode: 0644, Size: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write([]byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	err := extractTarGz(bytes.NewReader(archive.Bytes()), t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("extractTarGz() error = %v, want symlink traversal error", err)
+	}
+}
+
+func makeTarGz(t *testing.T, headers []tar.Header) []byte {
+	t.Helper()
+	var archive bytes.Buffer
+	gz := gzip.NewWriter(&archive)
+	tw := tar.NewWriter(gz)
+	for i := range headers {
+		if err := tw.WriteHeader(&headers[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return archive.Bytes()
 }
 
 func TestResolveTemplate_FileNotDir(t *testing.T) {

@@ -40,19 +40,19 @@ func appService() map[string]config.ServiceConfig {
 func TestScaffoldHookPath(t *testing.T) {
 	t.Run("active hook found", func(t *testing.T) {
 		p := newScaffoldTestProject(t, runtime.NewMockRuntime(), appService(), "scaffold.sh")
-		if got := p.ScaffoldHookPath(); got == "" {
+		if got, err := p.ScaffoldHookPath(); err != nil || got == "" {
 			t.Fatal("expected an active scaffold hook path, got empty")
 		}
 	})
 	t.Run("no hook", func(t *testing.T) {
 		p := newScaffoldTestProject(t, runtime.NewMockRuntime(), appService(), "")
-		if got := p.ScaffoldHookPath(); got != "" {
+		if got, err := p.ScaffoldHookPath(); err != nil || got != "" {
 			t.Fatalf("expected empty path, got %q", got)
 		}
 	})
 	t.Run("disabled hook is ignored", func(t *testing.T) {
 		p := newScaffoldTestProject(t, runtime.NewMockRuntime(), appService(), "scaffold.sh.disabled")
-		if got := p.ScaffoldHookPath(); got != "" {
+		if got, err := p.ScaffoldHookPath(); err != nil || got != "" {
 			t.Fatalf("expected disabled hook to be ignored, got %q", got)
 		}
 	})
@@ -72,7 +72,7 @@ func TestDisableScaffoldHook(t *testing.T) {
 			t.Errorf("expected disabled file to exist: %v", err)
 		}
 		// After disabling, no active hook remains.
-		if p.ScaffoldHookPath() != "" {
+		if active, err := p.ScaffoldHookPath(); err != nil || active != "" {
 			t.Error("expected no active hook after disabling")
 		}
 	})

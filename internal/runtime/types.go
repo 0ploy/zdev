@@ -46,6 +46,11 @@ type RunConfig struct {
 	Env        map[string]string // Environment variables
 	Volumes    []VolumeMount     // Volume/bind mounts
 	WorkingDir string            // Working directory inside the container
+	// Interactive attaches a TTY (-it) when the caller's stdin is a terminal, so
+	// the command can prompt the user (e.g. a scaffolder's module picker). When
+	// stdin isn't a terminal (CI/piped), no TTY is attached and the command must
+	// be able to run non-interactively.
+	Interactive bool
 }
 
 // Container represents a running or stopped container

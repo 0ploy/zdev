@@ -19,6 +19,12 @@ func JustTool() ToolInfo {
 		URLTemplate: config.JustURLTemplate,
 		BinaryName:  "just",
 		ArchiveType: "tar.gz",
+		Checksums: map[string]string{
+			"darwin/amd64": "e0b83a9352952ab25e5cf13f6cb03dd1872416e5d89388b56d6ca58f11b0a3a8",
+			"darwin/arm64": "d21b20df01ec9b9762b0ef08e56ae8dccf3738770edeafa8d2b3a750aee06d78",
+			"linux/amd64":  "05eb2f068b641b06e5b318796c2e27d4dcca608e65b34329a08c1b9f582611bd",
+			"linux/arm64":  "993b78f51004248114af22368f69715541542b3c9941c80e02f8ae10eb404ae0",
+		},
 		URLBuilder: func(template, version, goos, goarch string) string {
 			arch := JustArch(goarch)
 			os := JustOS(goos)
@@ -96,4 +102,3 @@ func (j *Just) ListRecipes(ctx context.Context, justfile string) ([]string, erro
 	}
 	return recipes, nil
 }
-

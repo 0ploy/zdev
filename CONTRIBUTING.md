@@ -56,6 +56,7 @@ go test -v -tags=integration -count=1 ./internal/project/  # Single package
 ```
 
 Integration tests are tagged with `//go:build integration` so they don't run during `make test`. They create real Docker containers, networks, and volumes, and clean up after themselves (including state registry).
+The full Make target runs packages serially (`-p 1`) because multiple packages snapshot and restore the same shared-service containers.
 
 ### Writing tests
 
@@ -120,6 +121,8 @@ Link networks enable cross-project container communication. The implementation s
 - **`cmd/link.go`** - All subcommands (create, delete, join, leave, ls, status)
 
 Links are stored in the global state file (`~/.zdev/state.yaml`), not in project config. They are a runtime relationship between projects, not a property of any single project. Each link creates a dedicated Docker network (`zdev_link_<name>`) so different link groups stay isolated from each other.
+
+All global state mutations must go through `state.Manager.Mutate`. It holds both an in-process mutex and a cross-process file lock for the complete read-modify-write cycle, then replaces `state.yaml` atomically. Do not add direct state-file writes or split a mutation into separate `Load` and save operations.
 
 On `zdev start`, a project checks if it's a member of any links and auto-connects. On `zdev down`, it disconnects. Container DNS resolution happens automatically via Docker's embedded DNS - no explicit network aliases are needed since containers are already named with the `<service>.<project>.zdev` pattern.
 

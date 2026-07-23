@@ -21,23 +21,32 @@ const ScaffoldHookName = "scaffold.sh"
 // scaffoldHookRelPath is the hook path inside the (bind-mounted) project.
 const scaffoldHookRelPath = ".zdev/" + ScaffoldHookName
 
-// ScaffoldHookPath returns the absolute path to an ACTIVE scaffold hook, or ""
-// if there is none. A hook renamed to scaffold.sh.disabled is intentionally
-// ignored, so a scaffolded project used as a template again won't re-scaffold.
-func (p *Project) ScaffoldHookPath() string {
+// ScaffoldHookPath returns the absolute path to an active scaffold hook, or ""
+// if there is none. Filesystem errors other than a missing hook are returned.
+func (p *Project) ScaffoldHookPath() (string, error) {
 	path := filepath.Join(p.Dir, scaffoldHookRelPath)
-	if info, err := os.Stat(path); err == nil && !info.IsDir() {
-		return path
+	info, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return "", nil
 	}
-	return ""
+	if err != nil {
+		return "", fmt.Errorf("cannot inspect scaffold hook: %w", err)
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("scaffold hook %s is a directory", path)
+	}
+	return path, nil
 }
 
 // DisableScaffoldHook renames an active scaffold hook to <name>.disabled, so it
-// is retained for reference but never runs again — a scaffolded project reused
+// is retained for reference but never runs again - a scaffolded project reused
 // as a template won't re-scaffold and clobber the work. No-op when there is no
 // active hook. Returns the new path, or "" when nothing was renamed.
 func (p *Project) DisableScaffoldHook() (string, error) {
-	active := p.ScaffoldHookPath()
+	active, err := p.ScaffoldHookPath()
+	if err != nil {
+		return "", err
+	}
 	if active == "" {
 		return "", nil
 	}
@@ -68,15 +77,18 @@ func (p *Project) scaffoldService() (string, config.ServiceConfig, error) {
 // RunScaffold runs the template's create-time scaffold hook inside a throwaway
 // container built from the scaffold service's image. The container's ENTRYPOINT
 // is overridden to a plain shell, so whatever init the image normally runs
-// (zpinit, a PHP entrypoint, …) is bypassed — the hook is process-manager
+// (zpinit, a PHP entrypoint, …) is bypassed - the hook is process-manager
 // agnostic. The project directory is bind-mounted at /app so scaffolded files
 // land on the host synchronously; no Mutagen session is involved.
 //
-// Dependency install is deliberately NOT the hook's job — that belongs in the
+// Dependency install is deliberately NOT the hook's job - that belongs in the
 // container's normal boot (so clones and dependency changes are covered). The
 // hook should scaffold source only (e.g. `nuxi init --no-install`).
 func (p *Project) RunScaffold(ctx context.Context) error {
-	hook := p.ScaffoldHookPath()
+	hook, err := p.ScaffoldHookPath()
+	if err != nil {
+		return err
+	}
 	if hook == "" {
 		return fmt.Errorf("no active %s to run", scaffoldHookRelPath)
 	}
@@ -131,5 +143,10 @@ func (p *Project) RunScaffold(ctx context.Context) error {
 		Command:    []string{"/app/" + scaffoldHookRelPath},
 		Volumes:    []runtime.VolumeMount{{Source: projectDir, Target: "/app"}},
 		WorkingDir: "/app",
+		// Attach a TTY when `zdev create` runs from a terminal, so the hook can
+		// prompt (e.g. a scaffolder's template/module picker). The hook must
+		// still work without a TTY (CI/piped) - see the nuxt template's
+		// `[ -t 0 ]` fallback.
+		Interactive: true,
 	})
 }

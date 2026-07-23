@@ -28,11 +28,19 @@ Ship a `.zdev/scaffold.sh`. `zdev create` runs it **once**, right after copying 
 # .zdev/scaffold.sh - runs inside the throwaway container (cwd /app)
 #!/bin/sh
 set -eu
-# --template is required: a non-interactive terminal can't answer the prompt.
-pnpm dlx nuxi@latest init . --template minimal --no-install --packageManager pnpm --gitInit=false --force
+# `zdev create` attaches a TTY when run from a terminal, so the hook can prompt
+# interactively (create-nuxt's template/module picker). Guard with `[ -t 0 ]`
+# and provide a non-interactive fallback for CI/piped runs (where nuxi needs an
+# explicit --template).
+if [ -t 0 ]; then
+  pnpm dlx nuxi@latest init . --no-install --packageManager pnpm --gitInit=false --force
+else
+  pnpm dlx nuxi@latest init . --template minimal --no-install --packageManager pnpm --gitInit=false --force
+fi
 ```
 
 - **Scaffold source only; install at boot.** Use `--no-install`; install deps in the boot path (a zpinit `entrypoint.d/` step, or the container `command:`) so a clone just runs `zdev start` and pulled dependency changes are picked up. Install-at-scaffold-time only populates the throwaway bind mount, not the persistent volume.
+- **Interactive when a terminal is present.** zdev attaches a TTY to the hook when `zdev create` runs from a terminal, so a scaffolder can prompt (framework/module pickers). Always keep a non-interactive fallback (`[ -t 0 ]`) so `zdev create` in CI/piped contexts doesn't block on a prompt it can't show.
 - **No gate, no `.setup-complete`.** Because scaffolding happens at create time, the steady-state image needs no wait loop and the created project carries no re-scaffolding `setup.just`.
 - **zdev auto-disables the hook** after a successful run (renames `scaffold.sh` -> `scaffold.sh.disabled`, never deletes it). A `.disabled` hook is skipped, so reusing the project as a template won't re-scaffold. Safe even if the user never reads the create output.
 - The scaffold runs in the sole service, or the one named `app`. It requires Docker (build/pull + run).
@@ -164,7 +172,7 @@ zdev exec app sh -c "echo '.setup-complete' >> .gitignore && touch .setup-comple
 
 Language/framework behaviors (Node corepack, pnpm build scripts, PHP extensions,
 `SYMFONY_TRUSTED_PROXIES`, Webpack Encore asset pipelines, `memory_limit`, `MAILER_DSN`) are **not
-template-authoring-specific** — they apply to any zdev-managed container. See
+template-authoring-specific** - they apply to any zdev-managed container. See
 `stack-gotchas.md` for the full list. System-level deps (PHP extensions, apk/apt packages) belong
 in a `.zdev/Dockerfile` referenced via `dockerfile:` (zdev builds it automatically); runtime env
 and per-project setup go in the entrypoint and/or `setup.just`. The same split applies when
@@ -180,4 +188,4 @@ Test locally: `zdev create ./my-template test-app && cd test-app && zdev start`
 
 Verify: create scaffolds, `zdev start` serves the URL, `zdev restart` works, file changes reflected.
 
-**Iterating gotcha:** editing a file the Dockerfile `COPY`s into the image (e.g. `.zdev/zpinit/entrypoint.d/*`, baked config) does NOT trigger a rebuild on the next `zdev start` — build staleness hashes the Dockerfile *contents* only, not the build context. Force it with `zdev start --build` (or `zdev update --build`). A fresh `zdev create` builds from scratch, so end users creating a new project never hit this; it bites template authors iterating locally. See `stack-gotchas.md`.
+**Iterating gotcha:** editing a file the Dockerfile `COPY`s into the image (e.g. `.zdev/zpinit/entrypoint.d/*`, baked config) does NOT trigger a rebuild on the next `zdev start` - build staleness hashes the Dockerfile *contents* only, not the build context. Force it with `zdev start --build` (or `zdev update --build`). A fresh `zdev create` builds from scratch, so end users creating a new project never hit this; it bites template authors iterating locally. See `stack-gotchas.md`.

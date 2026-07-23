@@ -17,6 +17,12 @@ func MkcertTool() ToolInfo {
 		Version:     config.MkcertVersion,
 		URLTemplate: config.MkcertURLTemplate,
 		BinaryName:  "mkcert",
+		Checksums: map[string]string{
+			"darwin/amd64": "a32dfab51f1845d51e810db8e47dcf0e6b51ae3422426514bf5a2b8302e97d4e",
+			"darwin/arm64": "c8af0df44bce04359794dad8ea28d750437411d632748049d08644ffb66a60c6",
+			"linux/amd64":  "6d31c65b03972c6dc4a14ab429f2928300518b26503f58723e532d1b0a3bbb52",
+			"linux/arm64":  "b98f2cc69fd9147fe4d405d859c57504571adec0d3611c3eefd04107c7ac00d0",
+		},
 	}
 }
 

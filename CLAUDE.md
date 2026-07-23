@@ -20,7 +20,7 @@ Release process:
 
 ## Style
 
-**Never use em-dashes** (—). Use regular hyphens (-) everywhere: code, copy, comments, docs.
+**Never use em dashes.** Use regular hyphens (-) everywhere: code, copy, comments, docs.
 
 ## Conventions That Break Expectations
 

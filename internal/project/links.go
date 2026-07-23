@@ -45,18 +45,25 @@ func (p *Project) connectLinks(ctx context.Context) {
 func (p *Project) disconnectLinks(ctx context.Context) {
 	stateMgr, err := state.DefaultManager()
 	if err != nil {
+		fmt.Printf("Warning: failed to load link state during disconnect: %v\n", err)
 		return
 	}
 
 	links, err := stateMgr.GetLinksForProject(p.Config.Name)
-	if err != nil || len(links) == 0 {
+	if err != nil {
+		fmt.Printf("Warning: failed to load project links during disconnect: %v\n", err)
+		return
+	}
+	if len(links) == 0 {
 		return
 	}
 
-	for _, entry := range links {
+	for linkName, entry := range links {
 		containers := p.linkContainers(entry)
 		for _, containerName := range containers {
-			_ = p.Runtime.NetworkDisconnect(ctx, entry.Network, containerName)
+			if err := p.Runtime.NetworkDisconnect(ctx, entry.Network, containerName); err != nil {
+				fmt.Printf("Warning: failed to disconnect %s from link %q: %v\n", containerName, linkName, err)
+			}
 		}
 	}
 }

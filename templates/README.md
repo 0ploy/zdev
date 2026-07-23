@@ -13,7 +13,7 @@ zdev create ./local-dir my-app         # Local directory (for development/testin
 > [!TIP]
 > ## 🤖  Let Claude Code help you build the template
 >
-> **Install the `zdev` skill** and Claude Code can drive the whole template-authoring workflow for you — picking images, writing `config.yaml`, scaffolding `setup.just`, testing the run, and iterating when something breaks.
+> **Install the `zdev` skill** and Claude Code can drive the whole template-authoring workflow for you - picking images, writing `config.yaml`, scaffolding `setup.just`, testing the run, and iterating when something breaks.
 >
 > ```bash
 > npx skills add 0ploy/zdev
@@ -260,7 +260,7 @@ services:
 
 `zdev start` builds automatically when the image is missing or when the Dockerfile changed - a fresh clone needs no manual build step. The build context is always the project root, so `COPY`/`ADD` paths in the Dockerfile resolve from there no matter where the Dockerfile lives. The image is tagged `zdev-<project>-<service>:latest` unless you set `image:` alongside `dockerfile:` to pick the tag.
 
-> **Iterating on baked files:** rebuild-staleness hashes the **Dockerfile contents only**, not the build context. If you edit a file the Dockerfile `COPY`s into the image (baked config like a zpinit `entrypoint.d/` script) without changing the Dockerfile, `zdev start` won't rebuild — force it with `zdev start --build`. A fresh `zdev create` always builds, so end users don't hit this; it's a template-author iteration gotcha.
+> **Iterating on baked files:** rebuild-staleness hashes the **Dockerfile contents only**, not the build context. If you edit a file the Dockerfile `COPY`s into the image (baked config like a zpinit `entrypoint.d/` script) without changing the Dockerfile, `zdev start` won't rebuild - force it with `zdev start --build`. A fresh `zdev create` always builds, so end users don't hit this; it's a template-author iteration gotcha.
 
 This is for dev containers only: build args, multi-stage targets, custom contexts, multi-arch, build secrets, and registry push are out of scope. Templates that need those should keep a custom build command (e.g. `.zdev/commands/build-image.just`) producing the `image:` tag.
 
@@ -338,26 +338,35 @@ default:
 
 Frameworks like Nuxt and Symfony have their own scaffolding commands (`nuxi init`, `symfony new`). These commands typically expect an empty directory, which conflicts with `.zdev/` already being there.
 
-There are two families of approach: a **create-time scaffold hook** (`.zdev/scaffold.sh`, preferred — keeps scaffolding out of the created project entirely), or scaffolding inside **`setup.just`** (in-place or via `/tmp`). Pick the hook when you want the generated project to be a clean steady state; pick `setup.just` when scaffolding should be a persistent project command.
+There are two families of approach: a **create-time scaffold hook** (`.zdev/scaffold.sh`, preferred - keeps scaffolding out of the created project entirely), or scaffolding inside **`setup.just`** (in-place or via `/tmp`). Pick the hook when you want the generated project to be a clean steady state; pick `setup.just` when scaffolding should be a persistent project command.
 
-### Create-time scaffold hook (`.zdev/scaffold.sh`) — preferred
+### Create-time scaffold hook (`.zdev/scaffold.sh`) - preferred
 
-Ship a `.zdev/scaffold.sh`. `zdev create` runs it **once**, right after copying the template, inside a throwaway container built from your `.zdev/Dockerfile`, with the entrypoint overridden to a plain shell (`docker run --entrypoint sh`). Because the image's normal entrypoint is bypassed, whatever process manager it bakes in (zpinit, a PHP entrypoint) does not run — the hook generates the project and nothing else. The project directory is bind-mounted at `/app`, so files land on the host synchronously.
+Ship a `.zdev/scaffold.sh`. `zdev create` runs it **once**, right after copying the template, inside a throwaway container built from your `.zdev/Dockerfile`, with the entrypoint overridden to a plain shell (`docker run --entrypoint sh`). Because the image's normal entrypoint is bypassed, whatever process manager it bakes in (zpinit, a PHP entrypoint) does not run - the hook generates the project and nothing else. The project directory is bind-mounted at `/app`, so files land on the host synchronously.
+
+Local template symlinks are preserved only when their relative target stays inside the template directory. Absolute or escaping symlinks are rejected, as are unsafe links and paths in downloaded template archives.
 
 ```sh
-# .zdev/scaffold.sh — runs inside the throwaway container (cwd /app)
+# .zdev/scaffold.sh - runs inside the throwaway container (cwd /app)
 #!/bin/sh
 set -eu
-# --template is required: a non-interactive terminal can't answer the prompt.
-pnpm dlx nuxi@latest init . --template minimal --no-install --packageManager pnpm --gitInit=false --force
+# `zdev create` attaches a TTY when run from a terminal, so the hook can prompt
+# interactively (create-nuxt's template/module picker). Keep a non-interactive
+# fallback for CI/piped runs, where nuxi needs an explicit --template.
+if [ -t 0 ]; then
+  pnpm dlx nuxi@latest init . --no-install --packageManager pnpm --gitInit=false --force
+else
+  pnpm dlx nuxi@latest init . --template minimal --no-install --packageManager pnpm --gitInit=false --force
+fi
 ```
 
 Key points:
 
-- **Install is NOT the hook's job.** Scaffold source only (`--no-install`); install dependencies at boot instead (e.g. a `zpinit` `entrypoint.d/` step, or the container `command:`). That way a teammate who clones the generated project just runs `zdev start` — no re-scaffold — and pulled dependency changes are picked up on boot. Install-at-scaffold-time would only populate the one-time bind mount, not the persistent volume.
+- **Interactive when a terminal is present.** zdev attaches a TTY to the hook when `zdev create` runs from a terminal, so a scaffolder can prompt (framework/module pickers). Always keep a `[ -t 0 ]` non-interactive fallback so `zdev create` in CI/piped contexts doesn't block on a prompt it can't show.
+- **Install is NOT the hook's job.** Scaffold source only (`--no-install`); install dependencies at boot instead (e.g. a `zpinit` `entrypoint.d/` step, or the container `command:`). That way a teammate who clones the generated project just runs `zdev start` - no re-scaffold - and pulled dependency changes are picked up on boot. Install-at-scaffold-time would only populate the one-time bind mount, not the persistent volume.
 - **No gate, no marker.** Because scaffolding happens at create time, the steady-state image needs no `.setup-complete` wait loop and the created project carries no re-scaffolding `setup.just`.
-- **zdev disables the hook automatically, never deletes it.** After a successful run zdev renames `scaffold.sh` to `scaffold.sh.disabled` — retained for reference but inert. A `.disabled` hook is skipped by `zdev create`, so reusing a scaffolded project as a template won't re-scaffold over your work. Delete it whenever you like. (Auto-disabling means it's safe even if the user never reads the create output.)
-- **Trust:** because the hook runs during `zdev create` (not later at `zdev start`), a user creating from your template executes its scaffold code at create time. It runs in a throwaway container with only the project dir bind-mounted, but note the timing — the same trust considerations as any `setup.just` apply, just earlier.
+- **zdev disables the hook automatically, never deletes it.** After a successful run zdev renames `scaffold.sh` to `scaffold.sh.disabled` - retained for reference but inert. A `.disabled` hook is skipped by `zdev create`, so reusing a scaffolded project as a template won't re-scaffold over your work. Delete it whenever you like. (Auto-disabling means it's safe even if the user never reads the create output.)
+- **Trust:** because the hook runs during `zdev create` (not later at `zdev start`), a user creating from your template executes its scaffold code at create time. It runs in a throwaway container with only the project dir bind-mounted, but note the timing - the same trust considerations as any `setup.just` apply, just earlier.
 - The scaffold runs in the sole service, or the one named `app`. It requires Docker (build/pull + run).
 
 The rest of this section covers the alternative: scaffolding from within `setup.just`.
@@ -606,7 +615,7 @@ Browse all available templates on GitHub: [0ploy repositories matching `zdev-tem
 The entrypoint must keep the container alive when `.setup-complete` doesn't exist. Use the wait loop pattern. Never use a command that can fail before setup (like `pnpm start` unconditionally).
 
 **Auxiliary container (db, queue, cache) exits immediately with `sh: 0: Illegal option --`.**
-The `command:` field in `.zdev/config.yaml` is wrapped in `sh -c "<value>"`, not passed as a raw Docker CMD array. Flag-style args like `command: --group_concat_max_len=320000` go straight to `sh` which rejects them. If you need to pass flags to the image's default binary (e.g. MariaDB, RabbitMQ), wrap them yourself: `command: exec mariadbd --group_concat_max_len=320000 --sort_buffer_size=2M` — or supply a config file via a volume mount instead.
+The `command:` field in `.zdev/config.yaml` is wrapped in `sh -c "<value>"`, not passed as a raw Docker CMD array. Flag-style args like `command: --group_concat_max_len=320000` go straight to `sh` which rejects them. If you need to pass flags to the image's default binary (e.g. MariaDB, RabbitMQ), wrap them yourself: `command: exec mariadbd --group_concat_max_len=320000 --sort_buffer_size=2M` - or supply a config file via a volume mount instead.
 
 **`zdev exec` fails with "service not running".**
 The container crashed. Check `zdev logs` to see why. Common causes: the entrypoint command failed, missing `.setup-complete` wait loop, or a syntax error in the shell command.

@@ -1,8 +1,16 @@
 package tools
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/0ploy/zdev/internal/config"
@@ -169,6 +177,54 @@ func TestBuildDownloadURLWithCustomBuilder(t *testing.T) {
 	)
 	if url != expected {
 		t.Errorf("URL mismatch\n  got:  %s\n  want: %s", url, expected)
+	}
+}
+
+func TestDownloadToolVerifiesChecksumBeforeInstall(t *testing.T) {
+	payload := []byte("#!/bin/sh\necho verified\n")
+	sum := sha256.Sum256(payload)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+
+	manager := &Manager{binDir: t.TempDir()}
+	tool := ToolInfo{
+		Name:       "verified-tool",
+		BinaryName: "verified-tool",
+		URLBuilder: func(_, _, _, _ string) string { return server.URL },
+		Checksums: map[string]string{
+			runtime.GOOS + "/" + runtime.GOARCH: hex.EncodeToString(sum[:]),
+		},
+	}
+	if err := manager.downloadTool(context.Background(), tool); err != nil {
+		t.Fatalf("downloadTool() error: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(manager.binDir, tool.BinaryName)); err != nil {
+		t.Fatalf("verified tool was not installed: %v", err)
+	}
+}
+
+func TestDownloadToolRejectsChecksumMismatch(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("tampered"))
+	}))
+	defer server.Close()
+
+	manager := &Manager{binDir: t.TempDir()}
+	tool := ToolInfo{
+		Name:       "bad-tool",
+		BinaryName: "bad-tool",
+		URLBuilder: func(_, _, _, _ string) string { return server.URL },
+		Checksums: map[string]string{
+			runtime.GOOS + "/" + runtime.GOARCH: strings.Repeat("0", 64),
+		},
+	}
+	if err := manager.downloadTool(context.Background(), tool); err == nil {
+		t.Fatal("downloadTool() accepted a checksum mismatch")
+	}
+	if _, err := os.Stat(filepath.Join(manager.binDir, tool.BinaryName)); !os.IsNotExist(err) {
+		t.Fatalf("unverified tool should not be installed, stat error: %v", err)
 	}
 }
 

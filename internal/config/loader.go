@@ -110,12 +110,16 @@ func LoadProject(projectDir string) (*ProjectConfig, error) {
 		cfg.Domain = cfg.Name + "." + DefaultDomain
 	}
 
-	// Default routing protocol to "http" when port is set
+	// Default routing protocol to "http" whenever routing is configured.
 	for name, svc := range cfg.Services {
-		if svc.Routing != nil && svc.Routing.Port != 0 && svc.Routing.Protocol == "" {
+		if svc.Routing != nil && svc.Routing.Protocol == "" {
 			svc.Routing.Protocol = "http"
 			cfg.Services[name] = svc
 		}
+	}
+
+	if err := ValidateProjectConfig(&cfg); err != nil {
+		return nil, fmt.Errorf("%s: %w", configPath, err)
 	}
 
 	return &cfg, nil
@@ -290,7 +294,7 @@ func GetZdevDomain() string {
 // LoadGlobalConfig loads the global config from ~/.zdev/global-config.yaml
 // Returns default config if file doesn't exist
 // defaultGlobalConfig returns a GlobalConfig with all defaults populated.
-// Single source of truth — used for both "file missing" and "file exists" paths.
+// Single source of truth - used for both "file missing" and "file exists" paths.
 func newDefaultGlobalConfig() GlobalConfig {
 	return GlobalConfig{
 		Version: 1,
@@ -341,8 +345,13 @@ func LoadGlobalConfig() (*GlobalConfig, error) {
 	// Start with defaults, then let YAML override
 	cfg := newDefaultGlobalConfig()
 
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("failed to parse global config: %w", err)
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&cfg); err != nil {
+		return nil, formatConfigError(globalConfigPath, data, err)
+	}
+	if err := validateGlobalConfig(&cfg); err != nil {
+		return nil, fmt.Errorf("%s: %w", globalConfigPath, err)
 	}
 
 	return &cfg, nil

@@ -2,14 +2,11 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -24,17 +21,6 @@ import (
 const selfUpdateHTTPTimeout = 5 * time.Minute
 
 const selfUpdateGithubRepo = "0ploy/zdev"
-
-// githubRelease is a minimal representation of a GitHub release.
-type githubRelease struct {
-	TagName string        `json:"tag_name"`
-	Assets  []githubAsset `json:"assets"`
-}
-
-type githubAsset struct {
-	Name               string `json:"name"`
-	BrowserDownloadURL string `json:"browser_download_url"`
-}
 
 var selfUpdateCmd = &cobra.Command{
 	Use:   "self-update",
@@ -79,7 +65,8 @@ func runSelfUpdate(ctx context.Context) error {
 	fmt.Printf("Current version: %s\n", Version)
 	fmt.Printf("Checking for updates...\n")
 
-	release, err := fetchLatestRelease(ctx)
+	releaseURL := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", selfUpdateGithubRepo)
+	release, _, _, err := updatecheck.FetchLatestRelease(ctx, releaseURL, "")
 	if err != nil {
 		return fmt.Errorf("failed to check for updates: %w", err)
 	}
@@ -99,52 +86,8 @@ func runSelfUpdate(ctx context.Context) error {
 	fmt.Printf("New version available: %s\n", release.TagName)
 
 	assetName := selfUpdateBinaryName()
-	var downloadURL, checksumsURL string
-	for _, asset := range release.Assets {
-		switch asset.Name {
-		case assetName:
-			downloadURL = asset.BrowserDownloadURL
-		case updatecheck.ChecksumsAssetName:
-			checksumsURL = asset.BrowserDownloadURL
-		}
-	}
-	if downloadURL == "" {
-		return fmt.Errorf("no binary found for %s/%s (looked for %s)", runtime.GOOS, runtime.GOARCH, assetName)
-	}
-	if checksumsURL == "" {
-		return fmt.Errorf("release %s has no %s - refusing to install without integrity check", release.TagName, updatecheck.ChecksumsAssetName)
-	}
-
 	fmt.Printf("Downloading %s...\n", assetName)
-
-	if err := os.MkdirAll(filepath.Dir(canonical), 0o755); err != nil {
-		return fmt.Errorf("cannot create install dir: %w", err)
-	}
-
-	// Fetch checksums up-front so a malformed/missing file aborts before
-	// we download the much larger binary.
-	expectedHex, err := fetchChecksumEntry(ctx, checksumsURL, assetName)
-	if err != nil {
-		return fmt.Errorf("checksum fetch failed: %w", err)
-	}
-
-	tmpPath := canonical + ".update"
-	if err := downloadFile(ctx, downloadURL, tmpPath); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("download failed: %w", err)
-	}
-	if err := updatecheck.VerifyFile(tmpPath, expectedHex); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("integrity check failed: %w", err)
-	}
-	if err := os.Chmod(tmpPath, 0o755); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("chmod failed: %w", err)
-	}
-
-	// Atomic replace of the canonical binary. Dir is user-owned, no sudo.
-	if err := os.Rename(tmpPath, canonical); err != nil {
-		os.Remove(tmpPath)
+	if err := updatecheck.InstallRelease(ctx, release, canonical); err != nil {
 		return fmt.Errorf("install failed: %w", err)
 	}
 
@@ -267,80 +210,6 @@ func atomicSymlink(linkPath, target string) error {
 	return nil
 }
 
-func fetchLatestRelease(ctx context.Context) (*githubRelease, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", selfUpdateGithubRepo)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GitHub API returned %d", resp.StatusCode)
-	}
-
-	var release githubRelease
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return &release, nil
-}
-
-func downloadFile(ctx context.Context, url, dest string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return err
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("download returned %d", resp.StatusCode)
-	}
-
-	f, err := os.Create(dest)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	_, err = io.Copy(f, resp.Body)
-	return err
-}
-
-// fetchChecksumEntry downloads the release's checksums.txt and returns the
-// sha256 hex for the given asset name.
-func fetchChecksumEntry(ctx context.Context, checksumsURL, assetName string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, checksumsURL, nil)
-	if err != nil {
-		return "", err
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("fetch checksums: status %d", resp.StatusCode)
-	}
-
-	sums := updatecheck.ParseChecksums(resp.Body)
-	expected, ok := sums[assetName]
-	if !ok {
-		return "", fmt.Errorf("no checksum for %s", assetName)
-	}
-	return expected, nil
-}
-
 func selfUpdateBinaryName() string {
-	return "zdev-" + runtime.GOOS + "-" + runtime.GOARCH
+	return updatecheck.BinaryAssetName()
 }

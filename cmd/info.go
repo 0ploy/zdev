@@ -114,37 +114,16 @@ func showProjectInfo(ctx context.Context, proj *project.Project) error {
 	fmt.Println()
 
 	// Shared services
-	if proj.Config.Shared.Router || proj.Config.Shared.Mail || proj.Config.Shared.DBUI || proj.Config.Shared.RedisInsights || proj.Config.Shared.Logs {
+	enabledShared := enabledSharedServices(&proj.Config.Shared)
+	if len(enabledShared) > 0 {
 		fmt.Println("Shared Services:")
-		// Always show docs URL when router is enabled
-		if proj.Config.Shared.Router {
-			docsURL := fmt.Sprintf("%s://docs.shared.%s", protocol, globalDomain)
-			fmt.Printf("  docs:          %s\n", ui.Hyperlink(docsURL, docsURL, plainMode))
-			routerURL := fmt.Sprintf("%s://router.shared.%s", protocol, globalDomain)
-			fmt.Printf("  router:        %s\n", ui.Hyperlink(routerURL, routerURL, plainMode))
-		}
-		if proj.Config.Shared.Mail {
-			url := fmt.Sprintf("%s://mail.shared.%s", protocol, globalDomain)
-			fmt.Printf("  mail:          %s\n", ui.Hyperlink(url, url, plainMode))
-		}
-		if proj.Config.Shared.DBUI {
-			url := fmt.Sprintf("%s://db.shared.%s", protocol, globalDomain)
-			fmt.Printf("  db:            %s\n", ui.Hyperlink(url, url, plainMode))
-			// Show database hostnames for this project
-			for serviceName, svc := range proj.Config.Services {
-				if svc.RegisterToDBUI || isDBService(serviceName) {
-					hostname := proj.ContainerName(serviceName)
-					fmt.Printf("                 └ %s\n", hostname)
-				}
+		for _, service := range enabledShared {
+			for index, link := range sharedServiceLinks(service, protocol, globalDomain) {
+				fmt.Printf("  %-14s %s\n", sharedServiceDisplayName(service, index)+":", ui.Hyperlink(link, link, plainMode))
 			}
-		}
-		if proj.Config.Shared.RedisInsights {
-			url := fmt.Sprintf("%s://redis.shared.%s", protocol, globalDomain)
-			fmt.Printf("  redis:         %s\n", ui.Hyperlink(url, url, plainMode))
-		}
-		if proj.Config.Shared.Logs {
-			url := fmt.Sprintf("%s://logs.shared.%s", protocol, globalDomain)
-			fmt.Printf("  logs:          %s\n", ui.Hyperlink(url, url, plainMode))
+			if service.ContainerName == services.DBUIContainerName {
+				printDatabaseHosts(proj, "                 ")
+			}
 		}
 		fmt.Println()
 	}

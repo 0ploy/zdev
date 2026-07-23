@@ -169,23 +169,29 @@ func runCreate(cmd *cobra.Command, args []string) error {
 
 // runScaffoldHook runs a template's create-time scaffold hook
 // (.zdev/scaffold.sh) inside a throwaway container, if the template ships one,
-// and reports whether it ran. The hook file is left in place afterward for the
-// user to review and then keep (rename to .disabled) or delete - zdev never
-// removes it.
+// and reports whether it ran. On success the hook is retained as
+// scaffold.sh.disabled so it cannot run a second time.
 func runScaffoldHook(projectDir string) (bool, error) {
 	// Stat the hook before loading the project: a template without a scaffold
 	// hook must keep `zdev create` a pure copy (no config parse, no Docker), so a
 	// template using a config field this zdev version can't parse still creates.
 	// (An exact-name stat also skips a `.disabled` hook for free.)
 	if _, err := os.Stat(filepath.Join(projectDir, ".zdev", project.ScaffoldHookName)); err != nil {
-		return false, nil
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to inspect scaffold hook: %w", err)
 	}
 
 	proj, err := project.LoadFromDir(projectDir)
 	if err != nil {
 		return false, fmt.Errorf("failed to load project: %w", err)
 	}
-	if proj.ScaffoldHookPath() == "" {
+	hook, err := proj.ScaffoldHookPath()
+	if err != nil {
+		return false, err
+	}
+	if hook == "" {
 		return false, nil
 	}
 

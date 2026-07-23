@@ -10,9 +10,9 @@ import (
 
 func TestSubstituteVariables(t *testing.T) {
 	vars := map[string]string{
-		"PROJECTNAME":  "myapp",
+		"PROJECTNAME": "myapp",
 		"ZDEV_DOMAIN": "0ploy.dev",
-		"USER":         "testuser",
+		"USER":        "testuser",
 	}
 
 	tests := []struct {
@@ -1143,6 +1143,51 @@ services:
 	}
 	if db := cfg.Services["db"]; db.Dockerfile != "" {
 		t.Errorf("db.Dockerfile = %q, want empty for image-only services", db.Dockerfile)
+	}
+}
+
+func TestLoadProjectRejectsInvalidRoutingSemantics(t *testing.T) {
+	tmpDir := t.TempDir()
+	main := `version: 1
+name: invalid-routing
+services:
+  app:
+    image: alpine
+    routing:
+      protocol: udp
+      port: 53
+`
+	writeProjectConfigs(t, tmpDir, main, "")
+
+	if _, err := LoadProject(tmpDir); err == nil || !strings.Contains(err.Error(), "requires host_port") {
+		t.Fatalf("LoadProject() error = %v, want missing host_port error", err)
+	}
+}
+
+func TestLoadProjectRejectsServiceWithoutImageOrDockerfile(t *testing.T) {
+	tmpDir := t.TempDir()
+	main := `version: 1
+name: invalid-service
+services:
+  app:
+    command: sleep infinity
+`
+	writeProjectConfigs(t, tmpDir, main, "")
+
+	if _, err := LoadProject(tmpDir); err == nil || !strings.Contains(err.Error(), "image or dockerfile") {
+		t.Fatalf("LoadProject() error = %v, want missing image error", err)
+	}
+}
+
+func TestLoadGlobalConfigRejectsUnknownFields(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("ZDEV_HOME", tmpDir)
+	if err := os.WriteFile(filepath.Join(tmpDir, GlobalConfigFilename), []byte("unknown_option: true\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := LoadGlobalConfig(); err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("LoadGlobalConfig() error = %v, want unknown field error", err)
 	}
 }
 
