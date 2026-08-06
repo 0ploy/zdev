@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -50,24 +51,97 @@ func (d *DockerCLI) CheckAvailable(ctx context.Context) error {
 const DefaultDockerSocket = "/var/run/docker.sock"
 
 var (
-	socketPathOnce sync.Once
-	socketPathVal  string
+	socketMountOnce   sync.Once
+	socketMountPath   string
+	socketMountable   bool
+	socketMountReason string
 )
 
-// HostDockerSocketPath returns the host filesystem path of the Docker daemon
-// socket for the active docker context. Containers that need the socket (the
-// Traefik router, Dozzle) bind-mount this so they work regardless of engine:
-// Docker Desktop (~/.docker/run/docker.sock), OrbStack (~/.orbstack/run/...),
-// or Colima (~/.colima/default/...). The legacy /var/run/docker.sock symlink is
-// not guaranteed to exist (OrbStack only creates it with admin), so we resolve
-// the context's actual endpoint and fall back to /var/run/docker.sock.
+// dockerDesktopSocketHelp explains why the Docker socket must be mountable and
+// how to make it so on Docker Desktop. Surfaced instead of the daemon's cryptic
+// "mkdir ... operation not supported" when the per-user socket can't be mounted.
+const dockerDesktopSocketHelp = `the Docker socket at ` + DefaultDockerSocket + ` is not available to mount into a container.
+
+zdev's router (Traefik) and log viewer (Dozzle) run as containers that watch the
+Docker API, so they bind-mount the Docker socket. On Docker Desktop only ` + DefaultDockerSocket + `
+can be mounted into a container - the per-user socket (~/.docker/run/docker.sock)
+cannot, because it is a proxy socket the VM's file sharing can't pass through.
+
+Fix: Docker Desktop > Settings > Advanced > enable
+"Allow the default Docker socket to be used (requires password)", then Apply &
+Restart and run zdev again.`
+
+// HostDockerSocketPath returns the host filesystem path to bind-mount as the
+// Docker daemon socket into containers that need the Docker API (the Traefik
+// router, Dozzle). This works across engines: Docker Desktop, OrbStack
+// (~/.orbstack/run/...), or Colima (~/.colima/default/...).
+//
+// Note this is the MOUNT source, which is not always the same as the CLI's
+// daemon endpoint. On Docker Desktop the active context points at a per-user
+// proxy socket (~/.docker/run/docker.sock) that can't be bind-mounted; only the
+// special-cased /var/run/docker.sock works, so we return that when present.
+// Use CheckDockerSocketMountable to fail early with guidance when it isn't.
 // The result is cached for the process lifetime - the active context does not
 // change mid-run.
 func HostDockerSocketPath() string {
-	socketPathOnce.Do(func() {
-		socketPathVal = resolveHostDockerSocketPath()
+	path, _, _ := dockerSocketMount()
+	return path
+}
+
+// CheckDockerSocketMountable reports whether the Docker socket can actually be
+// bind-mounted into a container on this engine, returning an actionable error
+// instead of letting the daemon surface a cryptic mkdir failure. The one case
+// it catches: Docker Desktop using its per-user socket with the default
+// /var/run/docker.sock disabled. Call it before starting a container that
+// mounts the socket (the router, the log viewer).
+func CheckDockerSocketMountable() error {
+	if _, mountable, reason := dockerSocketMount(); !mountable {
+		return errors.New(reason)
+	}
+	return nil
+}
+
+// dockerSocketMount resolves, once per process, the Docker socket bind-mount
+// source and whether it is mountable.
+func dockerSocketMount() (path string, mountable bool, reason string) {
+	socketMountOnce.Do(func() {
+		socketMountPath, socketMountable, socketMountReason = computeDockerSocketMount()
 	})
-	return socketPathVal
+	return socketMountPath, socketMountable, socketMountReason
+}
+
+func computeDockerSocketMount() (string, bool, string) {
+	endpoint := resolveHostDockerSocketPath()
+
+	// On Docker Desktop the active context points at a per-user proxy socket
+	// that the VM's file sharing cannot bind-mount into a container. Only the
+	// special-cased /var/run/docker.sock works, and only when the user has
+	// enabled it.
+	if isDockerDesktopProxySocket(endpoint) {
+		if isSocketFile(DefaultDockerSocket) {
+			return DefaultDockerSocket, true, ""
+		}
+		return endpoint, false, dockerDesktopSocketHelp
+	}
+
+	// OrbStack, Colima, an explicit DOCKER_HOST path, or a real
+	// /var/run/docker.sock - all bind-mountable as resolved.
+	return endpoint, true, ""
+}
+
+// isDockerDesktopProxySocket matches Docker Desktop's per-user socket
+// (~/.docker/run/docker.sock on macOS, ~/.docker/desktop/docker.sock on Linux)
+// while excluding OrbStack (~/.orbstack/...), Colima (~/.colima/...), and the
+// system /var/run/docker.sock.
+func isDockerDesktopProxySocket(p string) bool {
+	return strings.Contains(p, "/.docker/") && strings.HasSuffix(p, "docker.sock")
+}
+
+// isSocketFile reports whether p exists and is a unix socket, following
+// symlinks so a /var/run/docker.sock symlink to the real socket still counts.
+func isSocketFile(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && fi.Mode()&os.ModeSocket != 0
 }
 
 func resolveHostDockerSocketPath() string {

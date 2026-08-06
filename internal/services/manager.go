@@ -244,6 +244,13 @@ func (m *Manager) disconnectServiceFromProject(ctx context.Context, containerNam
 // recreate on their own. Intentional port shrinking happens via
 // RefreshRouter, which is called when a project is removed.
 func (m *Manager) StartRouter(ctx context.Context) error {
+	// The router bind-mounts the Docker socket; fail early with guidance if
+	// it can't be mounted (e.g. Docker Desktop's default socket is disabled)
+	// rather than letting the daemon surface a cryptic mkdir error.
+	if err := runtime.CheckDockerSocketMountable(); err != nil {
+		return err
+	}
+
 	stateMgr, err := state.DefaultManager()
 	if err != nil {
 		return fmt.Errorf("failed to load state: %w", err)
@@ -516,6 +523,11 @@ func (m *Manager) RedisInsightsStatus(ctx context.Context) (*ServiceStatus, erro
 // =============================================================================
 
 func (m *Manager) StartLogs(ctx context.Context) error {
+	// Dozzle bind-mounts the Docker socket; fail early with guidance if it
+	// can't be mounted (e.g. Docker Desktop's default socket is disabled).
+	if err := runtime.CheckDockerSocketMountable(); err != nil {
+		return err
+	}
 	return m.startService(ctx, LogsContainerName, "Logs", m.cfg.Shared.Logs.Image, func() runtime.ContainerConfig {
 		return LogsContainerConfig(LogsServiceConfig{
 			Image:      m.cfg.Shared.Logs.Image,

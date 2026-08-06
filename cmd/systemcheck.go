@@ -11,6 +11,7 @@ import (
 	"github.com/0ploy/zdev/internal/config"
 	"github.com/0ploy/zdev/internal/firstrun"
 	"github.com/0ploy/zdev/internal/resolver"
+	runtimePkg "github.com/0ploy/zdev/internal/runtime"
 	"github.com/0ploy/zdev/internal/secrets"
 	"github.com/0ploy/zdev/internal/services"
 	"github.com/0ploy/zdev/internal/ssl"
@@ -269,6 +270,17 @@ func checkDocker(ctx context.Context) int {
 	}
 
 	fmt.Printf("%s (version %s)\n", statusText("OK"), version)
+
+	// The router and log viewer bind-mount the Docker socket; flag it here
+	// (Docker Desktop with the default socket disabled is the usual cause)
+	// rather than only failing later when those containers try to start.
+	if err := runtimePkg.CheckDockerSocketMountable(); err != nil {
+		fmt.Printf("Docker socket:  %s (can't be mounted into containers - router and logs need it)\n", statusText("MISSING"))
+		fmt.Println("               Docker Desktop > Settings > Advanced > enable")
+		fmt.Println("               \"Allow the default Docker socket to be used\", then Apply & Restart")
+		return 1
+	}
+
 	return 0
 }
 

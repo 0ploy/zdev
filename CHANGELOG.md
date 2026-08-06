@@ -16,6 +16,12 @@
 - **Configuration errors fail early with actionable messages.** Project routing, required service images, Mutagen modes, project names, and duplicate host ports are validated during load; unknown global config fields are rejected too.
 - **Concurrent zdev commands can safely update global state.** State changes now use a cross-process file lock and atomic file replacement.
 
+## Unreleased
+
+### Bug Fixes
+
+- **Docker Desktop with the default socket disabled no longer fails with a cryptic error.** The router (Traefik) and log viewer (Dozzle) bind-mount the Docker socket, but Docker Desktop's per-user socket (`~/.docker/run/docker.sock`) can't be mounted into a container - only the special-cased `/var/run/docker.sock` works. zdev now mounts `/var/run/docker.sock` automatically when the active context points at a Docker Desktop proxy socket and that socket is present, and when it isn't (the "Allow the default Docker socket to be used" setting is off) it fails early with a clear message explaining how to enable it - instead of surfacing the daemon's `mkdir ... operation not supported`. `zdev systemcheck` reports the same. OrbStack and Colima are unaffected.
+
 ## v0.10.0
 
 ### Features
