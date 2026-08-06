@@ -16,7 +16,7 @@
 - **Configuration errors fail early with actionable messages.** Project routing, required service images, Mutagen modes, project names, and duplicate host ports are validated during load; unknown global config fields are rejected too.
 - **Concurrent zdev commands can safely update global state.** State changes now use a cross-process file lock and atomic file replacement.
 
-## Unreleased
+## v0.10.1
 
 ### Bug Fixes
 
