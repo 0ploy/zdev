@@ -21,6 +21,7 @@
 ### Bug Fixes
 
 - **`zdev update` no longer recreates a container when Docker is briefly unreachable.** Failing to read a container's labels was treated as config drift, so a flaky or restarting daemon looked like a changed config and the container was destroyed and rebuilt mid-outage. The read error is now reported instead.
+- **The local DNS fallback is now managed like any other shared service.** When the fallback is enabled it is the only thing making `*.<domain>` resolve, so it is infrastructure on par with the router - but it was invisible to the `zdev services` commands. It now appears in `zdev services status` and `zdev status`, and `zdev services start`, `stop`, and `recreate` manage it alongside Traefik, Mailpit, Adminer, RedisInsight, and Dozzle. This also means a domain change is picked up by `zdev services recreate` instead of only on the next `zdev start`. On machines where the fallback isn't enabled nothing changes - it stays hidden. Note that `zdev services stop` now stops the DNS container too, so zdev URLs stop resolving until the next start; use `zdev dns disable` to switch the fallback off for good, which reverts the host resolver config first.
 
 ### Security
 

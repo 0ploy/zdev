@@ -16,15 +16,19 @@ import (
 func (p *Project) connectEnabledSharedServices(ctx context.Context) {
 	mgr, err := p.sharedManager()
 	if err != nil {
+		fmt.Printf("Warning: failed to load shared service config; shared services not connected: %v\n", err)
 		return
 	}
 	for _, svc := range services.AllSharedServices() {
-		if !svc.ProjectEnabled(&p.Config.Shared) {
+		if !svc.ProjectEnabled(&p.Config.Shared) || !svc.IsEnabled(mgr) {
 			continue
 		}
 		fmt.Printf("Ensuring shared %s is running...\n", svc.Name)
 		if err := svc.Start(ctx, mgr); err != nil {
 			fmt.Printf("Warning: failed to start %s: %v\n", svc.Name, err)
+			continue
+		}
+		if !svc.JoinsProjectNetworks() {
 			continue
 		}
 		if err := svc.Connect(ctx, mgr, p.NetworkName()); err != nil {
@@ -45,7 +49,7 @@ func (p *Project) disconnectEnabledSharedServices(ctx context.Context) {
 	registry := services.AllSharedServices()
 	for i := len(registry) - 1; i >= 0; i-- {
 		svc := registry[i]
-		if !svc.ProjectEnabled(&p.Config.Shared) {
+		if !svc.ProjectEnabled(&p.Config.Shared) || !svc.JoinsProjectNetworks() {
 			continue
 		}
 		if err := svc.Disconnect(ctx, mgr, p.NetworkName()); err != nil {

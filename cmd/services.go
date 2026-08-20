@@ -27,15 +27,22 @@ var servicesCmd = &cobra.Command{
 var servicesStartCmd = &cobra.Command{
 	Use:   "start",
 	Short: "Start shared services",
-	Long:  `Start shared services (router, mail, db). This creates the shared network and starts Traefik, Mailpit, and Adminer.`,
-	RunE:  runServicesStart,
+	Long: `Start the shared services: the Traefik router, Mailpit, Adminer,
+RedisInsight, Dozzle, and - on hosts where it is enabled - the local DNS
+fallback. This also creates the shared Docker network.`,
+	RunE: runServicesStart,
 }
 
 var servicesStopCmd = &cobra.Command{
 	Use:   "stop",
 	Short: "Stop shared services",
-	Long:  `Stop the shared services (router, mail, db).`,
-	RunE:  runServicesStop,
+	Long: `Stop the shared services.
+
+If the local DNS fallback is enabled, this stops it too, so *.<domain> will
+not resolve until 'zdev services start' (or 'zdev start') brings it back.
+To turn the fallback off for good, use 'zdev dns disable' - that reverts the
+host resolver config first, so normal DNS takes over.`,
+	RunE: runServicesStop,
 }
 
 var servicesStatusCmd = &cobra.Command{
@@ -66,6 +73,9 @@ func printSharedServiceURLs(cfg *config.GlobalConfig, header string) {
 	fmt.Println(header)
 	fmt.Printf("  Docs:   %s://docs.shared.%s\n", protocol, cfg.Domain)
 	for _, svc := range sharedServiceRegistry() {
+		if !svc.HasWebUI() {
+			continue
+		}
 		fmt.Printf("  %-7s %s://%s.%s\n", svc.Name+":", protocol, svc.Subdomain, cfg.Domain)
 	}
 }
@@ -80,6 +90,9 @@ func runServicesStart(cmd *cobra.Command, args []string) error {
 		mgr := services.NewManager(cfg)
 
 		for _, svc := range sharedServiceRegistry() {
+			if !svc.IsEnabled(mgr) {
+				continue
+			}
 			if err := svc.Start(ctx, mgr); err != nil {
 				return err
 			}
@@ -99,10 +112,10 @@ func runServicesStop(cmd *cobra.Command, args []string) error {
 
 		mgr := services.NewManager(cfg)
 
-		// Stop in reverse order (router last)
+		// Stop in reverse order (router, then DNS, last).
 		registry := sharedServiceRegistry()
 		for i := len(registry) - 1; i >= 0; i-- {
-			if err := registry[i].Stop(ctx, mgr); err != nil {
+			if err := stopSharedService(ctx, mgr, registry[i]); err != nil {
 				return err
 			}
 		}
@@ -111,6 +124,21 @@ func runServicesStop(cmd *cobra.Command, args []string) error {
 		fmt.Println("Shared services stopped")
 		return nil
 	})
+}
+
+// stopSharedService stops one shared service. A service the host doesn't
+// provide (the DNS fallback, where the resolver file isn't installed) is
+// skipped UNLESS its container is actually running - so a leftover from a
+// since-disabled service still gets shut down, without printing "not
+// running" noise on the machines that never enabled it.
+func stopSharedService(ctx context.Context, mgr *services.Manager, svc services.SharedServiceDef) error {
+	if !svc.IsEnabled(mgr) {
+		status, err := svc.Status(ctx, mgr)
+		if err != nil || !status.Running {
+			return nil
+		}
+	}
+	return svc.Stop(ctx, mgr)
 }
 
 func runServicesStatus(cmd *cobra.Command, args []string) error {
@@ -133,7 +161,11 @@ func runServicesStatusImpl(ctx context.Context) error {
 
 	// Docs status depends on router
 	registry := sharedServiceRegistry()
-	routerStatus, err := registry[0].Status(ctx, mgr)
+	router, ok := services.SharedServiceByContainer(services.RouterContainerName)
+	if !ok {
+		return fmt.Errorf("router missing from the shared service registry")
+	}
+	routerStatus, err := router.Status(ctx, mgr)
 	if err != nil {
 		return err
 	}
@@ -144,13 +176,19 @@ func runServicesStatusImpl(ctx context.Context) error {
 	}
 
 	for _, svc := range registry {
+		if !svc.IsEnabled(mgr) {
+			continue
+		}
 		status, err := svc.Status(ctx, mgr)
 		if err != nil {
 			return err
 		}
-		if status.Running {
+		switch {
+		case status.Running && svc.HasWebUI():
 			fmt.Printf("%-7s running (%s://%s.%s)\n", svc.Name+":", protocol, svc.Subdomain, cfg.Domain)
-		} else {
+		case status.Running:
+			fmt.Printf("%-7s running\n", svc.Name+":")
+		default:
 			fmt.Printf("%-7s stopped\n", svc.Name+":")
 		}
 	}
@@ -178,7 +216,7 @@ func runServicesRecreateImpl(ctx context.Context) error {
 	// Stop all services (reverse order)
 	fmt.Println("Stopping services...")
 	for i := len(registry) - 1; i >= 0; i-- {
-		_ = registry[i].Stop(ctx, mgr)
+		_ = stopSharedService(ctx, mgr, registry[i])
 	}
 
 	// Remove containers (reverse order)
@@ -190,6 +228,9 @@ func runServicesRecreateImpl(ctx context.Context) error {
 	// Start fresh
 	fmt.Println("Starting services...")
 	for _, svc := range registry {
+		if !svc.IsEnabled(mgr) {
+			continue
+		}
 		if err := svc.Start(ctx, mgr); err != nil {
 			return err
 		}

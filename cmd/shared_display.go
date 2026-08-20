@@ -11,10 +11,14 @@ import (
 	"github.com/0ploy/zdev/internal/ui"
 )
 
-func enabledSharedServices(shared *config.ProjectSharedConfig) []services.SharedServiceDef {
+// enabledSharedServices returns the shared services this project uses:
+// those its config opts into AND that the host actually provides (see
+// SharedServiceDef.IsEnabled - the DNS fallback only exists on hosts where
+// the resolver file is installed).
+func enabledSharedServices(manager *services.Manager, shared *config.ProjectSharedConfig) []services.SharedServiceDef {
 	var enabled []services.SharedServiceDef
 	for _, service := range services.AllSharedServices() {
-		if service.ProjectEnabled(shared) {
+		if service.ProjectEnabled(shared) && service.IsEnabled(manager) {
 			enabled = append(enabled, service)
 		}
 	}
@@ -22,6 +26,11 @@ func enabledSharedServices(shared *config.ProjectSharedConfig) []services.Shared
 }
 
 func sharedServiceLinks(service services.SharedServiceDef, scheme, domain string) []string {
+	// Services without a web UI (the DNS fallback) have no URLs at all.
+	if !service.HasWebUI() {
+		return nil
+	}
+
 	var subdomains []string
 	if service.ContainerName == services.RouterContainerName {
 		subdomains = append(subdomains, "docs.shared")
@@ -66,7 +75,7 @@ func printSharedServiceStatus(ctx context.Context, proj *project.Project, cfg *c
 	manager := services.NewManager(cfg)
 	scheme := schemeFor(cfg)
 
-	for _, service := range enabledSharedServices(&proj.Config.Shared) {
+	for _, service := range enabledSharedServices(manager, &proj.Config.Shared) {
 		status := sharedServiceStatus(ctx, manager, service)
 		fmt.Printf("  %-15s %s\n", strings.ToLower(service.Name), ui.StatusColor(status, plainMode))
 		if status != "running" {

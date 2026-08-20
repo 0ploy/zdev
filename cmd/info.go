@@ -114,7 +114,7 @@ func showProjectInfo(ctx context.Context, proj *project.Project) error {
 	fmt.Println()
 
 	// Shared services
-	enabledShared := enabledSharedServices(&proj.Config.Shared)
+	enabledShared := enabledSharedServices(services.NewManager(cfg), &proj.Config.Shared)
 	if len(enabledShared) > 0 {
 		fmt.Println("Shared Services:")
 		for _, service := range enabledShared {

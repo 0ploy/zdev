@@ -110,7 +110,13 @@ This has multiple touch points that are easy to miss:
 5. Add the opt-in flag to `ProjectSharedConfig` in `internal/config/config.go` and reference it in the registry entry's `ProjectEnabled` closure
 6. Update `cmd/info.go` and `cmd/status.go` to display the service status
 
-**Not every shared container belongs in the registry.** The registry exists for services that attach to project networks (that's what its `Connect`/`Disconnect`/`ProjectEnabled` closures are for). A container that publishes host ports and is queried by the host directly - the DNS fallback (`internal/services/dns.go`) is the current example - has none of that and is also conditional on being enabled, so it stays OUT of `AllSharedServices()` with dedicated `StartDNS`/`StopDNS`/`DNSStatus` methods and its own `cmd/dns.go` command instead. Don't add it to the registry. See the CLAUDE.md architecture anchor for the full reasoning.
+**Not every shared container fits the default shape.** The registry holds every shared container, including ones that don't attach to project networks or serve a web UI - the DNS fallback (`internal/services/dns.go`) is the current example: the host queries its published loopback ports directly, and it only exists on hosts where the split-DNS resolver file is installed. Three predicates on `SharedServiceDef` express that, and every consumer must branch on them rather than assume:
+
+- `HasWebUI()` - false when `Subdomain` is empty; skip URL printing.
+- `JoinsProjectNetworks()` - false when `Connect`/`Disconnect` are nil; never call them unguarded.
+- `IsEnabled(mgr)` - false when a host-level `Enabled` gate says the service doesn't exist here; `services start`, `status`, and `recreate` skip it. Stopping goes through `stopSharedService` (`cmd/services.go`), which skips a gated-off service *unless its container is running* - a leftover from a since-disabled service still stops, without printing "not running" for everyone else.
+
+Keeping such a service in the registry is what makes `zdev services start/stop/status/recreate` and `zdev status` cover it - when the DNS fallback is enabled it is load-bearing infrastructure, exactly like the router, not an optional extra. See the CLAUDE.md architecture anchor for the full reasoning.
 
 ## Link Networks
 
@@ -134,7 +140,7 @@ On `zdev start`, a project checks if it's a member of any links and auto-connect
 - **`internal/state/state.go`** - `RenameProject()` atomically updates the project entry and all link memberships
 - **`cmd/rename.go`** - CLI command with validation and confirmation
 
-The rename process: stop containers, migrate volumes (create new + copy data via temp alpine container + remove old), remove old network, update state, rewrite `name:` in config.yaml (preserving formatting), reload and start. Docker has no native volume rename, so `CopyVolume()` on the Runtime interface handles the data migration.
+The rename process: stop containers, migrate volumes (create new + copy data + remove old), remove old network, update state, rewrite `name:` in config.yaml (preserving formatting), reload and start. Docker has no native volume rename, so `CopyVolume()` on the Runtime interface handles the data migration - it runs a temp container using one of the project's own service images (`firstServiceImage()`, guaranteed present locally), not a separately-pulled `alpine`.
 
 ## Key Architecture Decisions
 

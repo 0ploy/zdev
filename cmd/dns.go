@@ -162,6 +162,11 @@ func enableDNSFallback(ctx context.Context, cfg *config.GlobalConfig) error {
 // project/first-run start paths so a crashed or removed container is brought
 // back before anything relies on *.<domain> resolving. No-op when the
 // fallback isn't enabled.
+//
+// The shared service registry also starts DNS as part of a project start,
+// but that happens too late for callers that verify resolution first (see
+// runStartImpl and checkDNS) - hence this explicit, earlier ensure. Both
+// paths funnel into the idempotent StartDNS.
 func ensureDNSFallbackRunning(ctx context.Context, cfg *config.GlobalConfig) {
 	installed, err := resolver.IsInstalled(cfg.Domain)
 	if err != nil || !installed {

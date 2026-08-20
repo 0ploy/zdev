@@ -368,6 +368,11 @@ container answers the zdev domain and the OS is pointed at it for that domain on
 Covers the global zdev domain and all subdomains (one enable handles every project); a project that
 overrides `domain:` to a different base domain is not covered.
 
+Once enabled it behaves as a shared service: it appears in `zdev services status` / `zdev status` and
+is started, stopped, and recreated by the `zdev services` commands. So `zdev services stop` also
+stops name resolution for the zdev domain until the next start - `zdev dns disable` is the way to
+switch the fallback off for good (it reverts the host resolver first).
+
 **File sync issues (macOS):** `zdev mutagen status` / `zdev mutagen reset`
 
 **DB connection refused:** Use service name (`db`), not `localhost`. Example: `postgres://postgres:postgres@db:5432/app`
