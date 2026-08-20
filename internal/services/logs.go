@@ -1,6 +1,8 @@
 package services
 
 import (
+	"strconv"
+
 	"github.com/0ploy/zdev/internal/runtime"
 )
 
@@ -16,6 +18,7 @@ type LogsServiceConfig struct {
 	Image      string
 	Domain     string
 	TLSEnabled bool
+	Shell      bool   // Enable Dozzle's in-container shell feature (off by default; see config.LogsConfig.Shell)
 	SocketPath string // Host Docker socket path to mount (empty = /var/run/docker.sock)
 }
 
@@ -48,8 +51,10 @@ func LogsContainerConfig(cfg LogsServiceConfig) runtime.ContainerConfig {
 			// internal/project/project.go buildContainerConfig). Other
 			// zdev-managed containers and unrelated containers are hidden.
 			"DOZZLE_FILTER": "label=" + DozzleVisibilityLabel + "=true",
-			// Allow opening a shell into containers from the Dozzle UI.
-			"DOZZLE_ENABLE_SHELL": "true",
+			// Opening a shell into containers from the Dozzle UI. Off by
+			// default because the router is published on all interfaces;
+			// opt in via shared.logs.shell in ~/.zdev/global-config.yaml.
+			"DOZZLE_ENABLE_SHELL": strconv.FormatBool(cfg.Shell),
 		},
 		Volumes: []runtime.VolumeMount{
 			{

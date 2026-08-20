@@ -154,6 +154,8 @@ These run once and are shared across all your projects. No per-project configura
 
 **Per-project visibility:** Dozzle only shows containers from projects that opt in via `shared.logs: true`. Projects without it stay hidden, even though Dozzle has full Docker socket access. Shared service containers (router, mail, db, redis, logs) are always visible.
 
+**In-container shell is off by default.** Dozzle can open a shell into any container it sees, but the router publishes ports on all interfaces, so on an untrusted network (shared office, coffee-shop Wi-Fi) that shell is reachable by anyone who can hit the host. Enable it only on a network you trust by setting `shared.logs.shell: true` in `~/.zdev/global-config.yaml` (changes take effect on the next `zdev services recreate` or `zdev start`).
+
 Open them directly:
 
 ```bash
@@ -699,6 +701,9 @@ ssl:
 mutagen:
   enabled: auto       # "auto" (macOS only), "true" (always), "false" (never)
   sync_mode: two-way-safe  # default sync mode
+shared:
+  logs:
+    shell: false      # enable Dozzle's in-container shell (default false; see below)
 ```
 
 Environment variables zdev itself honors: `ZDEV_HOME` relocates the zdev home directory (config, state, certs, downloaded tools; default `~/.zdev`), `ZDEV_PLAIN=1` forces plain output (no colors, hyperlinks, or step markers - overrides the `terminal.plain` config setting), `ZDEV_NO_UPDATE_CHECK=1` disables the background self-update check, and `OP_SERVICE_ACCOUNT_TOKEN` authenticates 1Password secret resolution in CI.

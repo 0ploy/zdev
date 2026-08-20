@@ -954,7 +954,12 @@ func (p *Project) serviceNeedsRecreate(ctx context.Context, serviceName string, 
 
 	currentLabels, err := p.Runtime.GetContainerLabels(ctx, containerName)
 	if err != nil {
-		return true, nil // If we can't read labels, recreate to be safe
+		// The caller (updateService) has already confirmed the container
+		// exists, so a failure here is a Docker problem, not a missing
+		// container. Surface it instead of treating it as config drift -
+		// otherwise a flaky daemon looks like a changed config and we
+		// destroy and recreate the container mid-outage.
+		return false, fmt.Errorf("reading labels for %s: %w", containerName, err)
 	}
 
 	mutagenEnabled := p.IsMutagenEnabled()

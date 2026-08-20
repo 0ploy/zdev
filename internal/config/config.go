@@ -88,6 +88,12 @@ type RedisInsightsConfig struct {
 // LogsConfig defines Dozzle log viewer configuration
 type LogsConfig struct {
 	Image string `yaml:"image"`
+	// Shell enables Dozzle's "open a shell in the container" feature. Off by
+	// default: that shell executes inside any container Dozzle can see, so with
+	// the router published on all interfaces it is a remote-shell surface for
+	// anyone on the LAN. Opt in per machine in ~/.zdev/global-config.yaml only
+	// on a network you trust.
+	Shell bool `yaml:"shell"`
 }
 
 // ProjectConfig represents .zdev/config.yaml

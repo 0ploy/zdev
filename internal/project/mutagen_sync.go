@@ -275,20 +275,6 @@ func (p *Project) terminateMutagenSessions(ctx context.Context) {
 	}
 }
 
-// removeMutagenVolumes removes Mutagen sync volumes
-func (p *Project) removeMutagenVolumes(ctx context.Context) {
-	mounts := p.GetMutagenSyncMounts()
-	for _, mount := range mounts {
-		exists, _ := p.Runtime.VolumeExists(ctx, mount.VolumeName)
-		if exists {
-			fmt.Printf("Removing sync volume %s...\n", mount.VolumeName)
-			if err := p.Runtime.RemoveVolume(ctx, mount.VolumeName); err != nil {
-				fmt.Printf("Warning: could not remove volume %s: %v\n", mount.VolumeName, err)
-			}
-		}
-	}
-}
-
 // waitForInitialSync waits for Mutagen sync sessions to complete initial sync
 func (p *Project) waitForInitialSync(ctx context.Context, m *mutagen.Mutagen, mounts []MutagenSyncMount, timeout time.Duration) {
 	if len(mounts) == 0 {

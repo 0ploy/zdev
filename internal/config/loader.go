@@ -654,7 +654,7 @@ func generateProjectsSection(projects []ProjectInfo, protocol string) string {
                     </div>
                     <span class="project-open">open &rarr;</span>
                 </a>
-`, url, statusClass, html.EscapeString(p.Name), statusClass, statusText, html.EscapeString(p.Domain), html.EscapeString(p.Path)))
+`, html.EscapeString(url), statusClass, html.EscapeString(p.Name), statusClass, statusText, html.EscapeString(p.Domain), html.EscapeString(p.Path)))
 	}
 
 	sb.WriteString(`            </div>

@@ -16,6 +16,17 @@
 - **Configuration errors fail early with actionable messages.** Project routing, required service images, Mutagen modes, project names, and duplicate host ports are validated during load; unknown global config fields are rejected too.
 - **Concurrent zdev commands can safely update global state.** State changes now use a cross-process file lock and atomic file replacement.
 
+## Unreleased
+
+### Bug Fixes
+
+- **`zdev update` no longer recreates a container when Docker is briefly unreachable.** Failing to read a container's labels was treated as config drift, so a flaky or restarting daemon looked like a changed config and the container was destroyed and rebuilt mid-outage. The read error is now reported instead.
+
+### Security
+
+- **Dozzle's in-container shell is now off by default.** The log viewer could open a shell into any container it sees, and the router publishes ports on all interfaces - so on an untrusted network that shell was reachable by anyone who could hit the host. Enable it deliberately with `shared.logs.shell: true` in `~/.zdev/global-config.yaml`. (Existing log viewers pick up the change on the next `zdev services recreate` or `zdev start`.)
+- **Project and routing domains are validated as plain hostnames.** A `domain:` or `routing.domain:` containing backticks, quotes, or whitespace is now rejected at config load, closing a Traefik `Host(...)` rule injection and a docs-page markup break; the global domain uses the same check.
+
 ## v0.10.1
 
 ### Bug Fixes

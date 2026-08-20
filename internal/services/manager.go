@@ -533,6 +533,7 @@ func (m *Manager) StartLogs(ctx context.Context) error {
 			Image:      m.cfg.Shared.Logs.Image,
 			Domain:     m.cfg.Domain,
 			TLSEnabled: m.cfg.SSL.Enabled,
+			Shell:      m.cfg.Shared.Logs.Shell,
 			SocketPath: runtime.HostDockerSocketPath(),
 		})
 	})

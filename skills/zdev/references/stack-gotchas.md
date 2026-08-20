@@ -10,15 +10,26 @@ For template-authoring patterns (`.setup-complete`, scaffolding, `setup.just`), 
   Without it, `corepack enable` prompts interactively in the no-TTY entrypoint and hangs.
 - Native module build scripts must be approved. pnpm blocks them by default - and in a **non-TTY
   boot path** (entrypoint/`entrypoint.d`) it can't prompt, so pnpm v11 **exits non-zero**
-  (`ERR_PNPM_IGNORED_BUILDS`), which fails a `set -e` script and aborts the container. So at boot use
-  `pnpm install --config.dangerouslyAllowAllBuilds=true` (native modules like `esbuild`,
-  `better-sqlite3`, `@parcel/watcher` need this). In an interactive `setup.just` (with a TTY via
-  `zdev exec`), the equivalent is `pnpm approve-builds --all` after install.
-- Scaffolding with `nuxi init` (create-nuxt): with a TTY it prompts for the template and official
-  modules; a non-TTY requires an explicit `-t/--template` (e.g. `--template minimal`) or it errors
-  "Missing required argument: --template". A create-time scaffold hook gets a TTY when `zdev create`
-  runs from a terminal, so branch on `[ -t 0 ]` (interactive) vs `--template <x>` (fallback). Use
-  `--no-install` when scaffolding at create time (install happens at boot).
+  (`ERR_PNPM_IGNORED_BUILDS`), which fails a `set -e` script and aborts the container. This bites
+  every pnpm invocation the moment a dep ships a build script (`esbuild`, `sharp`,
+  `better-sqlite3`, `@parcel/watcher`, ...) - not just the boot install, but `nuxi module add`
+  (runs `pnpm add` internally) and manual `pnpm add` too. **Fix it once, project-wide**, by
+  shipping a `pnpm-workspace.yaml` with `dangerouslyAllowAllBuilds: true` - pnpm v10+ reads project
+  settings from that file (**not** `.npmrc`; a `dangerously-allow-all-builds` / camelCase key in
+  `.npmrc` is silently ignored). With that file present, boot install is a plain `pnpm install` and
+  no per-command flag is needed anywhere. Per-command alternatives if you can't ship the file: at
+  boot `pnpm install --config.dangerouslyAllowAllBuilds=true`; interactively (TTY via `zdev exec`)
+  `pnpm approve-builds --all`. Prefer the narrower `onlyBuiltDependencies: [pkg, ...]` allow-list in
+  `pnpm-workspace.yaml` if you want to be strict about which packages may run scripts.
+- Scaffolding with `nuxi init` (create-nuxt): scaffold **non-interactively** — pass an explicit
+  `-t/--template` (e.g. `--template minimal`; a non-TTY errors "Missing required argument:
+  --template" without it) plus `--no-install` (install happens at boot). Do **not** rely on
+  create-nuxt's interactive module picker in a scaffold hook: it's coupled to create-nuxt's own
+  `pnpm install`, which writes `node_modules` into the create-time bind mount (onto the host) and
+  aborts with `ERR_PNPM_IGNORED_BUILDS` because create-nuxt doesn't pass
+  `--config.dangerouslyAllowAllBuilds`. Add modules after create with `nuxi module add` run inside
+  the container (version-aware, `node_modules` stays container-side) — e.g. a `zdev module` recipe.
+  `nuxi module add` also has `--skipInstall`/`--skipConfig` flags if you need finer control.
 - `HOST: "0.0.0.0"` in environment so dev server is accessible from outside the container.
   Otherwise Traefik gets connection-refused - the dev server only bound to loopback.
 - Add to mutagen ignore: `node_modules`, `.pnpm-store`, `.zdev`, `.setup-complete`.
@@ -26,6 +37,17 @@ For template-authoring patterns (`.setup-complete`, scaffolding, `setup.just`), 
   binaries. Syncing it breaks the container when the image changes (glibc vs musl mismatch).
 - Framework build artifacts to ignore: `.nuxt`, `.output` (Nuxt), `.next` (Next.js).
 - File watching: Node 22+ has `node --watch`; frameworks have their own HMR.
+- Nuxt's scaffolded `package.json` sets `postinstall: "nuxt prepare"`, so `pnpm install` loads
+  `nuxt.config.ts`. A bad config (e.g. a module referenced but not installed — a half-finished
+  `nuxi module add`) therefore makes the **install itself** fail on a cold boot, not just the dev
+  server. If install runs as a zpinit `entrypoint.d/` step, that failure is fatal by default
+  (`entrypoint_on_failure = "fail"` exits the container). Two things make it recoverable: run the
+  dev server as a **supervised service** (no CMD → supervise mode) so a *server* crash keeps the
+  container up, AND ship `zpinit.toml` with `entrypoint_on_failure = "continue"` so a failed
+  *install* still lets the container come up. Then the container always survives, `zdev exec` works,
+  and you fix in place (`pnpm add <missing>` or edit config) + `zpctl restart <svc>`. Also copy
+  `zpctl` into the image, not just `zpinit`, so operators can drive that recovery. A **warm** boot
+  hides all this (`pnpm install` is a no-op and skips `postinstall`), so test the cold-boot path.
 
 ## PHP / Composer
 

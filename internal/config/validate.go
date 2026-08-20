@@ -4,13 +4,36 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
-	"strings"
 )
 
 var (
 	projectNameRegex = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 	serviceNameRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
+	// hostnameRegex matches a plain DNS hostname (dot-separated labels). It is
+	// intentionally the same shape as resolver.domainPattern. Domains flow
+	// unquoted into Traefik Host(`...`) rules (internal/project/shared_services.go)
+	// and into the docs HTML, so a value containing a backtick, quote, space, or
+	// slash could break out and attach extra matchers/markup. Reject anything
+	// that isn't a bare hostname.
+	hostnameRegex = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)+$`)
 )
+
+// validateHostname rejects anything that isn't a plain dot-separated hostname.
+// An empty value is allowed (callers fall back to a higher-level default, e.g.
+// routing.domain falls back to the project domain); pass required=true where an
+// empty value is itself invalid.
+func validateHostname(field, value string, required bool) error {
+	if value == "" {
+		if required {
+			return fmt.Errorf("%s is required", field)
+		}
+		return nil
+	}
+	if !hostnameRegex.MatchString(value) {
+		return fmt.Errorf("%s %q is not a valid hostname", field, value)
+	}
+	return nil
+}
 
 // ValidateProjectName checks that a project name is safe for DNS and Docker
 // resource names.
@@ -28,6 +51,9 @@ func ValidateProjectName(name string) error {
 // express.
 func ValidateProjectConfig(cfg *ProjectConfig) error {
 	if err := ValidateProjectName(cfg.Name); err != nil {
+		return err
+	}
+	if err := validateHostname("domain", cfg.Domain, false); err != nil {
 		return err
 	}
 	if len(cfg.Services) == 0 {
@@ -76,8 +102,8 @@ func ValidateProjectConfig(cfg *ProjectConfig) error {
 		default:
 			return fmt.Errorf("service %s: unsupported routing protocol %q (use http, https, tcp, or udp)", name, routing.Protocol)
 		}
-		if strings.ContainsAny(routing.Domain, "/ \t\r\n") {
-			return fmt.Errorf("service %s: routing domain %q is invalid", name, routing.Domain)
+		if err := validateHostname(fmt.Sprintf("service %s: routing domain", name), routing.Domain, false); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -105,8 +131,8 @@ func validateGlobalConfig(cfg *GlobalConfig) error {
 	default:
 		return fmt.Errorf("unsupported mutagen.sync_mode %q", cfg.Mutagen.SyncMode)
 	}
-	if cfg.Domain == "" || strings.ContainsAny(cfg.Domain, "/ \t\r\n") {
-		return fmt.Errorf("domain %q is invalid", cfg.Domain)
+	if err := validateHostname("domain", cfg.Domain, true); err != nil {
+		return err
 	}
 	return nil
 }

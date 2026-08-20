@@ -28,19 +28,13 @@ Ship a `.zdev/scaffold.sh`. `zdev create` runs it **once**, right after copying 
 # .zdev/scaffold.sh - runs inside the throwaway container (cwd /app)
 #!/bin/sh
 set -eu
-# `zdev create` attaches a TTY when run from a terminal, so the hook can prompt
-# interactively (create-nuxt's template/module picker). Guard with `[ -t 0 ]`
-# and provide a non-interactive fallback for CI/piped runs (where nuxi needs an
-# explicit --template).
-if [ -t 0 ]; then
-  pnpm dlx nuxi@latest init . --no-install --packageManager pnpm --gitInit=false --force
-else
-  pnpm dlx nuxi@latest init . --template minimal --no-install --packageManager pnpm --gitInit=false --force
-fi
+# Keep it deterministic and non-interactive: --no-install + an explicit template,
+# so the hook only generates source and never installs into the bind mount.
+pnpm dlx nuxi@latest init . --template minimal --no-install --packageManager pnpm --gitInit=false --force
 ```
 
 - **Scaffold source only; install at boot.** Use `--no-install`; install deps in the boot path (a zpinit `entrypoint.d/` step, or the container `command:`) so a clone just runs `zdev start` and pulled dependency changes are picked up. Install-at-scaffold-time only populates the throwaway bind mount, not the persistent volume.
-- **Interactive when a terminal is present.** zdev attaches a TTY to the hook when `zdev create` runs from a terminal, so a scaffolder can prompt (framework/module pickers). Always keep a non-interactive fallback (`[ -t 0 ]`) so `zdev create` in CI/piped contexts doesn't block on a prompt it can't show.
+- **Prefer a non-interactive scaffold; don't let the scaffolder install.** zdev *can* attach a TTY (it does when `zdev create` runs from a terminal), but an interactive scaffolder prompt is usually a trap: create-nuxt's module picker is coupled to its own `pnpm install`, which writes `node_modules` into the one-time bind mount (i.e. onto the host, where it doesn't belong) and is unreliable (it doesn't pass pnpm's `--config.dangerouslyAllowAllBuilds`, so pnpm v11 aborts with `ERR_PNPM_IGNORED_BUILDS` on native build scripts). Scaffold source deterministically with a fixed template + `--no-install`, and expose post-create customization (e.g. adding framework modules) as a `zdev <cmd>` recipe that runs **inside the container** where the framework is installed — see the `zdev module` recipe in `zdev-template-nuxt4` (`nuxi module add`, version-aware, keeps `node_modules` container-side).
 - **No gate, no `.setup-complete`.** Because scaffolding happens at create time, the steady-state image needs no wait loop and the created project carries no re-scaffolding `setup.just`.
 - **zdev auto-disables the hook** after a successful run (renames `scaffold.sh` -> `scaffold.sh.disabled`, never deletes it). A `.disabled` hook is skipped, so reusing the project as a template won't re-scaffold. Safe even if the user never reads the create output.
 - The scaffold runs in the sole service, or the one named `app`. It requires Docker (build/pull + run).
