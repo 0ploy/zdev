@@ -1,3 +1,19 @@
+## v0.11.1
+
+Identical code to v0.10.2, re-released with a higher version number. The v0.11.0 tag was cut above the 0.10.x line, so `zdev self-update` on a v0.11.0 build rejected every 0.10.x release as older than what it was already running. Coming from v0.11.0, this also includes the v0.10.1 Docker Desktop socket fix.
+
+### Bug Fixes
+
+- **`zdev update` no longer recreates a container when Docker is briefly unreachable.**
+- **The local DNS fallback is now managed like any other shared service.** It appears in `zdev services status` and `zdev status`, and `zdev services start`, `stop`, and `recreate` manage it alongside the other shared containers.
+
+### Security
+
+- **Dozzle's in-container shell is now off by default.** Opt in with `shared.logs.shell: true` in `~/.zdev/global-config.yaml`.
+- **Project and routing domains are validated as plain hostnames.**
+
+See the v0.10.2 section below for the full detail on each entry.
+
 ## v0.10.2
 
 ### Bug Fixes
