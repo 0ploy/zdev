@@ -1,3 +1,15 @@
+## v0.10.2
+
+### Bug Fixes
+
+- **`zdev update` no longer recreates a container when Docker is briefly unreachable.** Failing to read a container's labels was treated as config drift, so a flaky or restarting daemon looked like a changed config and the container was destroyed and rebuilt mid-outage. The read error is now reported instead.
+- **The local DNS fallback is now managed like any other shared service.** When the fallback is enabled it is the only thing making `*.<domain>` resolve, so it is infrastructure on par with the router - but it was invisible to the `zdev services` commands. It now appears in `zdev services status` and `zdev status`, and `zdev services start`, `stop`, and `recreate` manage it alongside Traefik, Mailpit, Adminer, RedisInsight, and Dozzle. This also means a domain change is picked up by `zdev services recreate` instead of only on the next `zdev start`. On machines where the fallback isn't enabled nothing changes - it stays hidden. Note that `zdev services stop` now stops the DNS container too, so zdev URLs stop resolving until the next start; use `zdev dns disable` to switch the fallback off for good, which reverts the host resolver config first.
+
+### Security
+
+- **Dozzle's in-container shell is now off by default.** The log viewer could open a shell into any container it sees, and the router publishes ports on all interfaces - so on an untrusted network that shell was reachable by anyone who could hit the host. Enable it deliberately with `shared.logs.shell: true` in `~/.zdev/global-config.yaml`. (Existing log viewers pick up the change on the next `zdev services recreate` or `zdev start`.)
+- **Project and routing domains are validated as plain hostnames.** A `domain:` or `routing.domain:` containing backticks, quotes, or whitespace is now rejected at config load, closing a Traefik `Host(...)` rule injection and a docs-page markup break; the global domain uses the same check.
+
 ## v0.11.0
 
 ### Features
@@ -15,18 +27,6 @@
 - **Downloaded helper tools are verified before installation.** mkcert, just, and Mutagen release artifacts are pinned by platform-specific SHA-256 digests and rejected before extraction or execution on any mismatch.
 - **Configuration errors fail early with actionable messages.** Project routing, required service images, Mutagen modes, project names, and duplicate host ports are validated during load; unknown global config fields are rejected too.
 - **Concurrent zdev commands can safely update global state.** State changes now use a cross-process file lock and atomic file replacement.
-
-## Unreleased
-
-### Bug Fixes
-
-- **`zdev update` no longer recreates a container when Docker is briefly unreachable.** Failing to read a container's labels was treated as config drift, so a flaky or restarting daemon looked like a changed config and the container was destroyed and rebuilt mid-outage. The read error is now reported instead.
-- **The local DNS fallback is now managed like any other shared service.** When the fallback is enabled it is the only thing making `*.<domain>` resolve, so it is infrastructure on par with the router - but it was invisible to the `zdev services` commands. It now appears in `zdev services status` and `zdev status`, and `zdev services start`, `stop`, and `recreate` manage it alongside Traefik, Mailpit, Adminer, RedisInsight, and Dozzle. This also means a domain change is picked up by `zdev services recreate` instead of only on the next `zdev start`. On machines where the fallback isn't enabled nothing changes - it stays hidden. Note that `zdev services stop` now stops the DNS container too, so zdev URLs stop resolving until the next start; use `zdev dns disable` to switch the fallback off for good, which reverts the host resolver config first.
-
-### Security
-
-- **Dozzle's in-container shell is now off by default.** The log viewer could open a shell into any container it sees, and the router publishes ports on all interfaces - so on an untrusted network that shell was reachable by anyone who could hit the host. Enable it deliberately with `shared.logs.shell: true` in `~/.zdev/global-config.yaml`. (Existing log viewers pick up the change on the next `zdev services recreate` or `zdev start`.)
-- **Project and routing domains are validated as plain hostnames.** A `domain:` or `routing.domain:` containing backticks, quotes, or whitespace is now rejected at config load, closing a Traefik `Host(...)` rule injection and a docs-page markup break; the global domain uses the same check.
 
 ## v0.10.1
 
