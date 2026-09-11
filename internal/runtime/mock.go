@@ -47,6 +47,13 @@ type MockRuntime struct {
 	// Networks stores created network names
 	Networks map[string]bool
 
+	// ExecOutputs maps a container name to the stdout ExecOutput returns for it.
+	ExecOutputs map[string]string
+
+	// ExecOutputFunc, when set, handles ExecOutput instead of ExecOutputs -
+	// for tests that need a different answer per command.
+	ExecOutputFunc func(container string, cmd []string) (string, error)
+
 	// Errors allows injecting errors for specific method names.
 	// Key is the method name (e.g., "CreateContainer", "StartContainer").
 	Errors map[string]error
@@ -66,6 +73,7 @@ func NewMockRuntime() *MockRuntime {
 		BuiltImages:       make(map[string]ImageBuildConfig),
 		Volumes:           make(map[string]bool),
 		Networks:          make(map[string]bool),
+		ExecOutputs:       make(map[string]string),
 		Errors:            make(map[string]error),
 	}
 }
@@ -275,6 +283,21 @@ func (m *MockRuntime) GetContainerLabels(_ context.Context, name string) (map[st
 func (m *MockRuntime) Exec(_ context.Context, container string, cmd []string, interactive bool, opts ExecOptions) error {
 	m.record("Exec", container, cmd, interactive, opts)
 	return m.err("Exec")
+}
+
+// ExecOutput records the call and returns the configured output for the
+// container, if any.
+func (m *MockRuntime) ExecOutput(_ context.Context, container string, cmd []string) (string, error) {
+	m.record("ExecOutput", container, cmd)
+	if err := m.err("ExecOutput"); err != nil {
+		return "", err
+	}
+	if m.ExecOutputFunc != nil {
+		return m.ExecOutputFunc(container, cmd)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.ExecOutputs[container], nil
 }
 
 // Logs records the call and returns any configured error

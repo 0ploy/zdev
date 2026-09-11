@@ -346,6 +346,12 @@ type LogsOptions struct {
 	Tail   int  // Number of lines to show from end (0 = all)
 }
 
+// ExecOutput runs a command in a running container and returns its stdout.
+func (d *DockerCLI) ExecOutput(ctx context.Context, container string, command []string) (string, error) {
+	args := append([]string{"exec", container}, command...)
+	return d.run(ctx, args...)
+}
+
 // Logs streams container logs to stdout/stderr
 func (d *DockerCLI) Logs(ctx context.Context, container string, opts LogsOptions) error {
 	args := []string{"logs"}

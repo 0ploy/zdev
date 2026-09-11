@@ -242,6 +242,10 @@ root, so `COPY` paths resolve from there. Tag defaults to `zdev-<project>-<servi
 `--no-build` skips it. Dev containers only - build args, targets, multi-arch, build secrets, and
 registry push need a custom build command plus `image:` instead.
 
+**Single-file bind mounts go stale when the file is replaced.** The mount is inode-based, so an
+editor that writes-and-renames leaves the container holding the deleted copy while the host file
+looks fine. `zdev status` flags these as stale file mounts; restarting the service reattaches them.
+
 **Mutagen** (macOS) - fast file sync. Always ignore dependency dirs (`node_modules`, `vendor`) and
 build artifacts. Without ignores, installs take 5-10x longer. Every directory bind of a service is
 synced and gets its own sync volume and session; single-file binds stay plain bind mounts.

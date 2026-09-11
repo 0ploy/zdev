@@ -413,7 +413,25 @@ func (p *Project) startServiceWithMutagen(ctx context.Context, name string, svc 
 		}
 
 		fmt.Printf("Starting service %s...\n", name)
-		return p.Runtime.StartContainer(ctx, containerName)
+		err = p.Runtime.StartContainer(ctx, containerName)
+		if err == nil {
+			return nil
+		}
+		if !isStaleNetworkError(err) {
+			return err
+		}
+		// A container pins its network by ID, so once that network has been
+		// removed and recreated - `zdev down` elsewhere, a docker network
+		// prune, a manual cleanup - Docker refuses to start it, forever, with
+		// a message naming an ID that means nothing to the user. The network
+		// itself already exists again at this point (start recreates it
+		// above); only the container's stale reference is the problem, and
+		// recreating the container is the only way to clear it. Safe to do:
+		// named and sync volumes reattach by name.
+		fmt.Printf("Service %s references a network that no longer exists - recreating the container...\n", name)
+		if err := p.removeServiceContainer(ctx, name); err != nil {
+			return err
+		}
 	}
 
 	// Pull image if needed (built images are guaranteed present here)
@@ -1193,6 +1211,11 @@ func (p *Project) RestartService(ctx context.Context, name string) error {
 
 	fmt.Printf("Starting service %s...\n", name)
 	if err := p.Runtime.StartContainer(ctx, containerName); err != nil {
+		if isStaleNetworkError(err) {
+			// Restart reuses the container in place and has no create path,
+			// so it can't clear the stale network reference itself.
+			return fmt.Errorf("service %s references a network that no longer exists - run 'zdev start %s' to recreate the container: %w", name, name, err)
+		}
 		return fmt.Errorf("failed to start service %s: %w", name, err)
 	}
 
@@ -1242,4 +1265,16 @@ func (p *Project) Volumes(ctx context.Context) ([]VolumeInfo, error) {
 	}
 
 	return volumes, nil
+}
+
+// isStaleNetworkError reports whether a container failed to start because it
+// references a Docker network that no longer exists. Docker names the network
+// by ID here ("network 5fcd98... not found"), which is why the failure is so
+// hard to place: the network of that NAME is present, it just has a new ID.
+func isStaleNetworkError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "network") && strings.Contains(msg, "not found")
 }

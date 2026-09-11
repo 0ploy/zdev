@@ -432,6 +432,8 @@ zdev open        # Open the current project's URL in the browser
 zdev open my-app # Open another registered project's URL
 ```
 
+`zdev status` also flags **stale file mounts**. A bind mount of a single file is resolved to an inode, not a name, so when an editor (or any tool that writes a temp file and renames it into place) replaces the file, the container keeps the old, deleted one - the host copy looks perfectly fine while the container reads stale content or nothing at all. zdev reports which service and which path, and restarting that service reattaches the mount.
+
 ### Shared Services
 
 ```bash

@@ -60,6 +60,8 @@ func runStatusImpl(ctx context.Context, proj *project.Project) error {
 	}
 	fmt.Println()
 
+	printStaleFileMounts(ctx, proj, plainMode)
+
 	printSharedServiceStatus(ctx, proj, cfg, plainMode)
 
 	// Links
@@ -90,4 +92,31 @@ func runStatusImpl(ctx context.Context, proj *project.Project) error {
 	}
 
 	return nil
+}
+
+// printStaleFileMounts warns about single-file bind mounts whose host file was
+// replaced since the container started. The container keeps the old, unlinked
+// inode, so the file reads stale or missing there while looking perfectly fine
+// on the host - a failure that is otherwise indistinguishable from a bug in
+// the user's own code.
+func printStaleFileMounts(ctx context.Context, proj *project.Project, plainMode bool) {
+	stale := proj.StaleFileMounts(ctx)
+	if len(stale) == 0 {
+		return
+	}
+
+	// StatusColor only knows container states, so colour the note directly.
+	note := "host file was replaced"
+	if !plainMode && ui.SupportsColors() {
+		note = ui.Color(note, "yellow", false)
+	}
+
+	fmt.Println("Stale file mounts:")
+	for _, mount := range stale {
+		fmt.Printf("  %-15s %-30s %s\n", mount.ServiceName, mount.ContainerPath, note)
+	}
+	fmt.Println()
+	fmt.Println("  These containers hold a deleted copy of the file - the host version is")
+	fmt.Println("  fine. Restart the affected services to reattach them.")
+	fmt.Println()
 }

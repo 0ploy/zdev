@@ -24,6 +24,10 @@ type Runtime interface {
 	// If interactive is true, stdin/stdout/stderr are attached to the terminal
 	Exec(ctx context.Context, container string, cmd []string, interactive bool, opts ExecOptions) error
 
+	// ExecOutput runs a command in a running container and returns its stdout
+	// instead of streaming it to the terminal.
+	ExecOutput(ctx context.Context, container string, cmd []string) (string, error)
+
 	// Logs streams container logs to stdout/stderr
 	Logs(ctx context.Context, container string, opts LogsOptions) error
 

@@ -214,3 +214,84 @@ func waitForContainerFile(ctx context.Context, containerName, path string, timeo
 	}
 	return context.DeadlineExceeded
 }
+
+// TestProject_StartRecoversContainerPinnedToRemovedNetwork covers a failure
+// that is easy to walk into and impossible to read: a project network removed
+// while its containers are merely stopped (a cleanup, a prune, another
+// project's teardown) leaves those containers pinned to a network ID that no
+// longer exists. Docker then refuses to start them, naming only that ID, and
+// `zdev start` could never fix it because it reused the existing container.
+func TestProject_StartRecoversContainerPinnedToRemovedNetwork(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	projectDir, err := filepath.Abs(filepath.Join("..", "..", "testdata", "projects", "minimal"))
+	if err != nil {
+		t.Fatalf("failed to get absolute path: %v", err)
+	}
+	proj, err := LoadFromDir(projectDir)
+	if err != nil {
+		t.Fatalf("LoadFromDir failed: %v", err)
+	}
+
+	_ = proj.Down(ctx, true)
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cleanupCancel()
+		_ = proj.Down(cleanupCtx, true)
+	})
+
+	if err := proj.Start(ctx); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+
+	// Stop the containers, then pull the network out from under them. Docker
+	// allows this precisely because no container is running.
+	if err := proj.Stop(ctx); err != nil {
+		t.Fatalf("Stop failed: %v", err)
+	}
+	networkName := proj.NetworkName()
+	// The shared services keep endpoints on the project network; detach them
+	// the way a teardown would, so the network can actually be removed.
+	detachSharedEndpoints(t, ctx, networkName)
+	if out, err := exec.CommandContext(ctx, "docker", "network", "rm", networkName).CombinedOutput(); err != nil {
+		t.Fatalf("docker network rm %s: %v (%s)", networkName, err, out)
+	}
+
+	// Plain docker cannot recover from this - confirm the trap is real before
+	// asserting that zdev gets out of it.
+	if out, err := exec.CommandContext(ctx, "docker", "network", "create", networkName).CombinedOutput(); err != nil {
+		t.Fatalf("docker network create: %v (%s)", err, out)
+	}
+	containerName := proj.ContainerName("app")
+	if out, err := exec.CommandContext(ctx, "docker", "start", containerName).CombinedOutput(); err == nil {
+		t.Fatalf("expected a plain docker start to fail on the stale network, but it worked: %s", out)
+	}
+
+	if err := proj.Start(ctx); err != nil {
+		t.Fatalf("Start did not recover the container: %v", err)
+	}
+
+	running, err := dockerRuntime.NewDockerCLI().IsContainerRunning(ctx, containerName)
+	if err != nil {
+		t.Fatalf("IsContainerRunning failed: %v", err)
+	}
+	if !running {
+		t.Error("container is not running after recovery")
+	}
+}
+
+// detachSharedEndpoints disconnects every container still attached to a
+// network so it can be removed.
+func detachSharedEndpoints(t *testing.T, ctx context.Context, networkName string) {
+	t.Helper()
+
+	out, err := exec.CommandContext(ctx, "docker", "network", "inspect", networkName,
+		"--format", `{{range .Containers}}{{.Name}} {{end}}`).Output()
+	if err != nil {
+		return
+	}
+	for _, name := range strings.Fields(string(out)) {
+		_ = exec.CommandContext(ctx, "docker", "network", "disconnect", "-f", networkName, name).Run()
+	}
+}
