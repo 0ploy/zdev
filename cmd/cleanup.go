@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/0ploy/zdev/internal/config"
@@ -23,6 +24,7 @@ var cleanupCmd = &cobra.Command{
 
   - Orphaned Docker containers (not present in a live project's current config)
   - Orphaned Docker volumes (not referenced by a live project's current config)
+  - Orphaned Docker networks (no live project or link owns them)
   - Stale state entries whose project directory no longer exists on disk
 
 Resources used by the current configuration of registered projects are retained.
@@ -57,6 +59,8 @@ func runCleanup(cmd *cobra.Command, args []string) error {
 		var staleProjects []staleProject
 		knownContainers := make(map[string]bool)
 		knownVolumes := make(map[string]bool)
+		knownNetworks := make(map[string]bool)
+		unreadable := make(map[string]bool)
 
 		for name, entry := range projects {
 			if _, err := os.Stat(entry.Path); err != nil {
@@ -69,7 +73,14 @@ func runCleanup(cmd *cobra.Command, args []string) error {
 
 			cfg, err := config.LoadProject(entry.Path)
 			if err != nil {
-				return fmt.Errorf("failed to load live project %s at %s: %w", name, entry.Path, err)
+				// One unreadable config - an unreleased field, a syntax error,
+				// a half-finished edit - must not take the whole cleanup down
+				// with it. But its resources cannot be judged either, so every
+				// resource carrying its name is preserved.
+				fmt.Printf("Warning: not inspecting %s (%s): %v\n", name, entry.Path, err)
+				fmt.Printf("         its containers, volumes and network are kept.\n\n")
+				unreadable[name] = true
+				continue
 			}
 			loaded := &project.Project{Config: cfg, Dir: entry.Path}
 			for serviceName := range cfg.Services {
@@ -87,6 +98,14 @@ func runCleanup(cmd *cobra.Command, args []string) error {
 			for _, volumeName := range loaded.NamedVolumes() {
 				knownVolumes[project.VolumeNameFor(volumeName, cfg.Name)] = true
 			}
+			knownNetworks[loaded.NetworkName()] = true
+		}
+
+		// Link networks belong to the links in state, not to any one project.
+		if links, err := stateMgr.ListLinks(); err == nil {
+			for _, link := range links {
+				knownNetworks[link.Network] = true
+			}
 		}
 
 		docker := runtime.NewDockerCLI()
@@ -98,7 +117,7 @@ func runCleanup(cmd *cobra.Command, args []string) error {
 
 		var orphanContainers []string
 		for _, name := range containers {
-			if !knownContainers[name] {
+			if !knownContainers[name] && !belongsToAnyProject(name, unreadable) {
 				orphanContainers = append(orphanContainers, name)
 			}
 		}
@@ -110,16 +129,41 @@ func runCleanup(cmd *cobra.Command, args []string) error {
 
 		var orphanVolumes []string
 		for _, vol := range dockerVolumes {
-			if !knownVolumes[vol.Name] {
+			if !knownVolumes[vol.Name] && !belongsToAnyProject(vol.Name, unreadable) {
 				orphanVolumes = append(orphanVolumes, vol.Name)
 			}
+		}
+
+		// Networks are the scarcest resource zdev consumes - Docker's default
+		// address pool is exhausted after ~31 of them - and until now the only
+		// one nothing reclaimed. `zdev down` removes a project's network, but a
+		// project directory that is simply deleted leaves its network behind
+		// forever.
+		dockerNetworks, err := docker.ListNetworks(ctx, "")
+		if err != nil {
+			return fmt.Errorf("failed to list Docker networks: %w", err)
+		}
+
+		removingContainer := make(map[string]bool, len(orphanContainers))
+		for _, name := range orphanContainers {
+			removingContainer[name] = true
+		}
+
+		for name := range unreadable {
+			knownNetworks[name+".zdev"] = true
+		}
+
+		orphanNetworks, err := selectOrphanNetworks(ctx, docker, dockerNetworks, knownNetworks, removingContainer)
+		if err != nil {
+			return err
 		}
 
 		sort.Slice(staleProjects, func(i, j int) bool { return staleProjects[i].name < staleProjects[j].name })
 		sort.Strings(orphanContainers)
 		sort.Strings(orphanVolumes)
+		sort.Strings(orphanNetworks)
 
-		if len(staleProjects) == 0 && len(orphanContainers) == 0 && len(orphanVolumes) == 0 {
+		if len(staleProjects) == 0 && len(orphanContainers) == 0 && len(orphanVolumes) == 0 && len(orphanNetworks) == 0 {
 			fmt.Println("Nothing to clean up.")
 			return nil
 		}
@@ -143,6 +187,14 @@ func runCleanup(cmd *cobra.Command, args []string) error {
 		if len(orphanVolumes) > 0 {
 			fmt.Printf("Orphaned volumes (%d) - absent from live project configs:\n", len(orphanVolumes))
 			for _, name := range orphanVolumes {
+				fmt.Printf("  - %s\n", name)
+			}
+			fmt.Println()
+		}
+
+		if len(orphanNetworks) > 0 {
+			fmt.Printf("Orphaned networks (%d) - no live project or link owns them:\n", len(orphanNetworks))
+			for _, name := range orphanNetworks {
 				fmt.Printf("  - %s\n", name)
 			}
 			fmt.Println()
@@ -173,6 +225,17 @@ func runCleanup(cmd *cobra.Command, args []string) error {
 			}
 		}
 
+		// After the containers, so a network whose only attachments were just
+		// removed can go too.
+		for _, name := range orphanNetworks {
+			fmt.Printf("Removing network %s... ", name)
+			if err := docker.RemoveNetwork(ctx, name); err != nil {
+				fmt.Printf("failed: %v\n", err)
+			} else {
+				fmt.Println("done")
+			}
+		}
+
 		var deleted, failed int
 		for _, name := range orphanVolumes {
 			fmt.Printf("Removing volume %s... ", name)
@@ -195,4 +258,66 @@ func runCleanup(cmd *cobra.Command, args []string) error {
 
 		return nil
 	})
+}
+
+// containerLister is the slice of the runtime selectOrphanNetworks needs.
+type containerLister interface {
+	ListContainers(ctx context.Context, filter string) ([]string, error)
+}
+
+// selectOrphanNetworks picks the zdev networks that no live project or link
+// owns and that nothing is still attached to.
+//
+// Attachment is checked with `docker ps -a`, not the network's own endpoint
+// list: the latter reports only RUNNING containers, and a stopped container
+// pins its network by ID just as firmly. Removing a network out from under one
+// leaves it unstartable until it is recreated, so anything still referenced is
+// kept - except containers this same run is about to remove, which would
+// otherwise keep their network alive one cleanup longer than necessary.
+func selectOrphanNetworks(ctx context.Context, docker containerLister, networks []string, known, removingContainer map[string]bool) ([]string, error) {
+	var orphans []string
+
+	for _, name := range networks {
+		if !isZdevNetwork(name) || known[name] {
+			continue
+		}
+
+		attached, err := docker.ListContainers(ctx, "network="+name)
+		if err != nil {
+			return nil, fmt.Errorf("failed to inspect network %s: %w", name, err)
+		}
+
+		inUse := false
+		for _, containerName := range attached {
+			if !removingContainer[containerName] {
+				inUse = true
+				break
+			}
+		}
+		if !inUse {
+			orphans = append(orphans, name)
+		}
+	}
+
+	return orphans, nil
+}
+
+// isZdevNetwork reports whether a Docker network is one zdev creates: a
+// project network (<project>.zdev) or a link network (zdev_link_<name>).
+// Everything else on the host belongs to someone else.
+func isZdevNetwork(name string) bool {
+	return strings.HasSuffix(name, ".zdev") || strings.HasPrefix(name, "zdev_link_")
+}
+
+// belongsToAnyProject reports whether a container or volume name carries the
+// name of one of the given projects, using zdev's <name>.<project>.zdev
+// convention. Used to preserve everything belonging to a project whose config
+// could not be read.
+func belongsToAnyProject(resourceName string, projects map[string]bool) bool {
+	for projectName := range projects {
+		if strings.HasSuffix(resourceName, "."+projectName+".zdev") {
+			return true
+		}
+	}
+	return false
 }

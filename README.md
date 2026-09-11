@@ -487,6 +487,19 @@ zdev mutagen flush   # Wait for sync to complete
 zdev mutagen reset   # Recreate sync sessions (if stuck)
 ```
 
+`zdev mutagen status` reports one line per synced directory, with the state of that mount's own sync session.
+
+### Maintenance
+
+```bash
+zdev cleanup         # Prune resources no live project owns
+zdev cleanup --force # ...without the confirmation prompt
+```
+
+`zdev cleanup` lists what it would delete and asks before touching anything. It covers containers and volumes that no registered project's current config references, networks that no project or link owns, and state entries whose project directory is gone from disk.
+
+Networks matter more than their size suggests: Docker's default address pool runs out after roughly 31 of them, and every project that was started and then deleted without `zdev down` leaves one behind. A network is kept whenever any container still references it, stopped ones included, because a container pins its network by ID and would otherwise refuse to start. A project whose config cannot be read is skipped with a warning and everything belonging to it is preserved.
+
 ## Examples
 
 ### PHP + MySQL

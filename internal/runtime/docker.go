@@ -580,6 +580,29 @@ func (d *DockerCLI) NetworkExists(ctx context.Context, name string) (bool, error
 	return true, nil
 }
 
+// ListNetworks returns the names of networks matching a docker filter
+// (e.g. "name=.zdev"). An empty filter lists every network.
+func (d *DockerCLI) ListNetworks(ctx context.Context, filter string) ([]string, error) {
+	args := []string{"network", "ls", "--format", "{{.Name}}"}
+	if filter != "" {
+		args = append(args, "--filter", filter)
+	}
+
+	out, err := d.run(ctx, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	var names []string
+	for _, name := range strings.Split(strings.TrimSpace(out), "\n") {
+		if name == "" {
+			continue
+		}
+		names = append(names, name)
+	}
+	return names, nil
+}
+
 // NetworkConnect connects a container to a network with optional aliases
 func (d *DockerCLI) NetworkConnect(ctx context.Context, networkName, containerName string, aliases ...string) error {
 	args := []string{"network", "connect"}

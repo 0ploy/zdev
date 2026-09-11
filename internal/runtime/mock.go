@@ -355,6 +355,28 @@ func (m *MockRuntime) NetworkDisconnect(_ context.Context, networkName, containe
 	return m.err("NetworkDisconnect")
 }
 
+// ListNetworks returns the mock networks whose name contains the filter's
+// value, mirroring docker's substring name filter.
+func (m *MockRuntime) ListNetworks(_ context.Context, filter string) ([]string, error) {
+	m.record("ListNetworks", filter)
+	if err := m.err("ListNetworks"); err != nil {
+		return nil, err
+	}
+
+	needle := strings.TrimPrefix(filter, "name=")
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var names []string
+	for name := range m.NetworksExist {
+		if needle == "" || strings.Contains(name, needle) {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
 // CreateVolume creates a volume in the mock state
 func (m *MockRuntime) CreateVolume(_ context.Context, name string) error {
 	m.record("CreateVolume", name)
