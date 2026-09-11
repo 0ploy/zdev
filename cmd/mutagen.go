@@ -2,10 +2,11 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"sort"
 	"time"
 
-	"github.com/0ploy/zdev/internal/mutagen"
 	"github.com/0ploy/zdev/internal/project"
 	"github.com/spf13/cobra"
 )
@@ -79,7 +80,7 @@ func runMutagenStatusImpl(ctx context.Context, proj *project.Project) error {
 	fmt.Println("=======================================")
 	fmt.Println()
 
-	for _, mount := range mounts {
+	for _, mount := range sortMounts(mounts) {
 		exists, _ := m.SessionExists(ctx, mount.SessionName)
 		if !exists {
 			fmt.Printf("%s: not created\n", mount.SessionName)
@@ -93,6 +94,13 @@ func runMutagenStatusImpl(ctx context.Context, proj *project.Project) error {
 		if err != nil {
 			status = "unknown"
 		}
+		// Session names are per mount, so this status belongs to this mount
+		// and nothing else. Connectivity is reported separately because a
+		// session can sit in a perfectly normal-looking state while its beta
+		// endpoint - the container - is gone.
+		if connected, known := m.SessionConnected(ctx, mount.SessionName); known && !connected {
+			status += " (NOT connected)"
+		}
 
 		fmt.Printf("%s: %s\n", mount.SessionName, status)
 		fmt.Printf("  Host:      %s\n", mount.HostPath)
@@ -101,6 +109,19 @@ func runMutagenStatusImpl(ctx context.Context, proj *project.Project) error {
 	}
 
 	return nil
+}
+
+// sortMounts gives the mount list a stable order for display - it is built
+// from a map iteration over the project's services.
+func sortMounts(mounts []project.MutagenSyncMount) []project.MutagenSyncMount {
+	sorted := append([]project.MutagenSyncMount(nil), mounts...)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].ServiceName != sorted[j].ServiceName {
+			return sorted[i].ServiceName < sorted[j].ServiceName
+		}
+		return sorted[i].ContainerPath < sorted[j].ContainerPath
+	})
+	return sorted
 }
 
 func runMutagenReset(cmd *cobra.Command, args []string) error {
@@ -129,62 +150,65 @@ func runMutagenResetImpl(ctx context.Context, proj *project.Project) error {
 	fmt.Printf("Resetting Mutagen sync for %s...\n", proj.Config.Name)
 	fmt.Println()
 
-	// Terminate existing sessions
-	for _, mount := range mounts {
-		exists, _ := m.SessionExists(ctx, mount.SessionName)
-		if exists {
-			fmt.Printf("Terminating %s...\n", mount.SessionName)
-			if err := m.TerminateSession(ctx, mount.SessionName); err != nil {
-				fmt.Printf("Warning: could not terminate %s: %v\n", mount.SessionName, err)
+	// Work one service at a time: terminate and recreate its sessions
+	// together, and skip services whose container is stopped. Terminating
+	// every session in the project up front and only then recreating them
+	// left a partially-stopped project worse off than before - the first
+	// unreachable container aborted the run, and the healthy services never
+	// got their sessions back.
+	byService := project.NewMutagenMounts(mounts)
+	serviceNames := make([]string, 0, len(byService))
+	for serviceName := range byService {
+		serviceNames = append(serviceNames, serviceName)
+	}
+	sort.Strings(serviceNames)
+
+	var (
+		errs      []error
+		recreated []project.MutagenSyncMount
+		skipped   int
+	)
+
+	for _, serviceName := range serviceNames {
+		containerName := proj.ContainerName(serviceName)
+		running, err := proj.Runtime.IsContainerRunning(ctx, containerName)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("failed to check container %s: %w", containerName, err))
+			continue
+		}
+		if !running {
+			fmt.Printf("Skipping %s - container is not running\n", serviceName)
+			skipped++
+			continue
+		}
+
+		for _, mount := range byService.For(serviceName) {
+			fmt.Printf("Recreating %s...\n", mount.SessionName)
+			if err := proj.RecreateSyncSession(ctx, m, mount); err != nil {
+				errs = append(errs, err)
+				continue
+			}
+			recreated = append(recreated, mount)
+		}
+	}
+
+	if skipped > 0 {
+		fmt.Println()
+		fmt.Println("Sessions for stopped services are created on the next 'zdev start'")
+	}
+
+	if len(recreated) > 0 {
+		fmt.Println()
+		fmt.Println("Waiting for initial sync...")
+		for _, mount := range recreated {
+			if err := m.FlushSession(ctx, mount.SessionName); err != nil {
+				fmt.Printf("Warning: could not wait for sync %s: %v\n", mount.SessionName, err)
 			}
 		}
 	}
 
-	// Check if containers are running
-	containerRunning := false
-	for _, mount := range mounts {
-		containerName := proj.ContainerName(mount.ServiceName)
-		running, _ := proj.Runtime.IsContainerRunning(ctx, containerName)
-		if running {
-			containerRunning = true
-			break
-		}
-	}
-
-	if !containerRunning {
-		fmt.Println()
-		fmt.Println("Containers are not running - sessions will be created on next 'zdev start'")
-		return nil
-	}
-
-	// Recreate sessions
-	for _, mount := range mounts {
-		containerName := proj.ContainerName(mount.ServiceName)
-		beta := fmt.Sprintf("docker://%s%s", containerName, mount.ContainerPath)
-
-		fmt.Printf("Creating %s...\n", mount.SessionName)
-
-		ignores := mutagen.MergeIgnores(proj.Config.Mutagen.Ignore)
-
-		cfg := mutagen.SessionConfig{
-			Name:    mount.SessionName,
-			Alpha:   mount.HostPath,
-			Beta:    beta,
-			Ignores: ignores,
-		}
-
-		if err := m.CreateSession(ctx, cfg); err != nil {
-			return fmt.Errorf("failed to create session %s: %w", mount.SessionName, err)
-		}
-	}
-
-	fmt.Println()
-	fmt.Println("Waiting for initial sync...")
-
-	for _, mount := range mounts {
-		if err := m.FlushSession(ctx, mount.SessionName); err != nil {
-			fmt.Printf("Warning: could not wait for sync %s: %v\n", mount.SessionName, err)
-		}
+	if err := errors.Join(errs...); err != nil {
+		return err
 	}
 
 	fmt.Println("Sync reset complete")

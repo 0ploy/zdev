@@ -1,0 +1,27 @@
+version: 1
+name: mutagen-multi
+
+# Fixture for a service with MORE THAN ONE directory bind.
+#
+# Each directory bind needs its own sync volume and its own Mutagen session.
+# Sharing either across the mounts of one service leaves a bind unsynced: a
+# shared session name makes the second session look like it already exists, and
+# a shared volume name lets only one bind be backed by the volume while the
+# others quietly degrade to raw bind mounts of the host directory.
+#
+# The command depends on content from BOTH binds, so a container let through
+# the sync-ready gate before its mounts are filled exits instead of hanging
+# around looking healthy.
+
+services:
+  app:
+    image: alpine:latest
+    command: "test -f /app/marker && test -f /opt/etc/app/marker && sleep infinity"
+    working_dir: /app
+    volumes:
+      - ${PROJECTPATH}/etc:/opt/etc/app
+      - ${PROJECTPATH}/src:/app
+
+mutagen:
+  ignore:
+    - var/cache

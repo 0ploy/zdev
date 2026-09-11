@@ -243,7 +243,8 @@ root, so `COPY` paths resolve from there. Tag defaults to `zdev-<project>-<servi
 registry push need a custom build command plus `image:` instead.
 
 **Mutagen** (macOS) - fast file sync. Always ignore dependency dirs (`node_modules`, `vendor`) and
-build artifacts. Without ignores, installs take 5-10x longer.
+build artifacts. Without ignores, installs take 5-10x longer. Every directory bind of a service is
+synced and gets its own sync volume and session; single-file binds stay plain bind mounts.
 
 **`command:` is wrapped in `sh -c`** - zdev runs the value of `command:` as a shell command, not
 as a Docker CMD array. Bare `--flag` arguments meant for the image's default entrypoint fail with

@@ -53,18 +53,21 @@ func (p *Project) Rename(ctx context.Context, newName string) error {
 		}
 	}
 
-	// Copy Mutagen sync volumes
+	// Copy Mutagen sync volumes. A service has one per directory bind, so
+	// enumerate the mounts rather than the services - the volume name depends
+	// on the mount's container path once a service has more than one.
 	if p.IsMutagenEnabled() {
-		for serviceName := range p.Config.Services {
-			oldVolName := p.MutagenVolumeName(serviceName)
-			newVolName := MutagenVolumeNameFor(serviceName, newName)
+		for serviceName, mounts := range NewMutagenMounts(p.GetMutagenSyncMounts()) {
+			for _, mount := range mounts {
+				newVolName, _ := SyncNames(serviceName, mount.ContainerPath, newName, len(mounts))
 
-			copied, err := p.copyVolumeData(ctx, oldVolName, newVolName, copyImage)
-			if err != nil {
-				return fmt.Errorf("failed to migrate sync volume for %s: %w", serviceName, err)
-			}
-			if copied {
-				migrated = append(migrated, volumePair{oldVolName, newVolName})
+				copied, err := p.copyVolumeData(ctx, mount.VolumeName, newVolName, copyImage)
+				if err != nil {
+					return fmt.Errorf("failed to migrate sync volume for %s: %w", serviceName, err)
+				}
+				if copied {
+					migrated = append(migrated, volumePair{mount.VolumeName, newVolName})
+				}
 			}
 		}
 	}

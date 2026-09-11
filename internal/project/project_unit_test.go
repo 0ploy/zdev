@@ -157,7 +157,7 @@ func TestTransformVolumesForMutagen_NamedVolumePassesThrough(t *testing.T) {
 	mock := runtime.NewMockRuntime()
 	p := newTestProject(mock)
 
-	mutagenMounts := map[string]MutagenSyncMount{}
+	mutagenMounts := MutagenMounts{}
 	volumes := []string{"db_data:/var/lib/data"}
 
 	result := p.transformVolumesForMutagen("app", volumes, mutagenMounts)
@@ -179,14 +179,14 @@ func TestTransformVolumesForMutagen_BindMountWithMutagenMatch(t *testing.T) {
 	mock := runtime.NewMockRuntime()
 	p := newTestProject(mock)
 
-	mutagenMounts := map[string]MutagenSyncMount{
-		"app": {
+	mutagenMounts := MutagenMounts{
+		"app": {{
 			ServiceName:   "app",
 			HostPath:      "/tmp/test",
 			ContainerPath: "/var/www/html",
 			VolumeName:    "sync.app.testproject.zdev",
 			SessionName:   "zdev-testproject-app",
-		},
+		}},
 	}
 	volumes := []string{".:/var/www/html"}
 
@@ -207,7 +207,7 @@ func TestTransformVolumesForMutagen_BindMountWithoutMutagenMatch(t *testing.T) {
 	mock := runtime.NewMockRuntime()
 	p := newTestProject(mock)
 
-	mutagenMounts := map[string]MutagenSyncMount{}
+	mutagenMounts := MutagenMounts{}
 	volumes := []string{"./config:/etc/app"}
 
 	result := p.transformVolumesForMutagen("app", volumes, mutagenMounts)
@@ -228,14 +228,14 @@ func TestTransformVolumesForMutagen_MixedVolumes(t *testing.T) {
 	mock := runtime.NewMockRuntime()
 	p := newTestProject(mock)
 
-	mutagenMounts := map[string]MutagenSyncMount{
-		"app": {
+	mutagenMounts := MutagenMounts{
+		"app": {{
 			ServiceName:   "app",
 			HostPath:      "/tmp/test",
 			ContainerPath: "/app",
 			VolumeName:    "sync.app.testproject.zdev",
 			SessionName:   "zdev-testproject-app",
-		},
+		}},
 	}
 	volumes := []string{
 		"db_data:/var/lib/data", // named volume

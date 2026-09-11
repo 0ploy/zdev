@@ -306,6 +306,10 @@ Multiple projects can expose different ports without conflicts. Works for MySQL,
 
 **Bind mounts** (`${PROJECTPATH}:/app`) sync your source code into the container. Edits on the host are reflected immediately. On macOS, zdev handles fast sync automatically via Mutagen. Add `node_modules`, `.pnpm-store`, and build caches to `mutagen.ignore` so they stay inside the container (fast) and don't sync back to the host.
 
+A service can declare as many directory binds as it needs - each one gets its own sync volume and its own sync session, so a second bind is synced just as fully as the first. Single-file binds (`${PROJECTPATH}/etc/app/.env:/app/config/.env`) are not synced and stay plain bind mounts - but make sure the file exists on the host before starting, because Docker creates a missing bind source as a *directory*, which turns the entry into a synced directory bind.
+
+If a sync session can't be established, the service's command is held at the sync-ready gate instead of starting against an empty directory, and `zdev start` reports the failure and exits non-zero. Fix the cause and run `zdev start` again - the gate re-arms on every container start, so a service never needs to be removed to recover.
+
 **Named volumes** (`db_data:/var/lib/postgresql/data`) are persistent storage managed by zdev. Use these for data that must survive `zdev down` - database files, uploaded assets, SQLite databases:
 
 ```yaml

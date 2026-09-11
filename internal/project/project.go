@@ -2,6 +2,7 @@ package project
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -357,15 +358,23 @@ func (p *Project) start(ctx context.Context, filter map[string]bool) error {
 			}
 		}
 	}
-	if err := p.finalizeMutagen(ctx, m, finalizedMounts); err != nil {
-		return err
-	}
+	// A sync failure must not skip registration: the containers exist either
+	// way, and an unregistered project loses its routing and link wiring on
+	// top of the sync problem. Report both.
+	syncErr := p.finalizeMutagen(ctx, m, finalizedMounts)
 
-	return p.registerAndConnect(ctx)
+	return errors.Join(syncErr, p.registerAndConnect(ctx))
 }
 
 // startServiceWithMutagen starts a service with optional Mutagen volume transformation
-func (p *Project) startServiceWithMutagen(ctx context.Context, name string, svc config.ServiceConfig, mutagenEnabled bool, mutagenMounts map[string]MutagenSyncMount) error {
+func (p *Project) startServiceWithMutagen(ctx context.Context, name string, svc config.ServiceConfig, mutagenEnabled bool, mutagenMounts MutagenMounts) error {
+	// The sync-ready gate can only wrap a command zdev knows about. A service
+	// that relies on its image's own CMD starts the moment the container does,
+	// racing the initial sync - say so instead of failing mysteriously later.
+	if mutagenEnabled && mutagenMounts.Has(name) && svc.Command == "" {
+		fmt.Printf("Warning: service %s has synced mounts but no command: in config - it starts before file sync completes\n", name)
+	}
+
 	containerName := p.ContainerName(name)
 
 	// Build the image first when a `dockerfile:` config is present, so an
@@ -831,7 +840,7 @@ func (p *Project) Update(ctx context.Context) (bool, error) {
 		mutagenPrepared bool
 		mDaemon         *mutagen.Mutagen
 		mutagenMounts   []MutagenSyncMount
-		mutagenMountMap map[string]MutagenSyncMount
+		mutagenMountMap MutagenMounts
 	)
 	prepare := func() error {
 		if mutagenPrepared {
@@ -870,13 +879,12 @@ func (p *Project) Update(ctx context.Context) (bool, error) {
 	if err := prepare(); err != nil {
 		return updated, err
 	}
+	var syncErr error
 	if mutagenPrepared {
-		if err := p.finalizeMutagen(ctx, mDaemon, mutagenMounts); err != nil {
-			return updated, err
-		}
+		syncErr = p.finalizeMutagen(ctx, mDaemon, mutagenMounts)
 	}
 
-	return updated, p.registerAndConnect(ctx)
+	return updated, errors.Join(syncErr, p.registerAndConnect(ctx))
 }
 
 type updateServiceStarter func(string, config.ServiceConfig) error
@@ -963,12 +971,9 @@ func (p *Project) serviceNeedsRecreate(ctx context.Context, serviceName string, 
 	}
 
 	mutagenEnabled := p.IsMutagenEnabled()
-	var mutagenMountMap map[string]MutagenSyncMount
+	var mutagenMountMap MutagenMounts
 	if mutagenEnabled {
-		mutagenMountMap = make(map[string]MutagenSyncMount)
-		for _, mount := range p.GetMutagenSyncMounts() {
-			mutagenMountMap[mount.ServiceName] = mount
-		}
+		mutagenMountMap = NewMutagenMounts(p.GetMutagenSyncMounts())
 	}
 	expectedCfg := p.buildContainerConfig(serviceName, svc, mutagenEnabled, mutagenMountMap)
 
@@ -1000,7 +1005,7 @@ func (p *Project) containerEnv(svc config.ServiceConfig) map[string]string {
 	return env
 }
 
-func (p *Project) buildContainerConfig(name string, svc config.ServiceConfig, mutagenEnabled bool, mutagenMounts map[string]MutagenSyncMount) runtime.ContainerConfig {
+func (p *Project) buildContainerConfig(name string, svc config.ServiceConfig, mutagenEnabled bool, mutagenMounts MutagenMounts) runtime.ContainerConfig {
 	containerName := p.ContainerName(name)
 
 	cfg := runtime.ContainerConfig{
@@ -1065,11 +1070,8 @@ func (p *Project) buildContainerConfig(name string, svc config.ServiceConfig, mu
 	// Parse command
 	if svc.Command != "" {
 		// When Mutagen is enabled for this service, wrap with sync-ready gate
-		_, hasMutagenMount := mutagenMounts[name]
-		if mutagenEnabled && hasMutagenMount {
-			cfg.Command = []string{"sh", "-c",
-				"while [ ! -f /.zdev-sync-ready ]; do sleep 0.2; done; exec sh -c " + shellQuote(svc.Command),
-			}
+		if mutagenEnabled && mutagenMounts.Has(name) {
+			cfg.Command = []string{"sh", "-c", SyncGateCommand(svc.Command)}
 		} else {
 			cfg.Command = []string{"sh", "-c", svc.Command}
 		}

@@ -71,10 +71,18 @@ func runCleanup(cmd *cobra.Command, args []string) error {
 			if err != nil {
 				return fmt.Errorf("failed to load live project %s at %s: %w", name, entry.Path, err)
 			}
-			loaded := &project.Project{Config: cfg}
+			loaded := &project.Project{Config: cfg, Dir: entry.Path}
 			for serviceName := range cfg.Services {
 				knownContainers[project.ContainerNameFor(serviceName, cfg.Name)] = true
+				// Kept for services whose sync volume predates per-mount
+				// naming, or whose bind source is temporarily absent: an
+				// in-use sync volume must never be offered for pruning.
 				knownVolumes[project.MutagenVolumeNameFor(serviceName, cfg.Name)] = true
+			}
+			// Services with several directory binds have one sync volume per
+			// mount, none of which carries the bare per-service name.
+			for _, mount := range loaded.GetMutagenSyncMounts() {
+				knownVolumes[mount.VolumeName] = true
 			}
 			for _, volumeName := range loaded.NamedVolumes() {
 				knownVolumes[project.VolumeNameFor(volumeName, cfg.Name)] = true

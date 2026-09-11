@@ -197,6 +197,36 @@ func (m *Mutagen) GetSessionStatus(ctx context.Context, name string) (string, er
 	return strings.TrimSpace(string(output)), nil
 }
 
+// SessionConnected reports whether both endpoints of a session are currently
+// connected. The beta endpoint IS the service container, so this is what
+// separates a session that can actually synchronize from one whose container
+// has already died - a distinction a successful flush does not make.
+//
+// The second return value is false when the state could not be determined at
+// all (mutagen errored, or a future version changed the listing model). The
+// caller treats that as "unknown" rather than "disconnected", so a probe that
+// stops working degrades to the previous flush-only behaviour instead of
+// blocking every service from starting.
+func (m *Mutagen) SessionConnected(ctx context.Context, name string) (connected bool, known bool) {
+	cmd := exec.CommandContext(ctx, m.binaryPath, "sync", "list", name,
+		"--template", "{{range .}}{{.Alpha.Connected}} {{.Beta.Connected}}{{end}}")
+	output, err := cmd.Output()
+	if err != nil {
+		return false, false
+	}
+
+	fields := strings.Fields(string(output))
+	if len(fields) != 2 {
+		return false, false
+	}
+	for _, f := range fields {
+		if f != "true" && f != "false" {
+			return false, false
+		}
+	}
+	return fields[0] == "true" && fields[1] == "true", true
+}
+
 // run executes a mutagen command and returns the output
 func (m *Mutagen) run(ctx context.Context, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, m.binaryPath, args...)
