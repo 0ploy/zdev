@@ -1,3 +1,35 @@
+## v0.12.0
+
+File sync is the theme: a service may now have more than one synced directory, a
+sync that fails is reported instead of silently producing a container that starts
+against an empty directory, and a directory that must be seeded before startup can
+opt out of sync entirely.
+
+### Bug Fixes
+
+- **Every directory bind of a service now gets its own sync volume and its own sync session.** Sync was keyed by service name, so a service with two directory binds got the session on the first bind and the volume on the last: the volume was created, mounted, and never filled by anything, while the bind that did have a session was a raw bind of the host directory syncing against itself. Depending on whether the start command needed a file the empty volume lacked, the service either died in milliseconds or served frozen code for weeks with no check reporting it. Services with exactly one directory bind are unaffected and keep their existing sync volume.
+- **A failed sync no longer opens the sync-ready gate.** `zdev start` used to print `Initial sync complete` regardless of what had failed and let the container through, which started it against an empty directory, killed it, and took down the very endpoint the sync needed to recover. A mount now counts as ready only when its flush succeeded and its session reports both endpoints connected with no scan problems, transition problems or conflicts. Otherwise the container stays parked at the gate, alive and recoverable, and `zdev start` exits non-zero naming the mount and the reason - for example `container marker: unable to create file: permission denied`.
+- **A service that failed to start can now recover on its own.** The sync-ready marker lives in the container's writable layer, so a container that was let through once skipped the gate on every later start and could only be rescued with `docker rm`. The wrapper clears the marker on every start, including a plain `docker start`.
+- **The sync-ready gate works on images that do not run as root.** The marker was written to `/`, which the default user of images like percona, postgres and nginx-unprivileged cannot write to: zdev could not raise it and the container could not clear it. It now lives in `/tmp`. The old path is still touched as root for entrypoints that wait on it themselves.
+- **One dead container no longer strips sync sessions from healthy services.** Session setup stopped at the first failure, and since the mount list comes from a map iteration, which services lost their sessions changed from run to run.
+- **`zdev mutagen reset` no longer leaves a partly stopped project worse off than before.** It terminated every session in the project up front and aborted on the first container that was not running, so the healthy services never got their sessions back. It now works service by service, skips stopped ones, and creates sessions through the same path as `zdev start` - which also restores the per-service ownership defaults it was silently dropping.
+- **`zdev mutagen status` reports the state of each mount.** With one session name per service, the status of every mount of a service was the same concatenated string, and a missing session was invisible. Sessions that cannot synchronize now show the reason.
+- **`zdev start` recovers a container pinned to a removed network.** A container references its network by ID, so once that network was removed and recreated - another project's `zdev down`, a prune, a cleanup - Docker refused to start it with `network <id> not found`, and `zdev start` could not help because it reused the existing container. It now recreates it; named and sync volumes reattach by name.
+- **`zdev cleanup` is no longer blocked by a single unreadable project config.** One project with an unparsable `.zdev/config.yaml` aborted the whole command, so nothing was ever cleaned for any project. Such a project is now reported and skipped, and everything carrying its name is preserved.
+- **Per-service Mutagen ownership is applied as root.** The `chown` that makes `services.<name>.mutagen.user` take effect on pre-existing files ran as the image's default user, which cannot chown - broken for exactly the non-root images the setting exists for.
+
+### Features
+
+- **`services.<name>.mutagen.no_sync` keeps a directory bind as a plain Docker bind.** Containers start before their sync sessions are resumed, so a directory the entrypoint reads once during startup - `/docker-entrypoint-initdb.d`, nginx `conf.d`, mounted certificates - can be empty at exactly the moment it is read. Listing its container path under `no_sync` keeps it native and present from the container's first instant. Entries are validated against that service's own mounts, so a typo is rejected rather than silently syncing the directory it was meant to protect.
+- **`zdev status` reports stale file mounts.** A bind mount of a single file is resolved to an inode, so an editor that writes a temp file and renames it into place can leave the container holding the deleted copy while the host file looks perfectly fine. Affected services and paths are now listed, with the fix: restart the service. Only mounts that have actually diverged from the host are reported.
+- **`zdev cleanup` reclaims orphaned Docker networks.** `zdev down` removes a project's network, but a project directory deleted without it left one behind forever - and networks are the scarcest resource here, since Docker's default address pool is exhausted after roughly 31 of them, after which every new project fails with `all predefined address pools have been fully subnetted`. Networks that no live project or link owns are now offered alongside orphaned containers and volumes. A network is kept whenever any container still references it, stopped ones included.
+
+### Upgrade Notes
+
+- **Mutagen services are recreated once** on the next `zdev start` or `zdev update`, because the command wrapper changed.
+- **Services with more than one directory bind get new sync volumes.** Anything living at a Mutagen-ignored path inside those containers (`node_modules`, `vendor`) is rebuilt from the host and may need one reinstall. Services with a single directory bind keep their volume untouched.
+- **`mutagen.no_sync` is a new config field.** A project that adopts it will not load on zdev older than v0.12.0, so upgrade the team before committing it.
+
 ## v0.11.1
 
 Identical code to v0.10.2, re-released with a higher version number. The v0.11.0 tag was cut above the 0.10.x line, so `zdev self-update` on a v0.11.0 build rejected every 0.10.x release as older than what it was already running. Coming from v0.11.0, this also includes the v0.10.1 Docker Desktop socket fix.
