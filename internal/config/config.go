@@ -1,17 +1,20 @@
 package config
 
-import "runtime"
+import (
+	"runtime"
+	"strings"
+)
 
 // GlobalConfig represents ~/.zdev/config.yaml
 type GlobalConfig struct {
-	Version  int                  `yaml:"version"`
-	Domain   string               `yaml:"domain"`
-	Runtime  string               `yaml:"runtime"`
-	SSL      SSLConfig            `yaml:"ssl"`
-	Shared   SharedConfig         `yaml:"shared"`
-	Terminal TerminalConfig       `yaml:"terminal"`
-	Mutagen  MutagenGlobalConfig  `yaml:"mutagen"`
-	DNS      DNSFallbackConfig    `yaml:"dns"`
+	Version  int                 `yaml:"version"`
+	Domain   string              `yaml:"domain"`
+	Runtime  string              `yaml:"runtime"`
+	SSL      SSLConfig           `yaml:"ssl"`
+	Shared   SharedConfig        `yaml:"shared"`
+	Terminal TerminalConfig      `yaml:"terminal"`
+	Mutagen  MutagenGlobalConfig `yaml:"mutagen"`
+	DNS      DNSFallbackConfig   `yaml:"dns"`
 }
 
 // DNSFallbackConfig configures the optional local DNS fallback used when
@@ -106,8 +109,8 @@ type ProjectConfig struct {
 	Variables       map[string]string        `yaml:"variables"`
 	Shared          ProjectSharedConfig      `yaml:"shared"`
 	Environment     map[string]string        `yaml:"environment"`
-	Services map[string]ServiceConfig `yaml:"services"`
-	Mutagen  ProjectMutagenConfig   `yaml:"mutagen"`
+	Services        map[string]ServiceConfig `yaml:"services"`
+	Mutagen         ProjectMutagenConfig     `yaml:"mutagen"`
 }
 
 // ProjectMutagenConfig defines project-level Mutagen settings
@@ -141,17 +144,17 @@ func defaultProjectShared() ProjectSharedConfig {
 
 // ServiceConfig defines a container service
 type ServiceConfig struct {
-	Image          string                `yaml:"image"`
-	Dockerfile     string                `yaml:"dockerfile"` // Build a local dev image from this Dockerfile (resolved against the project root, which is also the build context) instead of pulling image; image then names the tag
-	Routing        *RoutingConfig        `yaml:"routing"` // Traefik routing config (requires shared.router: true)
-	WorkingDir     string                `yaml:"working_dir"`
-	Volumes        []string              `yaml:"volumes"`
-	Environment    map[string]string     `yaml:"environment"`
-	OpEnv          string                `yaml:"op-env"` // 1Password Environment ID (not secret, safe to commit): every variable in it is injected into the container env, explicit environment: entries win; single variables use op-env://<environment-id>/<VARIABLE> values in environment: instead
-	Command        string                `yaml:"command"`
-	Labels         map[string]string     `yaml:"labels"`
-	RegisterToDBUI bool                  `yaml:"register_to_dbui"` // Register this service in the shared DB UI (Adminer)
-	Mutagen        ServiceMutagenConfig  `yaml:"mutagen"`          // Per-service Mutagen sync defaults (ownership/permissions of files synced into the container)
+	Image          string               `yaml:"image"`
+	Dockerfile     string               `yaml:"dockerfile"` // Build a local dev image from this Dockerfile (resolved against the project root, which is also the build context) instead of pulling image; image then names the tag
+	Routing        *RoutingConfig       `yaml:"routing"`    // Traefik routing config (requires shared.router: true)
+	WorkingDir     string               `yaml:"working_dir"`
+	Volumes        []string             `yaml:"volumes"`
+	Environment    map[string]string    `yaml:"environment"`
+	OpEnv          string               `yaml:"op-env"` // 1Password Environment ID (not secret, safe to commit): every variable in it is injected into the container env, explicit environment: entries win; single variables use op-env://<environment-id>/<VARIABLE> values in environment: instead
+	Command        string               `yaml:"command"`
+	Labels         map[string]string    `yaml:"labels"`
+	RegisterToDBUI bool                 `yaml:"register_to_dbui"` // Register this service in the shared DB UI (Adminer)
+	Mutagen        ServiceMutagenConfig `yaml:"mutagen"`          // Per-service Mutagen sync defaults (ownership/permissions of files synced into the container)
 }
 
 // ServiceMutagenConfig defines per-service Mutagen sync defaults applied to
@@ -167,6 +170,26 @@ type ServiceMutagenConfig struct {
 	Group         string `yaml:"group"`          // group for new files/dirs in the container (name or numeric GID); maps to --default-group-beta
 	FileMode      string `yaml:"file_mode"`      // octal mode for new files (e.g. "0644"); maps to --default-file-mode-beta
 	DirectoryMode string `yaml:"directory_mode"` // octal mode for new directories (e.g. "0755"); maps to --default-directory-mode-beta
+
+	// NoSync lists container paths that must stay plain Docker bind mounts
+	// instead of being synced. Every directory bind is synced by default,
+	// which is right for source trees but wrong for a directory the container
+	// reads ONCE, early: containers start before the sync sessions are
+	// resumed, so an entrypoint that reads /docker-entrypoint-initdb.d, nginx
+	// conf.d, or mounted certificates can find them missing. A plain bind is
+	// present the moment the container starts.
+	NoSync []string `yaml:"no_sync"`
+}
+
+// VolumeMountTarget returns the container path of a volume entry, ignoring the
+// optional mode suffix: "./src:/app:ro" -> "/app". Returns "" for an entry
+// that declares no target.
+func VolumeMountTarget(volume string) string {
+	parts := strings.Split(volume, ":")
+	if len(parts) < 2 {
+		return ""
+	}
+	return parts[1]
 }
 
 // RoutingConfig defines how a service is exposed via the shared router
@@ -176,4 +199,3 @@ type RoutingConfig struct {
 	HostPort int    `yaml:"host_port"` // Host port for tcp/udp (required for tcp/udp, ignored for http/https)
 	Domain   string `yaml:"domain"`    // Custom domain for http/https (defaults to project domain)
 }
-

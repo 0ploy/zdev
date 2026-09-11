@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"strings"
 )
 
 var (
@@ -74,6 +75,9 @@ func ValidateProjectConfig(cfg *ProjectConfig) error {
 		if err := validateMode(name, "directory_mode", service.Mutagen.DirectoryMode); err != nil {
 			return err
 		}
+		if err := validateNoSync(name, service); err != nil {
+			return err
+		}
 		if service.Routing == nil {
 			continue
 		}
@@ -134,5 +138,36 @@ func validateGlobalConfig(cfg *GlobalConfig) error {
 	if err := validateHostname("domain", cfg.Domain, true); err != nil {
 		return err
 	}
+	return nil
+}
+
+// validateNoSync checks that every mutagen.no_sync entry names a container path
+// the service actually mounts. A typo would otherwise sync a directory the
+// author meant to keep native, and the symptom - a container that reads the
+// directory during startup and finds it empty - points nowhere near the cause.
+func validateNoSync(serviceName string, service ServiceConfig) error {
+	if len(service.Mutagen.NoSync) == 0 {
+		return nil
+	}
+
+	targets := make(map[string]bool, len(service.Volumes))
+	var declared []string
+	for _, volume := range service.Volumes {
+		if target := VolumeMountTarget(volume); target != "" {
+			targets[target] = true
+			declared = append(declared, target)
+		}
+	}
+
+	for _, path := range service.Mutagen.NoSync {
+		if !strings.HasPrefix(path, "/") {
+			return fmt.Errorf("service %s: mutagen no_sync entry %q must be an absolute container path", serviceName, path)
+		}
+		if !targets[path] {
+			return fmt.Errorf("service %s: mutagen no_sync entry %q does not match any of this service's mounts (%s)",
+				serviceName, path, strings.Join(declared, ", "))
+		}
+	}
+
 	return nil
 }

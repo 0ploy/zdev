@@ -1,0 +1,22 @@
+version: 1
+name: mutagen-nosync
+
+# Fixture for mutagen.no_sync.
+#
+# Containers start before their sync sessions are resumed, so a directory the
+# entrypoint reads ONCE during startup - initdb scripts, nginx conf.d, mounted
+# certificates - cannot be a sync volume: it would be empty at exactly the
+# moment it is read. Listing it in no_sync keeps it a plain Docker bind, which
+# is present from the first instant of the container's life.
+
+services:
+  app:
+    image: alpine:latest
+    command: "sleep infinity"
+    working_dir: /app
+    volumes:
+      - ${PROJECTPATH}/initdb:/docker-entrypoint-initdb.d
+      - ${PROJECTPATH}/src:/app
+    mutagen:
+      no_sync:
+        - /docker-entrypoint-initdb.d

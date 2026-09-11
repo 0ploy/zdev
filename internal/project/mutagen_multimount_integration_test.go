@@ -295,3 +295,88 @@ func detachSharedEndpoints(t *testing.T, ctx context.Context, networkName string
 		_ = exec.CommandContext(ctx, "docker", "network", "disconnect", "-f", networkName, name).Run()
 	}
 }
+
+// TestProject_NoSyncKeepsABindNative pins the escape hatch for directories a
+// container reads during startup. Everything else about sync is an
+// optimisation; this is a correctness requirement, because a sync volume is
+// empty until the session has been resumed and flushed, which happens after
+// the container is already running. A plain bind is there from the first
+// instant, so no_sync has to keep the mount native end to end.
+func TestProject_NoSyncKeepsABindNative(t *testing.T) {
+	_ = skipIfMutagenNotAvailable(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	projectDir, err := filepath.Abs(filepath.Join("..", "..", "testdata", "projects", "mutagen-nosync"))
+	if err != nil {
+		t.Fatalf("failed to get absolute path: %v", err)
+	}
+	proj, err := LoadFromDir(projectDir)
+	if err != nil {
+		t.Fatalf("LoadFromDir failed: %v", err)
+	}
+	if !proj.IsMutagenEnabled() {
+		t.Skip("Mutagen is not enabled for this project")
+	}
+
+	_ = proj.Down(ctx, true)
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cleanupCancel()
+		_ = proj.Down(cleanupCtx, true)
+	})
+
+	if err := proj.Start(ctx); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+
+	mounts := proj.GetMutagenSyncMounts()
+	if len(mounts) != 1 || mounts[0].ContainerPath != "/app" {
+		t.Fatalf("sync mounts = %v, want only /app", mounts)
+	}
+
+	containerName := proj.ContainerName("app")
+	types := containerMountTypes(t, ctx, containerName)
+	if got := types["/docker-entrypoint-initdb.d"]; got != "bind" {
+		t.Errorf("/docker-entrypoint-initdb.d is a %q mount, want a native bind", got)
+	}
+	if got := types["/app"]; got != "volume" {
+		t.Errorf("/app is a %q mount, want the sync volume", got)
+	}
+
+	// Both are readable; no_sync changes the mechanism, not the content.
+	for path, want := range map[string]string{
+		"/docker-entrypoint-initdb.d/01-schema.sql": "01-schema",
+		"/app/marker": "src marker",
+	} {
+		out, err := exec.CommandContext(ctx, "docker", "exec", containerName, "cat", path).CombinedOutput()
+		if err != nil {
+			t.Errorf("reading %s: %v (%s)", path, err, out)
+			continue
+		}
+		if strings.TrimSpace(string(out)) != want {
+			t.Errorf("%s = %q, want %q", path, strings.TrimSpace(string(out)), want)
+		}
+	}
+}
+
+// containerMountTypes maps each mount destination to its Docker mount type.
+func containerMountTypes(t *testing.T, ctx context.Context, containerName string) map[string]string {
+	t.Helper()
+
+	cmd := exec.CommandContext(ctx, "docker", "inspect", containerName,
+		"--format", `{{range .Mounts}}{{.Destination}} {{.Type}}{{"\n"}}{{end}}`)
+	output, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("docker inspect %s: %v", containerName, err)
+	}
+
+	types := make(map[string]string)
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		if fields := strings.Fields(line); len(fields) == 2 {
+			types[fields[0]] = fields[1]
+		}
+	}
+	return types
+}

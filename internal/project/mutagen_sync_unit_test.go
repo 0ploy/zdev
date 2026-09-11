@@ -312,3 +312,48 @@ func TestSignalSyncReady_TouchesBothMarkers(t *testing.T) {
 		t.Error("the legacy sync-ready marker was not raised as root")
 	}
 }
+
+// TestGetMutagenSyncMounts_NoSyncKeepsABindNative covers mutagen.no_sync: a
+// directory the container reads once during startup (initdb scripts, nginx
+// conf.d, certificates) cannot be a sync volume, because containers start
+// before the sync sessions are resumed and the directory would be empty at
+// exactly the moment it is read.
+func TestGetMutagenSyncMounts_NoSyncKeepsABindNative(t *testing.T) {
+	mock := runtime.NewMockRuntime()
+	p := newSyncTestProject(t, mock,
+		[]string{"src", "initdb"},
+		[]string{"./initdb:/docker-entrypoint-initdb.d", "./src:/app"})
+
+	svc := p.Config.Services["app"]
+	svc.Mutagen.NoSync = []string{"/docker-entrypoint-initdb.d"}
+	p.Config.Services["app"] = svc
+
+	mounts := p.GetMutagenSyncMounts()
+	if len(mounts) != 1 {
+		t.Fatalf("got %d sync mounts (%v), want only /app", len(mounts), mounts)
+	}
+	if mounts[0].ContainerPath != "/app" {
+		t.Errorf("synced mount = %q, want /app", mounts[0].ContainerPath)
+	}
+	// With the excluded bind gone the service is down to a single sync mount,
+	// so it keeps the historic names rather than gaining a slug.
+	if mounts[0].VolumeName != "sync.app.shop.zdev" {
+		t.Errorf("VolumeName = %q, want the single-mount name", mounts[0].VolumeName)
+	}
+
+	// And the excluded path must reach the container as a plain bind.
+	volumes := []string{"./initdb:/docker-entrypoint-initdb.d", "./src:/app"}
+	result := p.transformVolumesForMutagen("app", volumes, NewMutagenMounts(mounts))
+	if len(result) != 2 {
+		t.Fatalf("got %d volumes, want 2", len(result))
+	}
+	for _, vol := range result {
+		isSync := strings.HasPrefix(vol.Source, "sync.")
+		if vol.Target == "/docker-entrypoint-initdb.d" && isSync {
+			t.Errorf("%s was converted to a sync volume despite no_sync", vol.Target)
+		}
+		if vol.Target == "/app" && !isSync {
+			t.Errorf("/app should still be synced, got source %q", vol.Source)
+		}
+	}
+}

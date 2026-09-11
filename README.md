@@ -306,7 +306,23 @@ Multiple projects can expose different ports without conflicts. Works for MySQL,
 
 **Bind mounts** (`${PROJECTPATH}:/app`) sync your source code into the container. Edits on the host are reflected immediately. On macOS, zdev handles fast sync automatically via Mutagen. Add `node_modules`, `.pnpm-store`, and build caches to `mutagen.ignore` so they stay inside the container (fast) and don't sync back to the host.
 
-A service can declare as many directory binds as it needs - each one gets its own sync volume and its own sync session, so a second bind is synced just as fully as the first. Single-file binds (`${PROJECTPATH}/etc/app/.env:/app/config/.env`) are not synced and stay plain bind mounts - but make sure the file exists on the host before starting, because Docker creates a missing bind source as a *directory*, which turns the entry into a synced directory bind.
+A service can declare as many directory binds as it needs - each one gets its own sync volume and its own sync session, so a second bind is synced just as fully as the first.
+
+Some directories must **not** be synced. A container starts before its sync sessions are resumed, so a directory the entrypoint reads once during startup - `/docker-entrypoint-initdb.d` for MySQL and Postgres, nginx `conf.d`, mounted certificates - would be empty at exactly the moment it is read. List those paths under `mutagen.no_sync` and they stay plain Docker binds, present from the container's first instant:
+
+```yaml
+services:
+  mysql:
+    image: mysql:8
+    volumes:
+      - ${PROJECTPATH}/initdb:/docker-entrypoint-initdb.d
+      - ${PROJECTPATH}/src:/app
+    mutagen:
+      no_sync:
+        - /docker-entrypoint-initdb.d   # seeded before startup, never synced
+```
+
+Each entry must match one of that service's mount paths, otherwise the config is rejected - a typo would silently sync the directory you meant to keep native. Single-file binds (`${PROJECTPATH}/etc/app/.env:/app/config/.env`) are not synced and stay plain bind mounts - but make sure the file exists on the host before starting, because Docker creates a missing bind source as a *directory*, which turns the entry into a synced directory bind.
 
 If a sync session can't be established, the service's command is held at the sync-ready gate instead of starting against an empty directory, and `zdev start` reports the failure and exits non-zero. Fix the cause and run `zdev start` again - the gate re-arms on every container start, so a service never needs to be removed to recover.
 
@@ -643,12 +659,14 @@ mutagen:
 | `routing.host_port` | int | - | Host port for TCP/UDP (required for tcp/udp) |
 | `routing.domain` | string | project domain | Custom domain for this service (http/https only) |
 
-Config loading validates project and service names, requires every service to set `image:` or `dockerfile:`, checks routing protocols and port ranges, rejects duplicate TCP/UDP host ports, and validates Mutagen file modes. Unknown fields are rejected in both project and global config files.
 | `labels` | map | - | Docker labels |
 | `mutagen.user` | string | - | Owner stamped on synced files inside the container (e.g. `www-data`). Use when the in-container process runs as a non-root user that must read/write the synced tree |
 | `mutagen.group` | string | - | Group stamped on synced files inside the container |
 | `mutagen.file_mode` | string | - | Octal mode for synced files (e.g. `"0644"`) |
 | `mutagen.directory_mode` | string | - | Octal mode for synced directories (e.g. `"0755"`) |
+| `mutagen.no_sync` | list | - | Container paths that stay plain Docker binds instead of being synced. For directories read during container startup, which a sync volume cannot guarantee are filled yet |
+
+Config loading validates project and service names, requires every service to set `image:` or `dockerfile:`, checks routing protocols and port ranges, rejects duplicate TCP/UDP host ports, validates Mutagen file modes, and checks that every `mutagen.no_sync` path matches one of the service's mounts. Unknown fields are rejected in both project and global config files.
 
 **Per-service Mutagen ownership** is for images whose runtime user differs from root - PHP/Apache as `www-data`, Node as `node`, etc. Without it, Mutagen writes files as root and the container's process can't read them. Example:
 

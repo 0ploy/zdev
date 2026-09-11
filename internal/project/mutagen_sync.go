@@ -118,6 +118,10 @@ func (p *Project) GetMutagenSyncMounts() []MutagenSyncMount {
 // serviceSyncMounts returns one sync mount per directory bind of a service, in
 // declaration order.
 //
+// Binds listed in the service's mutagen.no_sync are skipped entirely: they
+// stay native Docker binds, which is the only way to guarantee content is
+// there before the container's entrypoint runs.
+//
 // Naming rule: a service with exactly ONE directory bind keeps the historic
 // per-service volume and session names, so the common case needs no migration
 // on upgrade - its volume (and anything living at a Mutagen-ignored path
@@ -128,8 +132,19 @@ func (p *Project) GetMutagenSyncMounts() []MutagenSyncMount {
 func (p *Project) serviceSyncMounts(serviceName string, svc config.ServiceConfig) []MutagenSyncMount {
 	var mounts []MutagenSyncMount
 
+	noSync := make(map[string]bool, len(svc.Mutagen.NoSync))
+	for _, path := range svc.Mutagen.NoSync {
+		noSync[path] = true
+	}
+
 	for _, vol := range svc.Volumes {
 		if !isBindMount(vol) {
+			continue
+		}
+
+		// Declared as a plain bind: the container needs it present the moment
+		// it starts, before any sync session exists.
+		if noSync[config.VolumeMountTarget(vol)] {
 			continue
 		}
 

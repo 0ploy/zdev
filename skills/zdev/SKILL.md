@@ -250,6 +250,12 @@ looks fine. `zdev status` flags these as stale file mounts; restarting the servi
 build artifacts. Without ignores, installs take 5-10x longer. Every directory bind of a service is
 synced and gets its own sync volume and session; single-file binds stay plain bind mounts.
 
+**A directory read during container STARTUP must be excluded from sync** with
+`services.<name>.mutagen.no_sync: ["/container/path"]`. Containers start before their sync sessions
+resume, so `/docker-entrypoint-initdb.d`, nginx `conf.d` and mounted certificates would be empty at
+the moment the entrypoint reads them. Excluded paths stay native binds. Each entry must match one of
+that service's mount paths or the config is rejected.
+
 **`command:` is wrapped in `sh -c`** - zdev runs the value of `command:` as a shell command, not
 as a Docker CMD array. Bare `--flag` arguments meant for the image's default entrypoint fail with
 `sh: 0: Illegal option --` and the container exits silently. If you need to pass flags to the
