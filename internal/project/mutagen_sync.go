@@ -19,12 +19,23 @@ import (
 const (
 	// syncReadyFlag is touched by zdev once a service's sync mounts are
 	// verified; the command wrapper waits for it before exec'ing the service.
-	syncReadyFlag = "/.zdev-sync-ready"
+	//
+	// It lives in /tmp because the wrapper runs as the image's default user,
+	// which on plenty of images (percona, postgres, node) cannot write to /.
+	// Such a container could neither be signalled nor clear a stale flag of
+	// its own, so the gate would either deadlock or be skipped outright. /tmp
+	// is 1777 in every image that has a shell to run the wrapper in.
+	syncReadyFlag = "/tmp/.zdev-sync-ready"
 
 	// syncWaitingFlag is raised by the wrapper itself to announce that it has
 	// cleared the ready flag and is now waiting. It exists so zdev can order
 	// itself against the wrapper instead of racing it.
-	syncWaitingFlag = "/.zdev-sync-waiting"
+	syncWaitingFlag = "/tmp/.zdev-sync-waiting"
+
+	// legacySyncReadyFlag is the pre-/tmp location. zdev still touches it, as
+	// root and best-effort, because template entrypoints were documented to
+	// wait on it themselves. Nothing in zdev reads it.
+	legacySyncReadyFlag = "/.zdev-sync-ready"
 
 	// syncGateWaitTimeout bounds how long zdev waits for the wrapper to reach
 	// the gate before signalling anyway.
@@ -43,7 +54,7 @@ const (
 // Clearing it here (as PID 1, before anything else) makes the gate effective
 // for plain `docker start` too, not only for containers zdev just created.
 func SyncGateCommand(command string) string {
-	return "rm -f " + syncReadyFlag +
+	return "rm -f " + syncReadyFlag + " " + legacySyncReadyFlag + " 2>/dev/null" +
 		"; touch " + syncWaitingFlag +
 		"; while [ ! -f " + syncReadyFlag + " ]; do sleep 0.2; done" +
 		"; rm -f " + syncWaitingFlag +
@@ -514,16 +525,15 @@ func (p *Project) terminateMutagenSessions(ctx context.Context) {
 // waitForInitialSync waits for Mutagen sync sessions to complete initial sync
 // and reports, per session name, which ones actually got there.
 //
-// Two things have to hold before a mount counts as synced: the flush has to
-// succeed, and the session has to be connected on both endpoints. The beta
-// endpoint is the service container itself, so a flush can return without
-// having moved a single file - that is how a failed sync used to print
-// "Initial sync complete" while the container it was meant to fill was
-// already dead.
-func (p *Project) waitForInitialSync(ctx context.Context, m *mutagen.Mutagen, mounts []MutagenSyncMount, timeout time.Duration) map[string]bool {
-	synced := make(map[string]bool, len(mounts))
+// A flush that returns without error proves nothing on its own: the beta
+// endpoint is the service container, so the session can be unable to reach it,
+// or reach it and fail to write a single file, and still flush cleanly. Both
+// are checked, and the returned map holds a reason for every mount that is NOT
+// usable - an empty map means all of them are.
+func (p *Project) waitForInitialSync(ctx context.Context, m *mutagen.Mutagen, mounts []MutagenSyncMount, timeout time.Duration) map[string]string {
+	failed := make(map[string]string)
 	if len(mounts) == 0 {
-		return synced
+		return failed
 	}
 
 	fmt.Println("Waiting for initial file sync...")
@@ -534,26 +544,38 @@ func (p *Project) waitForInitialSync(ctx context.Context, m *mutagen.Mutagen, mo
 	for _, mount := range mounts {
 		if err := m.FlushSession(ctx, mount.SessionName); err != nil {
 			if ctx.Err() != nil {
+				for _, remaining := range mounts {
+					if _, done := failed[remaining.SessionName]; !done {
+						failed[remaining.SessionName] = "timed out waiting for the initial sync"
+					}
+				}
 				fmt.Printf("Warning: sync timeout - files may still be syncing in the background\n")
-				return synced
+				return failed
 			}
-			fmt.Printf("Warning: could not wait for sync %s: %v\n", mount.SessionName, err)
+			failed[mount.SessionName] = err.Error()
 			continue
 		}
 
-		connected, known := m.SessionConnected(ctx, mount.SessionName)
-		if known && !connected {
-			fmt.Printf("Warning: sync session %s is not connected on both ends\n", mount.SessionName)
-			continue
+		healthy, detail, known := m.SessionHealthy(ctx, mount.SessionName)
+		if known && !healthy {
+			if detail == "" {
+				detail = "session is not synchronizing"
+			}
+			failed[mount.SessionName] = detail
 		}
-		synced[mount.SessionName] = true
 	}
 
-	if len(synced) == len(mounts) {
+	for _, mount := range mounts {
+		if reason, bad := failed[mount.SessionName]; bad {
+			fmt.Printf("Warning: sync for %s at %s did not complete: %s\n",
+				mount.ServiceName, mount.ContainerPath, reason)
+		}
+	}
+	if len(failed) == 0 {
 		fmt.Println("Initial sync complete")
 	}
 
-	return synced
+	return failed
 }
 
 // IsMutagenEnabled checks if Mutagen is enabled for this project
@@ -608,9 +630,9 @@ func (p *Project) finalizeMutagen(ctx context.Context, m *mutagen.Mutagen, mount
 	// A session failure is reported, not fatal: the services whose sessions
 	// did come up still deserve their gate opened.
 	recreated, sessionErr := p.startMutagenSessions(ctx, m, mounts)
-	synced := p.waitForInitialSync(ctx, m, mounts, 60*time.Second)
-	signalErr := p.signalSyncReady(ctx, mounts, synced)
-	p.applyPostSyncOwnership(ctx, mounts, recreated, synced)
+	failed := p.waitForInitialSync(ctx, m, mounts, 60*time.Second)
+	signalErr := p.signalSyncReady(ctx, mounts, failed)
+	p.applyPostSyncOwnership(ctx, mounts, recreated, failed)
 	if err := errors.Join(sessionErr, signalErr); err != nil {
 		return fmt.Errorf("Mutagen sync did not complete: %w", err)
 	}
@@ -620,9 +642,9 @@ func (p *Project) finalizeMutagen(ctx context.Context, m *mutagen.Mutagen, mount
 // applyPostSyncOwnership runs `chown -R` inside each container whose Mutagen
 // session was just (re)created and whose service config sets a Mutagen owner
 // or group. Best-effort: failures are logged but don't block startup.
-func (p *Project) applyPostSyncOwnership(ctx context.Context, mounts []MutagenSyncMount, recreated, synced map[string]bool) {
+func (p *Project) applyPostSyncOwnership(ctx context.Context, mounts []MutagenSyncMount, recreated map[string]bool, failed map[string]string) {
 	for _, mount := range mounts {
-		if !recreated[mount.SessionName] || !synced[mount.SessionName] {
+		if _, bad := failed[mount.SessionName]; bad || !recreated[mount.SessionName] {
 			continue
 		}
 		if mount.Owner == "" && mount.Group == "" {
@@ -634,8 +656,10 @@ func (p *Project) applyPostSyncOwnership(ctx context.Context, mounts []MutagenSy
 		}
 		containerName := p.ContainerName(mount.ServiceName)
 		fmt.Printf("Applying ownership %s to %s in %s...\n", spec, mount.ContainerPath, containerName)
+		// As root: chown is a root operation, and the images that need this
+		// setting at all are exactly the ones whose default user is not root.
 		err := p.Runtime.Exec(ctx, containerName,
-			[]string{"chown", "-R", spec, mount.ContainerPath}, false, runtime.ExecOptions{})
+			[]string{"chown", "-R", spec, mount.ContainerPath}, false, runtime.ExecOptions{User: "root"})
 		if err != nil {
 			fmt.Printf("Warning: could not chown %s in %s: %v\n", mount.ContainerPath, containerName, err)
 		}
@@ -695,7 +719,7 @@ func (p *Project) transformVolumesForMutagen(serviceName string, volumes []strin
 // exits in milliseconds, and takes down the very beta endpoint the session
 // needs in order to recover. Leaving the gate shut keeps the container alive
 // and waiting, so a later `zdev start` can still fix it.
-func (p *Project) signalSyncReady(ctx context.Context, mounts []MutagenSyncMount, synced map[string]bool) error {
+func (p *Project) signalSyncReady(ctx context.Context, mounts []MutagenSyncMount, failed map[string]string) error {
 	byService := NewMutagenMounts(mounts)
 
 	names := make([]string, 0, len(byService))
@@ -708,8 +732,8 @@ func (p *Project) signalSyncReady(ctx context.Context, mounts []MutagenSyncMount
 	for _, serviceName := range names {
 		var blocked []string
 		for _, mount := range byService[serviceName] {
-			if !synced[mount.SessionName] {
-				blocked = append(blocked, mount.ContainerPath)
+			if reason, bad := failed[mount.SessionName]; bad {
+				blocked = append(blocked, fmt.Sprintf("%s (%s)", mount.ContainerPath, reason))
 			}
 		}
 		if len(blocked) > 0 {
@@ -721,14 +745,28 @@ func (p *Project) signalSyncReady(ctx context.Context, mounts []MutagenSyncMount
 
 		containerName := p.ContainerName(serviceName)
 		p.awaitSyncGate(ctx, serviceName, containerName)
-		err := p.Runtime.Exec(ctx, containerName,
-			[]string{"sh", "-c", "touch " + syncReadyFlag}, false, runtime.ExecOptions{})
-		if err != nil {
+		if err := p.openSyncGate(ctx, containerName); err != nil {
 			errs = append(errs, fmt.Errorf("could not signal sync-ready for %s: %w", serviceName, err))
 		}
 	}
 
 	return errors.Join(errs...)
+}
+
+// openSyncGate raises the ready flag inside a container. The flag lives in
+// /tmp so the image's own user can raise and clear it; the pre-/tmp path is
+// touched too, as root, for entrypoints that were documented to wait on it
+// themselves. Only the /tmp one is required to succeed.
+func (p *Project) openSyncGate(ctx context.Context, containerName string) error {
+	err := p.Runtime.Exec(ctx, containerName,
+		[]string{"sh", "-c", "touch " + syncReadyFlag}, false, runtime.ExecOptions{})
+	if err != nil {
+		return err
+	}
+
+	_ = p.Runtime.Exec(ctx, containerName,
+		[]string{"sh", "-c", "touch " + legacySyncReadyFlag}, false, runtime.ExecOptions{User: "root"})
+	return nil
 }
 
 // awaitSyncGate waits for the container's wrapper to report that it is sitting

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -197,34 +198,73 @@ func (m *Mutagen) GetSessionStatus(ctx context.Context, name string) (string, er
 	return strings.TrimSpace(string(output)), nil
 }
 
-// SessionConnected reports whether both endpoints of a session are currently
-// connected. The beta endpoint IS the service container, so this is what
-// separates a session that can actually synchronize from one whose container
-// has already died - a distinction a successful flush does not make.
+// sessionHealthTemplate asks for everything that decides whether a session is
+// actually moving files: both endpoints' connectivity, the scan and transition
+// problem counts on each side, the conflict count, and the problem messages
+// themselves.
+const sessionHealthTemplate = "{{range .}}" +
+	"{{.Alpha.Connected}}|{{.Beta.Connected}}|" +
+	"{{len .Alpha.ScanProblems}}|{{len .Alpha.TransitionProblems}}|" +
+	"{{len .Beta.ScanProblems}}|{{len .Beta.TransitionProblems}}|" +
+	"{{len .Conflicts}}|" +
+	"{{range .Alpha.ScanProblems}}host {{.Path}}: {{.Error}}; {{end}}" +
+	"{{range .Alpha.TransitionProblems}}host {{.Path}}: {{.Error}}; {{end}}" +
+	"{{range .Beta.ScanProblems}}container {{.Path}}: {{.Error}}; {{end}}" +
+	"{{range .Beta.TransitionProblems}}container {{.Path}}: {{.Error}}; {{end}}" +
+	"{{end}}"
+
+// SessionHealthy reports whether a session is genuinely synchronizing, and if
+// not, why.
 //
-// The second return value is false when the state could not be determined at
-// all (mutagen errored, or a future version changed the listing model). The
-// caller treats that as "unknown" rather than "disconnected", so a probe that
-// stops working degrades to the previous flush-only behaviour instead of
-// blocking every service from starting.
-func (m *Mutagen) SessionConnected(ctx context.Context, name string) (connected bool, known bool) {
-	cmd := exec.CommandContext(ctx, m.binaryPath, "sync", "list", name,
-		"--template", "{{range .}}{{.Alpha.Connected}} {{.Beta.Connected}}{{end}}")
+// Connectivity alone is not enough, and neither is a successful flush. A
+// session whose beta endpoint cannot WRITE - an image running as a non-root
+// user against a root-owned directory, say - reports both endpoints connected,
+// a status of "Watching for changes", and flushes without error, while every
+// file it failed to create sits in TransitionProblems and the container's
+// directory stays empty. Measured on nginx-unprivileged. So scan problems,
+// transition problems and conflicts all count against health, and their
+// messages come back with the verdict: "container marker: unable to create
+// file: permission denied" is something a user can act on.
+//
+// known is false when the state could not be determined at all (mutagen
+// errored, or a future version changed the listing model). Callers treat that
+// as "no opinion" rather than "unhealthy", so a probe that stops working
+// degrades to the previous flush-only behaviour instead of blocking every
+// service from starting.
+func (m *Mutagen) SessionHealthy(ctx context.Context, name string) (healthy bool, detail string, known bool) {
+	cmd := exec.CommandContext(ctx, m.binaryPath, "sync", "list", name, "--template", sessionHealthTemplate)
 	output, err := cmd.Output()
 	if err != nil {
-		return false, false
+		return false, "", false
 	}
 
-	fields := strings.Fields(string(output))
-	if len(fields) != 2 {
-		return false, false
+	parts := strings.SplitN(string(output), "|", 8)
+	if len(parts) != 8 {
+		return false, "", false
 	}
-	for _, f := range fields {
-		if f != "true" && f != "false" {
-			return false, false
+
+	for _, connected := range parts[:2] {
+		if connected == "false" {
+			return false, "endpoint not connected", true
+		}
+		if connected != "true" {
+			return false, "", false
 		}
 	}
-	return fields[0] == "true" && fields[1] == "true", true
+
+	problems := 0
+	for _, count := range parts[2:7] {
+		n, err := strconv.Atoi(strings.TrimSpace(count))
+		if err != nil {
+			return false, "", false
+		}
+		problems += n
+	}
+	if problems == 0 {
+		return true, "", true
+	}
+
+	return false, strings.TrimSuffix(strings.TrimSpace(parts[7]), ";"), true
 }
 
 // run executes a mutagen command and returns the output

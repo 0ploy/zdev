@@ -208,16 +208,16 @@ func TestSignalSyncReady_HoldsGateWhenAMountIsUnsynced(t *testing.T) {
 		[]string{"./etc/app:/opt/etc/app", "./src:/app"})
 
 	mounts := p.GetMutagenSyncMounts()
-	synced := map[string]bool{}
+	failed := map[string]string{}
 	for _, mount := range mounts {
 		// Only the /opt/etc/app session made it - exactly the shape the
 		// report measured, where the source tree at /app stays unsynced.
-		if mount.ContainerPath == "/opt/etc/app" {
-			synced[mount.SessionName] = true
+		if mount.ContainerPath != "/opt/etc/app" {
+			failed[mount.SessionName] = "endpoint not connected"
 		}
 	}
 
-	err := p.signalSyncReady(context.Background(), mounts, synced)
+	err := p.signalSyncReady(context.Background(), mounts, failed)
 	if err == nil {
 		t.Fatal("expected an error naming the unsynced mount")
 	}
@@ -236,12 +236,8 @@ func TestSignalSyncReady_OpensGateWhenEverythingSynced(t *testing.T) {
 		[]string{"./etc/app:/opt/etc/app", "./src:/app"})
 
 	mounts := p.GetMutagenSyncMounts()
-	synced := map[string]bool{}
-	for _, mount := range mounts {
-		synced[mount.SessionName] = true
-	}
 
-	if err := p.signalSyncReady(context.Background(), mounts, synced); err != nil {
+	if err := p.signalSyncReady(context.Background(), mounts, map[string]string{}); err != nil {
 		t.Fatalf("signalSyncReady returned %v, want nil", err)
 	}
 	if !execTouchedReadyFlag(mock) {
@@ -264,4 +260,55 @@ func execTouchedReadyFlag(mock *runtime.MockRuntime) bool {
 		}
 	}
 	return false
+}
+
+// TestSyncGateCommand_UsesAUserWritablePath is the non-root guard. The wrapper
+// runs as the image's default user, which on percona, postgres, node and
+// plenty of others cannot write to / - so a gate anchored there could neither
+// be raised by zdev nor cleared by the container, leaving those services
+// deadlocked or silently ungated. Measured: `touch /.zdev-sync-ready` as uid
+// 1001 is "Permission denied", /tmp is 1777 everywhere a shell exists.
+func TestSyncGateCommand_UsesAUserWritablePath(t *testing.T) {
+	if !strings.HasPrefix(syncReadyFlag, "/tmp/") {
+		t.Errorf("syncReadyFlag = %q, want a path writable by any container user", syncReadyFlag)
+	}
+	if !strings.HasPrefix(syncWaitingFlag, "/tmp/") {
+		t.Errorf("syncWaitingFlag = %q, want a path writable by any container user", syncWaitingFlag)
+	}
+
+	got := SyncGateCommand("npm run dev")
+	// The legacy marker is cleared too, so a root image behaves identically
+	// and no stale copy is left behind for entrypoints still watching it.
+	if !strings.Contains(got, legacySyncReadyFlag) {
+		t.Errorf("wrapper does not clear the legacy marker: %s", got)
+	}
+}
+
+// TestSignalSyncReady_TouchesBothMarkers pins the compatibility touch: the
+// pre-/tmp path is still raised, as root, because template entrypoints were
+// documented to wait on it themselves.
+func TestSignalSyncReady_TouchesBothMarkers(t *testing.T) {
+	mock := runtime.NewMockRuntime()
+	p := newSyncTestProject(t, mock, []string{"src"}, []string{"./src:/app"})
+
+	mounts := p.GetMutagenSyncMounts()
+
+	if err := p.signalSyncReady(context.Background(), mounts, map[string]string{}); err != nil {
+		t.Fatalf("signalSyncReady returned %v", err)
+	}
+
+	var touchedLegacyAsRoot bool
+	for _, call := range mock.Calls {
+		if call.Method != "Exec" || len(call.Args) < 4 {
+			continue
+		}
+		cmd, _ := call.Args[1].([]string)
+		opts, _ := call.Args[3].(runtime.ExecOptions)
+		if strings.Contains(strings.Join(cmd, " "), "touch "+legacySyncReadyFlag) && opts.User == "root" {
+			touchedLegacyAsRoot = true
+		}
+	}
+	if !touchedLegacyAsRoot {
+		t.Error("the legacy sync-ready marker was not raised as root")
+	}
 }

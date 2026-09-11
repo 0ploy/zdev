@@ -1,6 +1,10 @@
 package mutagen
 
 import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -184,5 +188,93 @@ func TestSessionConfigHash(t *testing.T) {
 	reordered.Ignores = []string{"vendor", ".git"}
 	if reordered.Hash() != base.Hash() {
 		t.Error("Hash should be invariant to Ignores order")
+	}
+}
+
+// stubMutagen returns a Mutagen whose binary is a script printing fixed output,
+// so the health probe's parsing can be exercised without a daemon.
+func stubMutagen(t *testing.T, output string, exitCode int) *Mutagen {
+	t.Helper()
+
+	dir := t.TempDir()
+	outFile := filepath.Join(dir, "output")
+	if err := os.WriteFile(outFile, []byte(output), 0o644); err != nil {
+		t.Fatalf("write stub output: %v", err)
+	}
+
+	binary := filepath.Join(dir, "mutagen")
+	script := fmt.Sprintf("#!/bin/sh\ncat %q\nexit %d\n", outFile, exitCode)
+	if err := os.WriteFile(binary, []byte(script), 0o755); err != nil {
+		t.Fatalf("write stub binary: %v", err)
+	}
+
+	return New(binary)
+}
+
+func TestSessionHealthy(t *testing.T) {
+	tests := []struct {
+		name        string
+		output      string
+		exitCode    int
+		wantHealthy bool
+		wantKnown   bool
+		wantDetail  string
+	}{
+		{
+			name:        "synchronizing cleanly",
+			output:      "true|true|0|0|0|0|0|",
+			wantHealthy: true,
+			wantKnown:   true,
+		},
+		{
+			// Measured on nginx-unprivileged: both ends connected, status
+			// "Watching for changes", flush succeeds, and not one file made it
+			// into the container.
+			name:       "connected but unable to write",
+			output:     "true|true|0|0|0|1|0|container marker: unable to create file: permission denied; ",
+			wantKnown:  true,
+			wantDetail: "container marker: unable to create file: permission denied",
+		},
+		{
+			name:       "container endpoint gone",
+			output:     "true|false|0|0|0|0|0|",
+			wantKnown:  true,
+			wantDetail: "endpoint not connected",
+		},
+		{
+			name:       "conflicts count against health",
+			output:     "true|true|0|0|0|0|2|",
+			wantKnown:  true,
+			wantDetail: "",
+		},
+		{
+			name:      "a future mutagen changes the model",
+			output:    "some other shape entirely",
+			wantKnown: false,
+		},
+		{
+			name:      "no such session",
+			output:    "",
+			exitCode:  1,
+			wantKnown: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := stubMutagen(t, tt.output, tt.exitCode)
+
+			healthy, detail, known := m.SessionHealthy(context.Background(), "zdev-p-app")
+
+			if known != tt.wantKnown {
+				t.Fatalf("known = %v, want %v", known, tt.wantKnown)
+			}
+			if healthy != tt.wantHealthy {
+				t.Errorf("healthy = %v, want %v", healthy, tt.wantHealthy)
+			}
+			if detail != tt.wantDetail {
+				t.Errorf("detail = %q, want %q", detail, tt.wantDetail)
+			}
+		})
 	}
 }

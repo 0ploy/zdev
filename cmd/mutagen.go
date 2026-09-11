@@ -95,16 +95,24 @@ func runMutagenStatusImpl(ctx context.Context, proj *project.Project) error {
 			status = "unknown"
 		}
 		// Session names are per mount, so this status belongs to this mount
-		// and nothing else. Connectivity is reported separately because a
-		// session can sit in a perfectly normal-looking state while its beta
-		// endpoint - the container - is gone.
-		if connected, known := m.SessionConnected(ctx, mount.SessionName); known && !connected {
-			status += " (NOT connected)"
+		// and nothing else. Health is reported separately because a session
+		// can sit in a perfectly normal-looking state - "Watching for
+		// changes", both ends connected - while its beta endpoint is gone or
+		// every file it tried to write was rejected.
+		problem := ""
+		if healthy, detail, known := m.SessionHealthy(ctx, mount.SessionName); known && !healthy {
+			problem = detail
+			if problem == "" {
+				problem = "not synchronizing"
+			}
 		}
 
 		fmt.Printf("%s: %s\n", mount.SessionName, status)
 		fmt.Printf("  Host:      %s\n", mount.HostPath)
 		fmt.Printf("  Container: %s\n", mount.ContainerPath)
+		if problem != "" {
+			fmt.Printf("  Problem:   %s\n", problem)
+		}
 		fmt.Println()
 	}
 

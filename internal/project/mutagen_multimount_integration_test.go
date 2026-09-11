@@ -175,10 +175,10 @@ func TestProject_SyncGateReArmsOnPlainDockerStart(t *testing.T) {
 	}
 
 	// The wrapper must have cleared the stale flag and be holding at the gate.
-	if err := waitForContainerFile(ctx, containerName, "/.zdev-sync-waiting", 30*time.Second); err != nil {
+	if err := waitForContainerFile(ctx, containerName, syncWaitingFlag, 30*time.Second); err != nil {
 		t.Fatalf("container did not reach the sync-ready gate after a plain docker start: %v", err)
 	}
-	if containerFileExists(ctx, containerName, "/.zdev-sync-ready") {
+	if containerFileExists(ctx, containerName, syncReadyFlag) {
 		t.Error("the stale sync-ready flag survived the restart - the gate was skipped")
 	}
 
@@ -186,7 +186,7 @@ func TestProject_SyncGateReArmsOnPlainDockerStart(t *testing.T) {
 	if err := proj.Start(ctx); err != nil {
 		t.Fatalf("Start after restart failed: %v", err)
 	}
-	if err := waitForContainerFile(ctx, containerName, "/.zdev-sync-ready", 60*time.Second); err != nil {
+	if err := waitForContainerFile(ctx, containerName, syncReadyFlag, 60*time.Second); err != nil {
 		t.Fatalf("zdev start did not reopen the sync-ready gate: %v", err)
 	}
 

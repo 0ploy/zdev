@@ -160,10 +160,13 @@ Identical for every stack - no auth, no TLS. See `config-examples.md` for the fu
   that's the reason build staleness ignores the context. Keep dev images to toolchain/system deps +
   baked config; never `COPY` app source into a `dockerfile:` dev image.
 - **Sync-ready gate is only auto-injected around a config `command:`.** zdev wraps a `command:` with
-  a `while [ ! -f /.zdev-sync-ready ]` wait so the app doesn't start before Mutagen's initial sync.
+  a `while [ ! -f /tmp/.zdev-sync-ready ]` wait so the app doesn't start before Mutagen's initial sync.
+  (The marker sits in `/tmp` because the wrapper runs as the image's default user, which on many
+  images cannot write to `/`. The old `/.zdev-sync-ready` is still touched as root for entrypoints
+  that wait on it themselves, but it cannot be re-armed on a non-root image - prefer the `/tmp` one.)
   A `dockerfile:` image that runs via `ENTRYPOINT`/`CMD` (no config `command:`) does NOT get that
   wrap - so a boot step that reads synced files (e.g. `pnpm install` needing `package.json`) must
-  wait for `/.zdev-sync-ready` itself, and zdev warns at start that the service is unguarded.
+  wait for `/tmp/.zdev-sync-ready` itself, and zdev warns at start that the service is unguarded.
   The marker is only touched once every sync mount of that service has flushed AND its session is
   connected; if one never comes up the container stays parked at the gate (alive, not dead) and
   `zdev start` exits non-zero naming the mount. The wrapper clears the marker on every container
