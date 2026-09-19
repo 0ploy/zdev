@@ -77,6 +77,15 @@ func snapshotSharedServices(t *testing.T, ctx context.Context) func() {
 		dbuiRunning = status.Running
 	}
 
+	// Restarting is not enough: these tests remove the containers, and a
+	// recreated shared service comes back on zdev_shared only. Without
+	// restoring the project networks too, the developer's OTHER running
+	// projects silently lose their routing for the rest of the day.
+	networks := make(map[string]map[string][]string)
+	for _, svc := range services.AllSharedServices() {
+		networks[svc.ContainerName] = mgr.SnapshotProjectNetworks(ctx, svc.ContainerName)
+	}
+
 	return func() {
 		restoreCfg, err := config.LoadGlobalConfig()
 		if err != nil {
@@ -88,6 +97,9 @@ func snapshotSharedServices(t *testing.T, ctx context.Context) func() {
 		}
 		if dbuiRunning {
 			_ = restoreMgr.StartDBUI(ctx)
+		}
+		for container, nets := range networks {
+			restoreMgr.RestoreProjectNetworks(ctx, container, nets)
 		}
 	}
 }

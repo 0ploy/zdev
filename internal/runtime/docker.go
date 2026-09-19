@@ -494,6 +494,35 @@ func (d *DockerCLI) GetContainerLabels(ctx context.Context, name string) (map[st
 	return labels, nil
 }
 
+// GetContainerNetworks returns the networks a container is attached to,
+// mapped to the user-defined aliases on each endpoint.
+//
+// Reads the endpoint's Aliases field, not DNSNames: DNSNames also carries
+// the container name and short ID, which Docker assigns itself and would be
+// rejected/duplicated on a reconnect.
+func (d *DockerCLI) GetContainerNetworks(ctx context.Context, name string) (map[string][]string, error) {
+	out, err := d.run(ctx, "inspect", "--type=container", "--format={{json .NetworkSettings.Networks}}", name)
+	if err != nil {
+		if isNotFoundErr(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	var networks map[string]struct {
+		Aliases []string `json:"Aliases"`
+	}
+	if err := json.Unmarshal([]byte(out), &networks); err != nil {
+		return nil, fmt.Errorf("failed to parse container networks: %w", err)
+	}
+
+	result := make(map[string][]string, len(networks))
+	for network, endpoint := range networks {
+		result[network] = endpoint.Aliases
+	}
+	return result, nil
+}
+
 // PullImage pulls an image from a registry
 func (d *DockerCLI) PullImage(ctx context.Context, image string) error {
 	_, err := d.run(ctx, "pull", image)

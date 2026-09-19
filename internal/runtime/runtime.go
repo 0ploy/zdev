@@ -19,6 +19,10 @@ type Runtime interface {
 	ListContainers(ctx context.Context, filter string) ([]string, error)
 	GetContainer(ctx context.Context, name string) (*Container, error)
 	GetContainerLabels(ctx context.Context, name string) (map[string]string, error)
+	// GetContainerNetworks returns the networks a container is attached to,
+	// mapped to the user-defined aliases on each endpoint. Used to restore a
+	// container's network topology across a recreate.
+	GetContainerNetworks(ctx context.Context, name string) (map[string][]string, error)
 
 	// Exec runs a command in a running container
 	// If interactive is true, stdin/stdout/stderr are attached to the terminal

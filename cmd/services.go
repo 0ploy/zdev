@@ -213,6 +213,14 @@ func runServicesRecreateImpl(ctx context.Context) error {
 	fmt.Println("Recreating shared services...")
 	fmt.Println()
 
+	// Capture the project networks each service is attached to. They exist
+	// only in the Docker daemon - no config or state lists them - so without
+	// this every running project loses its shared services on a recreate.
+	preserved := make(map[string]map[string][]string, len(registry))
+	for _, svc := range registry {
+		preserved[svc.ContainerName] = mgr.SnapshotProjectNetworks(ctx, svc.ContainerName)
+	}
+
 	// Stop all services (reverse order)
 	fmt.Println("Stopping services...")
 	for i := len(registry) - 1; i >= 0; i-- {
@@ -234,6 +242,7 @@ func runServicesRecreateImpl(ctx context.Context) error {
 		if err := svc.Start(ctx, mgr); err != nil {
 			return err
 		}
+		mgr.RestoreProjectNetworks(ctx, svc.ContainerName, preserved[svc.ContainerName])
 	}
 
 	printSharedServiceURLs(cfg, "Shared services recreated:")

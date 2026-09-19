@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -224,7 +225,15 @@ func (m *Manager) ListProjects() (map[string]ProjectEntry, error) {
 	return state.Projects, nil
 }
 
-// GetAllRoutingPorts aggregates all TCP and UDP ports from all projects
+// GetAllRoutingPorts aggregates all TCP and UDP ports from all projects.
+//
+// The result is SORTED, and that is load-bearing, not cosmetic: the router's
+// ports become order-sensitive `--entrypoints.tcp-<n>` Command entries, and
+// runtime.ComputeConfigHash hashes Command in order. Returning them in Go map
+// iteration order made the hash differ between the compare path (which sorts
+// via unionPortSets) and the create path (which used this slice raw), so
+// StartRouter saw config drift on every call and recreated the router -
+// detaching it from every other project's network.
 func (m *Manager) GetAllRoutingPorts() (tcpPorts, udpPorts []int, err error) {
 	state, err := m.Load()
 	if err != nil {
@@ -249,6 +258,9 @@ func (m *Manager) GetAllRoutingPorts() (tcpPorts, udpPorts []int, err error) {
 	for port := range udpSet {
 		udpPorts = append(udpPorts, port)
 	}
+
+	sort.Ints(tcpPorts)
+	sort.Ints(udpPorts)
 
 	return tcpPorts, udpPorts, nil
 }

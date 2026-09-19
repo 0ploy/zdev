@@ -122,6 +122,91 @@ func (m *Manager) stopService(ctx context.Context, containerName, displayName st
 	return m.runtime.StopContainer(ctx, containerName)
 }
 
+// snapshotProjectNetworks records the project and link networks a shared
+// service container is currently attached to, mapped to that endpoint's
+// aliases.
+//
+// Shared services are created on SharedNetworkName and joined to each
+// project's network afterwards (see internal/project/shared_services.go).
+// Those extra endpoints live only in the Docker daemon - nothing in zdev
+// config or state lists them - so a recreate silently drops every project
+// except the one whose lifecycle triggered it. Callers that remove a shared
+// container must snapshot first and restoreProjectNetworks after.
+//
+// SharedNetworkName is excluded: it comes back from the container config on
+// create. Errors are swallowed to a nil snapshot - failing to read the old
+// topology must not block a recreate that is otherwise fine.
+func (m *Manager) snapshotProjectNetworks(ctx context.Context, containerName string) map[string][]string {
+	networks, err := m.runtime.GetContainerNetworks(ctx, containerName)
+	if err != nil || len(networks) == 0 {
+		return nil
+	}
+	snapshot := make(map[string][]string, len(networks))
+	for network, aliases := range networks {
+		if network == SharedNetworkName {
+			continue
+		}
+		snapshot[network] = aliases
+	}
+	if len(snapshot) == 0 {
+		return nil
+	}
+	return snapshot
+}
+
+// restoreProjectNetworks reattaches a freshly recreated shared service
+// container to the networks captured by snapshotProjectNetworks.
+//
+// Networks that no longer exist are skipped: a project torn down while the
+// service was stopped shouldn't resurrect its network. Failures warn rather
+// than error - the service itself is up, and one unreachable project network
+// must not fail the whole start.
+func (m *Manager) restoreProjectNetworks(ctx context.Context, containerName string, snapshot map[string][]string) {
+	if len(snapshot) == 0 {
+		return
+	}
+	for _, network := range sortedKeys(snapshot) {
+		exists, err := m.runtime.NetworkExists(ctx, network)
+		if err != nil || !exists {
+			continue
+		}
+		if err := m.runtime.NetworkConnect(ctx, network, containerName, snapshot[network]...); err != nil {
+			errStr := strings.ToLower(err.Error())
+			if strings.Contains(errStr, "already exists") || strings.Contains(errStr, "already connected") {
+				continue
+			}
+			fmt.Printf("Warning: failed to reattach %s to network %s: %v\n", containerName, network, err)
+			continue
+		}
+		fmt.Printf("Reattached %s to %s\n", containerName, network)
+	}
+}
+
+// sortedKeys returns a map's keys in sorted order, so reattach output and
+// connect order are deterministic.
+func sortedKeys(m map[string][]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// SnapshotProjectNetworks exposes snapshotProjectNetworks to callers outside
+// the package that remove a shared container themselves (cmd's
+// `zdev services recreate`), so they can restore the topology the same way
+// the in-package recreate paths do.
+func (m *Manager) SnapshotProjectNetworks(ctx context.Context, containerName string) map[string][]string {
+	return m.snapshotProjectNetworks(ctx, containerName)
+}
+
+// RestoreProjectNetworks is the exported counterpart to
+// SnapshotProjectNetworks.
+func (m *Manager) RestoreProjectNetworks(ctx context.Context, containerName string, snapshot map[string][]string) {
+	m.restoreProjectNetworks(ctx, containerName, snapshot)
+}
+
 // startService starts a service container with the given config.
 //
 // If a container already exists, its stamped runtime.ConfigHashLabel is
@@ -144,6 +229,9 @@ func (m *Manager) startService(ctx context.Context, containerName, displayName, 
 
 	expectedCfg := configFn()
 
+	// Project networks the container is on today, carried across a recreate.
+	var preservedNetworks map[string][]string
+
 	if container != nil {
 		currentLabels, err := m.runtime.GetContainerLabels(ctx, containerName)
 		if err != nil {
@@ -151,6 +239,7 @@ func (m *Manager) startService(ctx context.Context, containerName, displayName, 
 		}
 		if currentLabels[runtime.ConfigHashLabel] != expectedCfg.Labels[runtime.ConfigHashLabel] {
 			fmt.Printf("%s config drift detected, recreating...\n", displayName)
+			preservedNetworks = m.snapshotProjectNetworks(ctx, containerName)
 			_ = m.runtime.StopContainer(ctx, containerName)
 			if err := m.runtime.RemoveContainer(ctx, containerName); err != nil {
 				return fmt.Errorf("failed to remove %s container: %w", displayName, err)
@@ -187,6 +276,8 @@ func (m *Manager) startService(ctx context.Context, containerName, displayName, 
 	if err := m.runtime.StartContainer(ctx, containerName); err != nil {
 		return fmt.Errorf("failed to start %s: %w", displayName, err)
 	}
+
+	m.restoreProjectNetworks(ctx, containerName, preservedNetworks)
 
 	return nil
 }
@@ -243,6 +334,10 @@ func (m *Manager) disconnectServiceFromProject(ctx context.Context, containerNam
 // state now requires: extra ports in the running router don't force a
 // recreate on their own. Intentional port shrinking happens via
 // RefreshRouter, which is called when a project is removed.
+//
+// A recreate preserves the project networks the old container was attached
+// to (see snapshotProjectNetworks) - otherwise every project except the one
+// being started loses its route.
 func (m *Manager) StartRouter(ctx context.Context) error {
 	// The router bind-mounts the Docker socket; fail early with guidance if
 	// it can't be mounted (e.g. Docker Desktop's default socket is disabled)
@@ -270,6 +365,9 @@ func (m *Manager) StartRouter(ctx context.Context) error {
 		return fmt.Errorf("failed to check router container: %w", err)
 	}
 
+	// Project networks the router is on today, carried across a recreate.
+	var preservedNetworks map[string][]string
+
 	if container != nil {
 		currentLabels, err := m.runtime.GetContainerLabels(ctx, RouterContainerName)
 		if err != nil {
@@ -284,6 +382,7 @@ func (m *Manager) StartRouter(ctx context.Context) error {
 
 		if currentLabels[runtime.ConfigHashLabel] != expectedCfg.Labels[runtime.ConfigHashLabel] {
 			fmt.Println("Router config drift detected, recreating...")
+			preservedNetworks = m.snapshotProjectNetworks(ctx, RouterContainerName)
 			_ = m.runtime.StopContainer(ctx, RouterContainerName)
 			if err := m.runtime.RemoveContainer(ctx, RouterContainerName); err != nil {
 				return fmt.Errorf("failed to remove router container: %w", err)
@@ -324,6 +423,8 @@ func (m *Manager) StartRouter(ctx context.Context) error {
 		return fmt.Errorf("failed to start router: %w", err)
 	}
 
+	m.restoreProjectNetworks(ctx, RouterContainerName, preservedNetworks)
+
 	return nil
 }
 
@@ -333,6 +434,13 @@ func (m *Manager) StartRouter(ctx context.Context) error {
 // create directories on disk if missing) but that's fine - they're safe
 // to call on every check.
 func (m *Manager) buildRouterContainerConfig(tcpPorts, udpPorts []int) runtime.ContainerConfig {
+	// Sort defensively. Ports become order-sensitive --entrypoints Command
+	// entries and ComputeConfigHash hashes Command in order, so an unsorted
+	// caller would make the container's hash differ from the one the compare
+	// path computes - permanent drift, and a recreate on every start.
+	tcpPorts = sortedPorts(tcpPorts)
+	udpPorts = sortedPorts(udpPorts)
+
 	routerCfg := RouterConfig{
 		Image:      m.cfg.Shared.Router.Image,
 		Dashboard:  m.cfg.Shared.Router.Dashboard,
@@ -401,12 +509,20 @@ func (m *Manager) RefreshRouter(ctx context.Context) error {
 	}
 
 	fmt.Println("Updating router ports...")
+	// Snapshot here, not in StartRouter: by the time it runs the container is
+	// already gone, so it has nothing left to read the old topology from.
+	preservedNetworks := m.snapshotProjectNetworks(ctx, RouterContainerName)
 	_ = m.runtime.StopContainer(ctx, RouterContainerName)
 	if err := m.runtime.RemoveContainer(ctx, RouterContainerName); err != nil {
 		return fmt.Errorf("failed to remove router container: %w", err)
 	}
 
-	return m.StartRouter(ctx)
+	if err := m.StartRouter(ctx); err != nil {
+		return err
+	}
+
+	m.restoreProjectNetworks(ctx, RouterContainerName, preservedNetworks)
+	return nil
 }
 
 // parsePortCSV parses the comma-separated port list stored in
@@ -430,6 +546,13 @@ func parsePortCSV(s string) []int {
 		}
 	}
 	return ports
+}
+
+// sortedPorts returns a sorted copy, leaving the caller's slice untouched.
+func sortedPorts(ports []int) []int {
+	out := append([]int(nil), ports...)
+	sort.Ints(out)
+	return out
 }
 
 // unionPortSets returns the sorted deduplicated union of two port lists.

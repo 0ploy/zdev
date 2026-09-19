@@ -25,6 +25,12 @@ type sharedServicesSnapshot struct {
 	redisRunning  bool
 	logsRunning   bool
 	networkExists bool
+
+	// networks maps each shared container to the project networks it was
+	// attached to. Restarting a service is not enough: a recreated container
+	// comes back on zdev_shared only, so without this the developer's running
+	// projects lose their shared services for the rest of the day.
+	networks map[string]map[string][]string
 }
 
 // snapshotSharedServices checks which shared services are currently running.
@@ -46,6 +52,11 @@ func snapshotSharedServices(ctx context.Context, mgr *Manager, docker *runtime.D
 		s.logsRunning = status.Running
 	}
 	s.networkExists, _ = docker.NetworkExists(ctx, SharedNetworkName)
+
+	s.networks = make(map[string]map[string][]string)
+	for _, svc := range AllSharedServices() {
+		s.networks[svc.ContainerName] = mgr.SnapshotProjectNetworks(ctx, svc.ContainerName)
+	}
 	return s
 }
 
@@ -75,6 +86,10 @@ func restoreSharedServices(ctx context.Context, snap sharedServicesSnapshot) {
 	}
 	if snap.logsRunning {
 		_ = mgr.StartLogs(ctx)
+	}
+
+	for container, networks := range snap.networks {
+		mgr.RestoreProjectNetworks(ctx, container, networks)
 	}
 }
 

@@ -35,6 +35,12 @@ type MockRuntime struct {
 	// ContainerLabels stores labels per container name (for GetContainerLabels)
 	ContainerLabels map[string]map[string]string
 
+	// ContainerNetworks stores, per container name, the networks it is
+	// attached to mapped to that endpoint's aliases. Maintained by
+	// CreateContainer / RemoveContainer / NetworkConnect / NetworkDisconnect
+	// so tests can assert network topology survives a recreate.
+	ContainerNetworks map[string]map[string][]string
+
 	// ImageLabels stores labels per image name (for GetImageLabels)
 	ImageLabels map[string]map[string]string
 
@@ -69,6 +75,7 @@ func NewMockRuntime() *MockRuntime {
 		ImagesExist:       make(map[string]bool),
 		Containers:        make(map[string]ContainerConfig),
 		ContainerLabels:   make(map[string]map[string]string),
+		ContainerNetworks: make(map[string]map[string][]string),
 		ImageLabels:       make(map[string]map[string]string),
 		BuiltImages:       make(map[string]ImageBuildConfig),
 		Volumes:           make(map[string]bool),
@@ -128,6 +135,9 @@ func (m *MockRuntime) CreateContainer(_ context.Context, cfg ContainerConfig) (s
 	defer m.mu.Unlock()
 	m.Containers[cfg.Name] = cfg
 	m.ContainersExist[cfg.Name] = true
+	if cfg.NetworkName != "" {
+		m.ContainerNetworks[cfg.Name] = map[string][]string{cfg.NetworkName: cfg.Aliases}
+	}
 	return fmt.Sprintf("mock-%s", cfg.Name), nil
 }
 
@@ -170,6 +180,7 @@ func (m *MockRuntime) RemoveContainer(_ context.Context, nameOrID string) error 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.Containers, nameOrID)
+	delete(m.ContainerNetworks, nameOrID)
 	m.ContainersExist[nameOrID] = false
 	m.ContainersRunning[nameOrID] = false
 	return nil
@@ -261,6 +272,24 @@ func (m *MockRuntime) GetContainer(_ context.Context, name string) (*Container, 
 	}, nil
 }
 
+// GetContainerNetworks returns the tracked networks and aliases for a container
+func (m *MockRuntime) GetContainerNetworks(_ context.Context, name string) (map[string][]string, error) {
+	m.record("GetContainerNetworks", name)
+	if err := m.err("GetContainerNetworks"); err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.ContainerNetworks[name] == nil {
+		return nil, nil
+	}
+	out := make(map[string][]string, len(m.ContainerNetworks[name]))
+	for network, aliases := range m.ContainerNetworks[name] {
+		out[network] = append([]string(nil), aliases...)
+	}
+	return out, nil
+}
+
 // GetContainerLabels returns labels for a mock container
 func (m *MockRuntime) GetContainerLabels(_ context.Context, name string) (map[string]string, error) {
 	m.record("GetContainerLabels", name)
@@ -343,16 +372,31 @@ func (m *MockRuntime) NetworkExists(_ context.Context, name string) (bool, error
 	return m.NetworksExist[name], nil
 }
 
-// NetworkConnect records the call
+// NetworkConnect records the call and tracks the endpoint
 func (m *MockRuntime) NetworkConnect(_ context.Context, networkName, containerName string, aliases ...string) error {
 	m.record("NetworkConnect", networkName, containerName)
-	return m.err("NetworkConnect")
+	if err := m.err("NetworkConnect"); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.ContainerNetworks[containerName] == nil {
+		m.ContainerNetworks[containerName] = make(map[string][]string)
+	}
+	m.ContainerNetworks[containerName][networkName] = aliases
+	return nil
 }
 
-// NetworkDisconnect records the call
+// NetworkDisconnect records the call and drops the endpoint
 func (m *MockRuntime) NetworkDisconnect(_ context.Context, networkName, containerName string) error {
 	m.record("NetworkDisconnect", networkName, containerName)
-	return m.err("NetworkDisconnect")
+	if err := m.err("NetworkDisconnect"); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.ContainerNetworks[containerName], networkName)
+	return nil
 }
 
 // ListNetworks returns the mock networks whose name contains the filter's
