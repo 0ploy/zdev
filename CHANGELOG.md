@@ -1,3 +1,17 @@
+## v0.12.1
+
+The router quietly stopped serving projects it was still routing for. Two
+independent defects combined to cause it, and both are fixed here.
+
+### Bug Fixes
+
+- **The router is no longer rebuilt on every `zdev start`.** The routing ports it is configured with were collected in a random order, so the check that decides whether the running router still matches its configuration could never match: every `zdev start`, `zdev restart` or `zdev update` of any project reported `Router config drift detected, recreating...` and rebuilt it. Any machine with two or more published TCP or UDP ports across its projects was affected.
+- **Shared services keep the projects they are connected to when their container is recreated.** A shared service joins each project's network as that project starts, and that connection exists nowhere except in Docker - so recreating the container dropped every project except the one whose start triggered the recreate. The others kept running but became unreachable through the router, with nothing reporting why, which is what made the router look like it had detached at random. Recreates now restore the connections, skipping projects whose network no longer exists. This covers every recreate: a new image, SSL switched on, a changed domain, a new TCP port, and `zdev services recreate`.
+
+### Upgrade Notes
+
+- **The router is recreated once** on the next `zdev start` or `zdev services start`, because the port ordering it was built with changed. Connected projects are preserved. Projects already detached by an earlier recreate come back on their next `zdev start`.
+
 ## v0.12.0
 
 File sync is the theme: a service may now have more than one synced directory, a
