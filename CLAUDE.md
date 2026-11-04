@@ -14,7 +14,10 @@ Release process:
 1. Add a `## vX.Y.Z` section at the top of `CHANGELOG.md` covering the user-visible changes since the last tag (`git log <last-tag>..HEAD` for the candidates).
 2. `git add CHANGELOG.md && git commit -m "Release vX.Y.Z"`
 3. `git tag vX.Y.Z && git push origin main && git push origin vX.Y.Z`
-4. CI builds darwin/linux (arm64/amd64) binaries and creates the GitHub Release from the changelog.
+4. The tag runs `.github/workflows/release.yml`: it extracts the `CHANGELOG.md` section whose heading is exactly the tag (`## vX.Y.Z`) and **fails the release if there is none** (a `## v0.1.1` tag never picks up `## v0.1.10`), runs the tests, builds darwin/linux (arm64/amd64) binaries, checks the linux-amd64 one reports the tag (an `-X` path that matches no variable is silently ignored by the linker and ships a `dev` binary that breaks `self-update`), writes `checksums.txt` (verified by `install.sh` and `self-update`) and creates the GitHub Release.
+5. If it fails, nothing is published: fix on `main`, then move the tag (`git tag -f vX.Y.Z && git push -f origin vX.Y.Z`) or cut the next patch.
+
+Actions in the workflow are pinned to commit SHAs. To bump one, get the commit with `gh api repos/<owner>/<repo>/commits/<tag> --jq .sha` (not `git/refs/tags/<tag>`, which returns the tag object for annotated tags) and keep the version in the trailing comment.
 
 **CHANGELOG entries are for user-visible changes only**: new features, changed behavior, bug fixes a user could hit. Refactors, dead-code cleanup, test/docs/CI work get NO entry - the changelog is a curated story for users, not a commit log. Decide per change; most commits won't warrant an entry.
 

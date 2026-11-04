@@ -12,11 +12,28 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      # All actions pinned to commit SHAs (not tags) so a compromised
+      # upstream cannot inject code into the release pipeline. Bump
+      # deliberately; keep the human-readable version in the comment.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+          # Newest patch, not whatever the runner has cached: release
+          # binaries embed the standard library and its fixes.
+          check-latest: true
+
+      # First, so a tag without notes fails before anything is built. The
+      # match is the exact tag: `## v0.1.1` must not pick up `## v0.1.10`,
+      # and a section left under another heading must not be published.
+      - name: Extract release notes
+        run: |
+          awk -v h="## ${GITHUB_REF_NAME}" '$0==h || index($0, h" ")==1 {found=1; next} /^## /{if(found) exit} found' CHANGELOG.md > release-notes.md
+          if [ -z "$(tr -d '[:space:]' < release-notes.md)" ]; then
+            echo "::error::CHANGELOG.md has no '## ${GITHUB_REF_NAME}' section"
+            exit 1
+          fi
 
       - name: Run tests
         run: go test ./...
@@ -26,11 +43,24 @@ jobs:
           VERSION=${GITHUB_REF_NAME}
           BUILD_TIME=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
           LDFLAGS="-s -w -X github.com/0ploy/zdev/cmd.Version=${VERSION} -X github.com/0ploy/zdev/cmd.BuildTime=${BUILD_TIME}"
+          export CGO_ENABLED=0
 
-          GOOS=darwin  GOARCH=arm64 go build -ldflags "${LDFLAGS}" -o zdev-darwin-arm64 .
-          GOOS=darwin  GOARCH=amd64 go build -ldflags "${LDFLAGS}" -o zdev-darwin-amd64 .
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "${LDFLAGS}" -o zdev-linux-amd64 .
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags "${LDFLAGS}" -o zdev-linux-arm64 .
+          GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "${LDFLAGS}" -o zdev-darwin-arm64 .
+          GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags "${LDFLAGS}" -o zdev-darwin-amd64 .
+          GOOS=linux  GOARCH=amd64 go build -trimpath -ldflags "${LDFLAGS}" -o zdev-linux-amd64 .
+          GOOS=linux  GOARCH=arm64 go build -trimpath -ldflags "${LDFLAGS}" -o zdev-linux-arm64 .
+
+      # The linker silently ignores an -X path that matches no variable,
+      # which would ship binaries reporting "dev" and break self-update.
+      # Only linux-amd64 runs here; the -X path is the same for all four.
+      - name: Verify version
+        run: |
+          GOT=$(./zdev-linux-amd64 version | head -1)
+          echo "zdev reports: ${GOT}"
+          case "${GOT}" in
+            "zdev version ${GITHUB_REF_NAME} "*) ;;
+            *) echo "::error::zdev reports '${GOT}', want ${GITHUB_REF_NAME}; check the -X cmd.Version path"; exit 1 ;;
+          esac
 
       - name: Generate checksums
         run: |
@@ -53,19 +83,13 @@ jobs:
           curl -fsSL https://raw.githubusercontent.com/0ploy/zdev/main/install.sh | sh
           ```
 
-          HEADER
+          ---
 
-          # Extract the latest version section from CHANGELOG.md
-          if [ -f CHANGELOG.md ]; then
-            echo "---" >> release-body.md
-            echo "" >> release-body.md
-            awk '/^## /{if(found) exit; found=1; next} found{print}' CHANGELOG.md >> release-body.md
-          fi
+          HEADER
+          cat release-notes.md >> release-body.md
 
       - name: Create release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
-        env:
-          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           body_path: release-body.md
           files: |
