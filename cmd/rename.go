@@ -70,10 +70,7 @@ func runRenameImpl(ctx context.Context, proj *project.Project, newName string) e
 
 	// Show what will change
 	globalCfg, _ := config.LoadGlobalConfig()
-	domain := config.DefaultDomain
-	if globalCfg != nil && globalCfg.Domain != "" {
-		domain = globalCfg.Domain
-	}
+	domain := config.GetZdevDomain() // same source as the loader's default
 	protocol := schemeFor(globalCfg)
 
 	fmt.Printf("Rename project: %s -> %s\n", oldName, newName)

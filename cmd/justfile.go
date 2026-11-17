@@ -37,7 +37,8 @@ func findJustfile(name string) *project.JustfileInfo {
 // just's module-path separator. If no such recipe exists, args pass
 // through unchanged (legacy behavior - first arg is the recipe name).
 func runJustfile(justfile *project.JustfileInfo, args []string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	// No deadline: recipes are user-driven and may run for hours (dev servers).
+	ctx, cancel := commandContext(noTimeout)
 	defer cancel()
 
 	// Recipes almost always shell into containers via `zdev exec` - fail

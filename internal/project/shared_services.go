@@ -38,10 +38,17 @@ func (p *Project) connectEnabledSharedServices(ctx context.Context) {
 	}
 }
 
-// disconnectEnabledSharedServices detaches every enabled shared service
-// from the project's network. Iterates in reverse order so the router
-// (which the others may route through) is removed last.
-func (p *Project) disconnectEnabledSharedServices(ctx context.Context) {
+// disconnectSharedServices detaches every shared service that can join
+// project networks from the project's network. Iterates in reverse order so
+// the router (which the others may route through) is removed last.
+//
+// Deliberately NOT filtered by the project's current `shared:` opt-ins: a
+// service enabled when the project started and disabled in config since is
+// still attached, and skipping it leaves an active endpoint that makes the
+// network removal fail on every `zdev down` from then on. Disconnecting a
+// service that was never attached is a no-op (NetworkDisconnect ignores
+// "is not connected", and a missing container is skipped).
+func (p *Project) disconnectSharedServices(ctx context.Context) {
 	mgr, err := p.sharedManager()
 	if err != nil {
 		fmt.Printf("Warning: failed to load shared service config during disconnect: %v\n", err)
@@ -50,7 +57,7 @@ func (p *Project) disconnectEnabledSharedServices(ctx context.Context) {
 	registry := services.AllSharedServices()
 	for i := len(registry) - 1; i >= 0; i-- {
 		svc := registry[i]
-		if !svc.ProjectEnabled(&p.Config.Shared) || !svc.JoinsProjectNetworks() {
+		if !svc.JoinsProjectNetworks() {
 			continue
 		}
 		if err := svc.Disconnect(ctx, mgr, p.NetworkName()); err != nil {

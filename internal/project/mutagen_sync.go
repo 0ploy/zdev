@@ -806,6 +806,16 @@ func (p *Project) awaitSyncGate(ctx context.Context, serviceName, containerName 
 		return
 	}
 
+	// A container this run did not start has had its wrapper run long ago:
+	// it is either still held at the gate (an earlier sync failed) or past
+	// it, and the waiting flag it deleted on the way through never comes
+	// back. Opening the gate is right in both cases, so there is nothing to
+	// wait for - polling would burn the full timeout per service on every
+	// no-op `zdev start` / `zdev update`.
+	if !p.startedContainers[containerName] {
+		return
+	}
+
 	deadline := time.Now().Add(syncGateWaitTimeout)
 	for time.Now().Before(deadline) {
 		err := p.Runtime.Exec(ctx, containerName,

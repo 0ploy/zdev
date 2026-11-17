@@ -39,6 +39,23 @@ type Project struct {
 	// recreate services whose resolved values changed since creation.
 	// Set from the --refresh-secrets flag.
 	RefreshSecrets bool
+
+	// startedContainers records containers this Project started, so the
+	// sync gate only waits for wrappers that can still be on their way to
+	// the gate (see awaitSyncGate). Lazily initialized by startContainer.
+	startedContainers map[string]bool
+}
+
+// startContainer starts a container and remembers that this run started it.
+func (p *Project) startContainer(ctx context.Context, containerName string) error {
+	if err := p.Runtime.StartContainer(ctx, containerName); err != nil {
+		return err
+	}
+	if p.startedContainers == nil {
+		p.startedContainers = map[string]bool{}
+	}
+	p.startedContainers[containerName] = true
+	return nil
 }
 
 // ExecOptions contains options for executing a command in a container
@@ -414,7 +431,7 @@ func (p *Project) startServiceWithMutagen(ctx context.Context, name string, svc 
 		}
 
 		fmt.Printf("Starting service %s...\n", name)
-		err = p.Runtime.StartContainer(ctx, containerName)
+		err = p.startContainer(ctx, containerName)
 		if err == nil {
 			return nil
 		}
@@ -467,7 +484,7 @@ func (p *Project) startServiceWithMutagen(ctx context.Context, name string, svc 
 	}
 
 	fmt.Printf("Starting service %s...\n", name)
-	return p.Runtime.StartContainer(ctx, containerName)
+	return p.startContainer(ctx, containerName)
 }
 
 // requireService returns an error when name is not declared in the
@@ -660,7 +677,7 @@ func (p *Project) teardownContainers(ctx context.Context) error {
 	p.disconnectLinks(ctx)
 
 	// Disconnect shared services (do this first, before removing network)
-	p.disconnectEnabledSharedServices(ctx)
+	p.disconnectSharedServices(ctx)
 
 	containerNames, err := p.projectContainerNames(ctx)
 	if err != nil {
@@ -974,7 +991,7 @@ func (p *Project) updateService(ctx context.Context, serviceName string, svc con
 	}
 	if !running {
 		fmt.Printf("Starting service %s...\n", serviceName)
-		if err := p.Runtime.StartContainer(ctx, containerName); err != nil {
+		if err := p.startContainer(ctx, containerName); err != nil {
 			return false, fmt.Errorf("failed to start service %s: %w", serviceName, err)
 		}
 	}
@@ -1222,7 +1239,7 @@ func (p *Project) RestartService(ctx context.Context, name string) error {
 	}
 
 	fmt.Printf("Starting service %s...\n", name)
-	if err := p.Runtime.StartContainer(ctx, containerName); err != nil {
+	if err := p.startContainer(ctx, containerName); err != nil {
 		if isStaleNetworkError(err) {
 			// Restart reuses the container in place and has no create path,
 			// so it can't clear the stale network reference itself.

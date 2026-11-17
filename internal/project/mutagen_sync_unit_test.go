@@ -357,3 +357,38 @@ func TestGetMutagenSyncMounts_NoSyncKeepsABindNative(t *testing.T) {
 		}
 	}
 }
+
+// TestAwaitSyncGate_SkipsContainersThisRunDidNotStart guards the no-op start
+// path: a wrapper that passed the gate in an earlier run deleted the waiting
+// flag for good, so polling for it burned the full timeout per service on
+// every `zdev start` / `zdev update` of an already-running project.
+func TestAwaitSyncGate_SkipsContainersThisRunDidNotStart(t *testing.T) {
+	ctx := context.Background()
+
+	for _, startedThisRun := range []bool{false, true} {
+		mock := runtime.NewMockRuntime()
+		p := newSyncTestProject(t, mock, []string{"src"}, []string{"./src:/app"})
+		container := p.ContainerName("app")
+		mock.ContainersRunning[container] = true
+		if startedThisRun {
+			if err := p.startContainer(ctx, container); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		p.awaitSyncGate(ctx, "app", container)
+
+		polled := false
+		for _, call := range mock.Calls {
+			if call.Method != "Exec" || len(call.Args) < 2 {
+				continue
+			}
+			if cmd, ok := call.Args[1].([]string); ok && strings.Contains(strings.Join(cmd, " "), syncWaitingFlag) {
+				polled = true
+			}
+		}
+		if polled != startedThisRun {
+			t.Errorf("startedThisRun=%v: polled for the waiting flag = %v, want %v", startedThisRun, polled, startedThisRun)
+		}
+	}
+}

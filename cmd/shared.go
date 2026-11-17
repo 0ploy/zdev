@@ -26,13 +26,27 @@ func requireDocker(ctx context.Context) error {
 	return docker.CheckAvailable(ctx)
 }
 
+// noTimeout tells withProject / withDocker to run without a deadline, for
+// commands that hand the terminal to a user-driven process (`zdev exec app
+// bash`, a `pnpm dev` recipe) which may legitimately run for hours.
+const noTimeout time.Duration = 0
+
+// commandContext returns a context bounded by timeout, or only cancelable
+// when timeout is noTimeout.
+func commandContext(timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout <= 0 {
+		return context.WithCancel(context.Background())
+	}
+	return context.WithTimeout(context.Background(), timeout)
+}
+
 // withProject is the shared bootstrap for commands that need Docker + a
 // loaded project. Creates a timeout context, checks Docker availability,
 // loads the project from the current directory (or --config override), and
 // calls fn. Any error from Docker check or project load is surfaced
 // directly - callers don't need to re-wrap with context.
 func withProject(timeout time.Duration, fn func(ctx context.Context, proj *project.Project) error) error {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := commandContext(timeout)
 	defer cancel()
 
 	if err := requireDocker(ctx); err != nil {
@@ -51,7 +65,7 @@ func withProject(timeout time.Duration, fn func(ctx context.Context, proj *proje
 // need Docker but operate on state or global resources only (list,
 // services, cleanup, etc.).
 func withDocker(timeout time.Duration, fn func(ctx context.Context) error) error {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := commandContext(timeout)
 	defer cancel()
 
 	if err := requireDocker(ctx); err != nil {

@@ -105,9 +105,10 @@ func LoadProject(projectDir string) (*ProjectConfig, error) {
 		cfg.Name = projectName
 	}
 
-	// Default domain to {name}.{zdev_domain}
+	// Default domain to {name}.{zdev_domain}, honoring the global `domain`
+	// (and ZDEV_DOMAIN) exactly like the ${ZDEV_DOMAIN} variable does.
 	if cfg.Domain == "" {
-		cfg.Domain = cfg.Name + "." + DefaultDomain
+		cfg.Domain = cfg.Name + "." + getZdevDomain()
 	}
 
 	// Default routing protocol to "http" whenever routing is configured.
@@ -128,39 +129,107 @@ func LoadProject(projectDir string) (*ProjectConfig, error) {
 // mergeProjectYAML deep-merges override on top of base and returns marshaled YAML.
 // Maps merge recursively; slices and scalars in override replace the base value.
 // An empty or comments-only override is a no-op (returns base unchanged).
+//
+// The merge works on yaml.Node trees, never on decoded Go values: decoding
+// into map[string]any resolves every unquoted scalar first, so `8.10` came
+// back as `8.1`, `0644` as `420` and `2024-01-01` as a timestamp - silently,
+// and only on machines that happen to have a local config. Nodes keep each
+// scalar's original text and style (and comments).
 func mergeProjectYAML(base, override []byte) ([]byte, error) {
-	var baseMap, overrideMap map[string]any
-	if err := yaml.Unmarshal(base, &baseMap); err != nil {
+	var baseDoc, overrideDoc yaml.Node
+	if err := yaml.Unmarshal(base, &baseDoc); err != nil {
 		return nil, fmt.Errorf("parse base: %w", err)
 	}
-	if err := yaml.Unmarshal(override, &overrideMap); err != nil {
+	if err := yaml.Unmarshal(override, &overrideDoc); err != nil {
 		return nil, fmt.Errorf("parse override: %w", err)
 	}
-	if overrideMap == nil {
+
+	overrideRoot := documentRoot(&overrideDoc)
+	if isEmptyNode(overrideRoot) {
 		return base, nil
 	}
-	if baseMap == nil {
-		baseMap = map[string]any{}
+	if overrideRoot.Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("parse override: top level must be a mapping")
 	}
-	merged := deepMergeMaps(baseMap, overrideMap)
-	return yaml.Marshal(merged)
+
+	baseRoot := documentRoot(&baseDoc)
+	if isEmptyNode(baseRoot) {
+		return yaml.Marshal(overrideRoot)
+	}
+	if baseRoot.Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("parse base: top level must be a mapping")
+	}
+
+	mergeMappingNodes(baseRoot, overrideRoot)
+	return yaml.Marshal(&baseDoc)
 }
 
-// deepMergeMaps merges override into base. When both sides hold a map at the
-// same key, recurse; otherwise override wins (including for slices and nil).
-func deepMergeMaps(base, override map[string]any) map[string]any {
-	for k, v := range override {
-		if existing, ok := base[k]; ok {
-			if existingMap, ok := existing.(map[string]any); ok {
-				if newMap, ok := v.(map[string]any); ok {
-					base[k] = deepMergeMaps(existingMap, newMap)
-					continue
-				}
+// documentRoot returns the top-level content node of a parsed document, or
+// nil for an empty / comments-only one.
+func documentRoot(doc *yaml.Node) *yaml.Node {
+	if doc.Kind == yaml.DocumentNode {
+		if len(doc.Content) == 0 {
+			return nil
+		}
+		return doc.Content[0]
+	}
+	if doc.Kind == 0 {
+		return nil
+	}
+	return doc
+}
+
+func isEmptyNode(n *yaml.Node) bool {
+	return n == nil || (n.Kind == yaml.ScalarNode && n.Tag == "!!null")
+}
+
+// mergeMappingNodes merges override into base. When both sides hold a
+// mapping at the same key, recurse; otherwise override's value node replaces
+// base's (including for sequences and null). Keys only in override are
+// appended.
+func mergeMappingNodes(base, override *yaml.Node) {
+	for i := 0; i+1 < len(override.Content); i += 2 {
+		key, value := override.Content[i], override.Content[i+1]
+
+		idx := -1
+		for j := 0; j+1 < len(base.Content); j += 2 {
+			if base.Content[j].Value == key.Value {
+				idx = j + 1
+				break
 			}
 		}
-		base[k] = v
+		if idx < 0 {
+			base.Content = append(base.Content, key, value)
+			continue
+		}
+
+		existing := base.Content[idx]
+		if existing.Kind == yaml.AliasNode && existing.Alias != nil && existing.Alias.Kind == yaml.MappingNode {
+			// Merging into an alias must not change the anchor it points
+			// at, which other keys share: merge into a private copy.
+			existing = copyNode(existing.Alias)
+			existing.Anchor = ""
+			base.Content[idx] = existing
+		}
+		if existing.Kind == yaml.MappingNode && value.Kind == yaml.MappingNode {
+			mergeMappingNodes(existing, value)
+			continue
+		}
+		base.Content[idx] = value
 	}
-	return base
+}
+
+// copyNode deep-copies a node tree. Alias nodes keep pointing at their
+// (uncopied) anchor, which is never mutated.
+func copyNode(n *yaml.Node) *yaml.Node {
+	c := *n
+	if len(n.Content) > 0 {
+		c.Content = make([]*yaml.Node, len(n.Content))
+		for i, child := range n.Content {
+			c.Content[i] = copyNode(child)
+		}
+	}
+	return &c
 }
 
 // formatConfigError creates a user-friendly error message for config parsing failures

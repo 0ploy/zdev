@@ -5,7 +5,6 @@ import (
 	"errors"
 	"os"
 	"os/exec"
-	"time"
 
 	"github.com/0ploy/zdev/internal/project"
 	"github.com/spf13/cobra"
@@ -47,7 +46,7 @@ func runExec(cmd *cobra.Command, args []string) error {
 		return cmd.Help()
 	}
 
-	err := withProject(30*time.Minute, func(ctx context.Context, proj *project.Project) error {
+	err := withProject(noTimeout, func(ctx context.Context, proj *project.Project) error {
 		opts := project.ExecOptions{
 			User:    execUser,
 			Workdir: execWorkdir,

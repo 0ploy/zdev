@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestSubstituteVariables(t *testing.T) {
@@ -1218,5 +1220,103 @@ services:
 	// at container creation, not at load).
 	if got := cfg.Services["app"].Environment["API_KEY"]; got != "op-env://b7qmzx3kfpwj4hn2c6t8vydl5a/API_KEY" {
 		t.Errorf("op-env:// value should have variables substituted but stay a reference, got %q", got)
+	}
+}
+
+// TestLoadProject_DefaultDomainHonorsGlobalDomain: a project without an
+// explicit `domain:` lives under the configured zdev domain, not the
+// built-in default - otherwise it is routed where the user never looks.
+func TestLoadProject_DefaultDomainHonorsGlobalDomain(t *testing.T) {
+	t.Setenv("ZDEV_DOMAIN", "dev.example.test")
+	tmpDir := t.TempDir()
+	writeProjectConfigs(t, tmpDir, `version: 1
+name: shop
+services:
+  app:
+    image: alpine:latest
+`, "")
+
+	cfg, err := LoadProject(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadProject: %v", err)
+	}
+	if cfg.Domain != "shop.dev.example.test" {
+		t.Errorf("Domain = %q, want %q", cfg.Domain, "shop.dev.example.test")
+	}
+}
+
+// TestLoadProject_LocalConfig_PreservesUnquotedScalars: the merge used to go
+// through map[string]any, which resolved unquoted scalars before they reached
+// string fields - so the committed config meant something different on every
+// machine that had a local config.
+func TestLoadProject_LocalConfig_PreservesUnquotedScalars(t *testing.T) {
+	tmpDir := t.TempDir()
+	main := `version: 1
+name: scalars
+services:
+  app:
+    image: alpine:latest
+    environment:
+      PHP_VERSION: 8.10
+      BUILD_ID: 0123
+      RELEASE: 2024-01-01
+    mutagen:
+      file_mode: 0644
+`
+	local := `services:
+  app:
+    environment:
+      LOCAL_ONLY: 0755
+`
+	writeProjectConfigs(t, tmpDir, main, local)
+
+	cfg, err := LoadProject(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadProject: %v", err)
+	}
+	app := cfg.Services["app"]
+	for key, want := range map[string]string{
+		"PHP_VERSION": "8.10",
+		"BUILD_ID":    "0123",
+		"RELEASE":     "2024-01-01",
+		"LOCAL_ONLY":  "0755",
+	} {
+		if got := app.Environment[key]; got != want {
+			t.Errorf("environment %s = %q, want %q", key, got, want)
+		}
+	}
+	if app.Mutagen.FileMode != "0644" {
+		t.Errorf("mutagen.file_mode = %q, want 0644", app.Mutagen.FileMode)
+	}
+}
+
+func TestMergeProjectYAML_AliasTargetUntouched(t *testing.T) {
+	base := `defaults: &defaults
+  A: "1"
+x: *defaults
+y: *defaults
+`
+	override := `x:
+  B: "2"
+`
+	merged, err := mergeProjectYAML([]byte(base), []byte(override))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]map[string]string
+	if err := yaml.Unmarshal(merged, &got); err != nil {
+		t.Fatalf("unmarshal merged: %v\n%s", err, merged)
+	}
+	if got["x"]["A"] != "1" || got["x"]["B"] != "2" {
+		t.Errorf("x = %v, want A=1 B=2", got["x"])
+	}
+	if _, leaked := got["y"]["B"]; leaked {
+		t.Errorf("override leaked into the shared anchor: y = %v", got["y"])
+	}
+}
+
+func TestMergeProjectYAML_RejectsNonMappingOverride(t *testing.T) {
+	if _, err := mergeProjectYAML([]byte("name: x\n"), []byte("- a\n- b\n")); err == nil {
+		t.Error("expected an error for a list at the top level of the local config")
 	}
 }

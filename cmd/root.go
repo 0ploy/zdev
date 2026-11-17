@@ -131,21 +131,42 @@ func Execute() error {
 	return rootCmd.Execute()
 }
 
-// parseConfigFlag extracts --config flag from args before Cobra processes them
-// This is needed because justfile commands bypass Cobra's flag parsing
+// parseConfigFlag extracts a global --config flag before Cobra processes the
+// args. This is needed because justfile commands bypass Cobra's flag parsing.
+//
+// Only the global position is scanned (before the command name, i.e. the
+// first non-flag argument, or `--`). Anything after it belongs to the command:
+// `zdev exec app vitest --config vitest.config.ts` and job arguments must not
+// be read as the project directory. `--config` placed after a built-in
+// command name is still honored, by Cobra itself (PersistentPreRunE).
 func parseConfigFlag() {
-	for i, arg := range os.Args {
-		if arg == "--config" && i+1 < len(os.Args) {
-			configDir = os.Args[i+1]
-			config.SetProjectDirOverride(configDir)
-			return
-		}
-		if strings.HasPrefix(arg, "--config=") {
-			configDir = strings.TrimPrefix(arg, "--config=")
-			config.SetProjectDirOverride(configDir)
-			return
+	if dir, ok := globalConfigFlag(os.Args[1:]); ok {
+		configDir = dir
+		config.SetProjectDirOverride(configDir)
+	}
+}
+
+// globalConfigFlag returns the --config value given before the command name.
+func globalConfigFlag(args []string) (string, bool) {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--":
+			return "", false
+		case arg == "--config":
+			if i+1 < len(args) {
+				return args[i+1], true
+			}
+			return "", false
+		case strings.HasPrefix(arg, "--config="):
+			return strings.TrimPrefix(arg, "--config="), true
+		case strings.HasPrefix(arg, "-"):
+			continue
+		default:
+			return "", false // command name reached
 		}
 	}
+	return "", false
 }
 
 // isBuiltinCommand checks if the name is a registered Cobra command

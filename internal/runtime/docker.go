@@ -377,11 +377,15 @@ func (d *DockerCLI) Logs(ctx context.Context, container string, opts LogsOptions
 func (d *DockerCLI) Exec(ctx context.Context, container string, command []string, interactive bool, opts ExecOptions) error {
 	args := []string{"exec"}
 
-	// Check if stdin is a real TTY (not just a character device)
-	isTTY := interactive && term.IsTerminal(int(os.Stdin.Fd()))
-
-	if isTTY {
-		args = append(args, "-it")
+	// Interactive callers always get stdin (-i) so piped input reaches the
+	// command (`cat dump.sql | zdev exec db mysql`); a TTY (-t) only when stdin
+	// is a real terminal, otherwise docker fails with "the input device is not
+	// a TTY".
+	if interactive {
+		args = append(args, "-i")
+		if term.IsTerminal(int(os.Stdin.Fd())) {
+			args = append(args, "-t")
+		}
 	}
 
 	// Add user option if specified
@@ -716,11 +720,13 @@ func (d *DockerCLI) VolumeExists(ctx context.Context, name string) (bool, error)
 
 // CopyVolume copies all data from one volume to another using a temporary container.
 // The image must be locally available and must contain sh and cp.
+// --entrypoint sh bypasses the image's own init (zpinit, PHP entrypoints),
+// which might start services or ignore the arguments instead of copying.
 func (d *DockerCLI) CopyVolume(ctx context.Context, srcVolume, dstVolume, image string) error {
-	_, err := d.run(ctx, "run", "--rm",
+	_, err := d.run(ctx, "run", "--rm", "--entrypoint", "sh",
 		"-v", srcVolume+":/from:ro",
 		"-v", dstVolume+":/to",
-		image, "sh", "-c", "cp -a /from/. /to/")
+		image, "-c", "cp -a /from/. /to/")
 	return err
 }
 

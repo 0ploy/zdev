@@ -35,7 +35,7 @@ Then `zdev start`. More complete files for common stacks: [examples.md](examples
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `name` | string | directory name | Project name, used in domain and container names |
-| `domain` | string | `{name}.0ploy.dev` | Project domain for HTTP routing |
+| `domain` | string | `{name}.<global domain>` (`{name}.0ploy.dev` by default) | Project domain for HTTP routing. The suffix comes from `domain` in `~/.zdev/global-config.yaml` |
 | `variables` | map | - | Reusable `${VAR}` placeholders substituted throughout the config (not passed to containers) |
 | `environment` | map | - | Environment variables passed to ALL containers. Values may reference 1Password Environment variables (`op-env://<environment-id>/NAME`) |
 | `shared.router` | bool | `true` | Connect to shared Traefik router |

@@ -30,7 +30,6 @@ internal/
   ssl/                   # Certificate management
   ui/                    # Terminal output (colors, hyperlinks, markdown)
 skills/zdev/            # AI agent skill (SKILL.md + references/)
-templates/               # Template authoring guide
 testdata/projects/       # Test fixtures (minimal, full, variables, mutagen)
 ```
 
