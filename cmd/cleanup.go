@@ -11,6 +11,7 @@ import (
 	"github.com/0ploy/zdev/internal/config"
 	"github.com/0ploy/zdev/internal/project"
 	"github.com/0ploy/zdev/internal/runtime"
+	"github.com/0ploy/zdev/internal/ssl"
 	"github.com/0ploy/zdev/internal/state"
 	"github.com/spf13/cobra"
 )
@@ -213,6 +214,9 @@ func runCleanup(cmd *cobra.Command, args []string) error {
 				fmt.Printf("failed: %v\n", err)
 			} else {
 				fmt.Println("done")
+				if err := ssl.RemoveProjectCert(p.name); err != nil {
+					fmt.Printf("Warning: failed to remove certificate for %s: %v\n", p.name, err)
+				}
 			}
 		}
 

@@ -2,6 +2,7 @@ package ssl
 
 import (
 	"context"
+	"crypto/x509"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,23 +18,32 @@ const (
 	KeyFileName = "key.pem"
 )
 
+// Signer is the subset of mkcert CertManager needs. *tools.Mkcert satisfies
+// it; tests substitute an in-process CA so `make test` needs no mkcert binary.
+type Signer interface {
+	GetCARoot(ctx context.Context) (string, error)
+	GenerateCert(ctx context.Context, certPath, keyPath string, domains ...string) error
+}
+
 // CertManager handles SSL certificate operations
 type CertManager struct {
-	certsDir string        // ~/.zdev/certs
-	mkcert   *tools.Mkcert // mkcert wrapper
+	certsDir string         // ~/.zdev/certs
+	mkcert   Signer         // mkcert wrapper
+	roots    *x509.CertPool // mkcert CA, loaded once per manager
 }
 
 // NewCertManager creates a new certificate manager
 func NewCertManager(mkcertPath string) (*CertManager, error) {
+	return NewCertManagerWithSigner(tools.NewMkcert(mkcertPath))
+}
+
+// NewCertManagerWithSigner creates a certificate manager with a custom signer.
+func NewCertManagerWithSigner(signer Signer) (*CertManager, error) {
 	certsDir := config.GetCertsDir()
 	if err := os.MkdirAll(certsDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create certs directory: %w", err)
 	}
-
-	return &CertManager{
-		certsDir: certsDir,
-		mkcert:   tools.NewMkcert(mkcertPath),
-	}, nil
+	return &CertManager{certsDir: certsDir, mkcert: signer}, nil
 }
 
 // GetCertPaths returns paths to cert and key files
@@ -88,32 +98,20 @@ func (c *CertManager) EnsureCerts(ctx context.Context, domain string) (string, s
 // VerifyCertCA checks if the certificate was signed by the current mkcert CA
 func (c *CertManager) VerifyCertCA(ctx context.Context) (bool, error) {
 	certPath, _ := c.GetCertPaths()
-
-	// Get the mkcert CA root directory
-	caRoot, err := c.mkcert.GetCARoot(ctx)
+	cert, _, err := readCert(certPath)
 	if err != nil {
 		return false, err
 	}
-
-	caPath := caRoot + "/rootCA.pem"
-
-	// Use openssl to verify the cert against the CA
-	_, err = tools.RunTool(ctx, "openssl", "verify", "-CAfile", caPath, certPath)
-	if err != nil {
-		// Verification failed - cert not signed by current CA
-		return false, nil
-	}
-
-	return true, nil
+	return c.signedByCurrentCA(ctx, cert)
 }
 
 // buildDomainList builds the list of domains/SANs for the certificate
 func buildDomainList(domain string) []string {
 	return []string{
-		"*." + domain,          // Wildcard for project domains (e.g., *.0ploy.dev)
-		"*.shared." + domain,   // Wildcard for shared services (e.g., *.shared.0ploy.dev)
-		domain,                 // Bare domain
-		"localhost",            // Local development
-		"127.0.0.1",            // IP-based access
+		"*." + domain,        // Wildcard for project domains (e.g., *.0ploy.dev)
+		"*.shared." + domain, // Wildcard for shared services (e.g., *.shared.0ploy.dev)
+		domain,               // Bare domain
+		"localhost",          // Local development
+		"127.0.0.1",          // IP-based access
 	}
 }

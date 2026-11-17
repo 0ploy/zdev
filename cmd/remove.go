@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/0ploy/zdev/internal/project"
+	"github.com/0ploy/zdev/internal/ssl"
 	"github.com/0ploy/zdev/internal/state"
 	"github.com/spf13/cobra"
 )
@@ -78,6 +79,9 @@ func runRemoveImpl(ctx context.Context, name string) error {
 
 	if err := stateMgr.UnregisterProject(name); err != nil {
 		return fmt.Errorf("failed to unregister project: %w", err)
+	}
+	if err := ssl.RemoveProjectCert(name); err != nil {
+		fmt.Printf("Warning: failed to remove project certificate: %v\n", err)
 	}
 
 	updateDocsWithProjects(ctx)

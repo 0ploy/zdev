@@ -30,7 +30,7 @@ services:
       # Uses custom domain: api.my-app.0ploy.dev
 ```
 
-The `domain` field supports variable substitution and only applies to HTTP/HTTPS routing (not TCP/UDP).
+The `domain` field supports variable substitution and only applies to HTTP/HTTPS routing (not TCP/UDP). Nested domains like `api.my-app.0ploy.dev` get HTTPS too: zdev issues a per-project certificate for them on `zdev start` (see [Certificates](https-and-dns.md#certificates)).
 
 ## TCP/UDP Routing
 

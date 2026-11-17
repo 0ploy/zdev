@@ -2,6 +2,10 @@
 
 Every project and shared service gets locally-trusted HTTPS certificates. Your browser shows a green lock, cookies work with `Secure` flag, and your local environment matches production.
 
+## Certificates
+
+zdev signs its certificates with a local [mkcert](https://github.com/FiloSottile/mkcert) CA that `zdev systemcheck` installs once. The main certificate covers `*.0ploy.dev`, `*.shared.0ploy.dev` and `0ploy.dev`. A TLS wildcard matches exactly one label, so a routing domain nested deeper (`api.my-app.0ploy.dev`) or outside the zdev domain gets its own per-project certificate. `zdev start` and `zdev update` issue and refresh it automatically when the project's routing domains change; no router restart and no sudo are needed. If you reinstall the local CA, the next router start re-signs every certificate.
+
 ## Router blocking the wildcard? (DNS rebinding protection)
 
 zdev's URLs work because `*.0ploy.dev` is a public wildcard record pointing at `127.0.0.1`. Some routers refuse to return answers that point at loopback ("DNS rebinding protection"), so `https://my-app.0ploy.dev` fails to resolve on those networks.

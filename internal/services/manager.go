@@ -8,6 +8,7 @@ import (
 
 	"github.com/0ploy/zdev/internal/config"
 	"github.com/0ploy/zdev/internal/runtime"
+	"github.com/0ploy/zdev/internal/ssl"
 	"github.com/0ploy/zdev/internal/state"
 )
 
@@ -351,6 +352,10 @@ func (m *Manager) StartRouter(ctx context.Context) error {
 		return fmt.Errorf("failed to load state: %w", err)
 	}
 
+	// Before the hash compare: a main cert regenerated here is picked up by
+	// the dynamic.yaml rewrite in buildRouterContainerConfig.
+	m.refreshProjectCerts(ctx, stateMgr)
+
 	tcpPorts, udpPorts, err := stateMgr.GetAllRoutingPorts()
 	if err != nil {
 		return fmt.Errorf("failed to get routing ports from state: %w", err)
@@ -427,6 +432,51 @@ func (m *Manager) StartRouter(ctx context.Context) error {
 
 	return nil
 }
+
+// refreshProjectCerts is the router-side half of per-project certificates
+// (the project lifecycle owns issuing them, since only it knows its
+// hostnames). It needs no project config: it drops certs of projects no
+// longer in state, and regenerates the main and per-project certs with
+// their existing names when the mkcert CA changed. Best effort - a missing
+// mkcert or unreadable CA never blocks the router.
+func (m *Manager) refreshProjectCerts(ctx context.Context, stateMgr *state.Manager) {
+	projects, err := stateMgr.ListProjects()
+	if err != nil {
+		return
+	}
+	keep := make(map[string]bool, len(projects))
+	names := make([]string, 0, len(projects))
+	for name := range projects {
+		keep[name] = true
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	if err := ssl.SweepOrphanProjectCerts(keep); err != nil {
+		fmt.Printf("Warning: failed to remove orphaned project certificates: %v\n", err)
+	}
+
+	if !m.cfg.SSL.Enabled {
+		return
+	}
+	certMgr, err := newCertManager()
+	if err != nil {
+		return
+	}
+	mainRegenerated, regenerated, err := certMgr.RefreshForCA(ctx, m.cfg.Domain, names)
+	if mainRegenerated {
+		fmt.Println("Local CA changed, regenerated the main certificate")
+	}
+	if len(regenerated) > 0 {
+		fmt.Printf("Local CA changed, regenerated certificates for: %s\n", strings.Join(regenerated, ", "))
+	}
+	if err != nil {
+		fmt.Printf("Warning: failed to refresh certificates: %v\n", err)
+	}
+}
+
+// newCertManager is the mkcert seam for refreshProjectCerts.
+var newCertManager = ssl.NewDefaultCertManager
 
 // buildRouterContainerConfig assembles the full router container config
 // for a given set of TCP/UDP ports, including TLS and docs wiring. It

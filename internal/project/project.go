@@ -15,6 +15,7 @@ import (
 	"github.com/0ploy/zdev/internal/runtime"
 	"github.com/0ploy/zdev/internal/secrets"
 	"github.com/0ploy/zdev/internal/services"
+	"github.com/0ploy/zdev/internal/ssl"
 	"github.com/0ploy/zdev/internal/state"
 )
 
@@ -572,7 +573,8 @@ func (p *Project) pauseServiceMutagenSessions(ctx context.Context, mounts []Muta
 	}
 }
 
-// registerAndConnect records the project's routing ports in global state
+// registerAndConnect records the project's routing ports in global state,
+// keeps its certificate in line with its routed hosts,
 // and attaches the enabled shared services and link networks. Runs at
 // the end of both start and Update so the two paths cannot drift.
 func (p *Project) registerAndConnect(ctx context.Context) error {
@@ -584,6 +586,13 @@ func (p *Project) registerAndConnect(ctx context.Context) error {
 	if err := stateMgr.RegisterProjectWithRouting(p.Config.Name, p.Dir, tcpPorts, udpPorts); err != nil {
 		return fmt.Errorf("failed to register project: %w", err)
 	}
+
+	// After registration, never before: StartRouter (ours below, or another
+	// project's running concurrently) sweeps certs of unregistered projects,
+	// so a cert issued during a long first start could be deleted again.
+	// Issuing late costs nothing - Traefik loads it live, no recreate, and
+	// it stays outside the config hash. Runs on every start/update, drift or not.
+	p.ensureProjectCert(ctx)
 
 	p.connectEnabledSharedServices(ctx)
 	p.connectLinks(ctx)
@@ -791,6 +800,9 @@ func (p *Project) Down(ctx context.Context, removeVolumes bool) error {
 	}
 	if err := stateMgr.UnregisterProject(p.Config.Name); err != nil {
 		return fmt.Errorf("failed to unregister project after removing resources: %w", err)
+	}
+	if err := ssl.RemoveProjectCert(p.Config.Name); err != nil {
+		fmt.Printf("Warning: failed to remove project certificate: %v\n", err)
 	}
 
 	// Refresh router to release any TCP/UDP ports this project was using
@@ -1065,7 +1077,7 @@ func (p *Project) buildContainerConfig(name string, svc config.ServiceConfig, mu
 	}
 
 	// Configure routing if specified (after user labels, so routing wins on conflict)
-	if svc.Routing != nil && p.Config.Shared.Router {
+	if p.routesService(svc) {
 		p.configureRouting(&cfg, name, svc.Routing, isTLSAvailable())
 	}
 

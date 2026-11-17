@@ -129,6 +129,8 @@ Service fields: `image`, `dockerfile`, `command`, `working_dir`, `volumes`, `env
         domain: rabbitmq.${PROJECTNAME}.${ZDEV_DOMAIN}   # https://rabbitmq.my-app.0ploy.dev
   ```
 
+  Nested domains like this one get a trusted per-project certificate automatically on `zdev start` / `zdev update` (the main cert's wildcard covers only one label). If HTTPS fails with "no alternative certificate subject name", run `zdev update`.
+
 - **TCP/UDP** for host tools (DB clients): `routing: { protocol: tcp, port: 5432, host_port: 5432 }`. Host ports must be unique across projects.
 - Services in one project reach each other by service name (`db`, `redis`). Other projects need a link (`linking.md`).
 

@@ -3,6 +3,7 @@ package project
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"github.com/0ploy/zdev/internal/config"
 	"github.com/0ploy/zdev/internal/runtime"
@@ -69,6 +70,43 @@ func (p *Project) sharedManager() (*services.Manager, error) {
 	return services.NewManager(cfg), nil
 }
 
+// routesService reports whether a service gets Traefik routing labels.
+// Shared by buildContainerConfig and routedHosts so labels and per-project
+// certs can never disagree about which services are routed.
+func (p *Project) routesService(svc config.ServiceConfig) bool {
+	return svc.Routing != nil && p.Config.Shared.Router
+}
+
+// routingHost returns the hostname in a service's Host() rule: the
+// service-level domain if set, otherwise the project domain.
+func (p *Project) routingHost(routing *config.RoutingConfig) string {
+	if routing.Domain != "" {
+		return routing.Domain
+	}
+	return p.Config.Domain
+}
+
+// routedHosts returns every hostname that gets an HTTP(S) Host() rule,
+// sorted and deduplicated. TCP/UDP routes match HostSNI(*) and need no cert.
+func (p *Project) routedHosts() []string {
+	seen := map[string]bool{}
+	var hosts []string
+	for _, svc := range p.Config.Services {
+		if !p.routesService(svc) {
+			continue
+		}
+		if svc.Routing.Protocol != "http" && svc.Routing.Protocol != "https" {
+			continue
+		}
+		if h := p.routingHost(svc.Routing); h != "" && !seen[h] {
+			seen[h] = true
+			hosts = append(hosts, h)
+		}
+	}
+	sort.Strings(hosts)
+	return hosts
+}
+
 // configureRouting adds Traefik labels for routing based on the routing config
 func (p *Project) configureRouting(cfg *runtime.ContainerConfig, serviceName string, routing *config.RoutingConfig, tlsEnabled bool) {
 	traefikName := fmt.Sprintf("%s-%s", p.Config.Name, serviceName)
@@ -76,11 +114,7 @@ func (p *Project) configureRouting(cfg *runtime.ContainerConfig, serviceName str
 	cfg.Labels["traefik.enable"] = "true"
 	cfg.Labels["traefik.docker.network"] = p.NetworkName()
 
-	// Use service-level domain if set, otherwise fall back to project domain
-	routingDomain := p.Config.Domain
-	if routing.Domain != "" {
-		routingDomain = routing.Domain
-	}
+	routingDomain := p.routingHost(routing)
 
 	switch routing.Protocol {
 	case "http":

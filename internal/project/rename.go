@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/0ploy/zdev/internal/runtime"
+	"github.com/0ploy/zdev/internal/ssl"
 	"github.com/0ploy/zdev/internal/state"
 )
 
@@ -102,6 +103,11 @@ func (p *Project) Rename(ctx context.Context, newName string) error {
 		} else {
 			return fmt.Errorf("failed to update state: %w", err)
 		}
+	}
+
+	// The new name's cert is issued by the Start below
+	if err := ssl.RemoveProjectCert(oldName); err != nil {
+		fmt.Printf("Warning: failed to remove certificate for %s: %v\n", oldName, err)
 	}
 
 	// Phase 4: Update config file on disk
