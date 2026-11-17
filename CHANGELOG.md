@@ -1,3 +1,48 @@
+## v0.13.0
+
+Project commands get their own home: `.zdev/run/*.toml` jobs run with `zdev run`,
+and justfiles are deprecated - they still work in this release, with a warning,
+and will be removed in v1.0.0. Run `zdev run --convert-just` to migrate. Alongside,
+a round of fixes from a full code review makes destructive paths fail safe.
+
+### Features
+
+- **`zdev run` project commands.** Commands live in `.zdev/run/<cmd>.toml` and run with `zdev run <cmd> [job] [args]`, in their own namespace so a built-in can never shadow them. Jobs run on the host (from the project root) or inside a service container, and support dependencies, argument placeholders, quiet output, confirm prompts and the `step` / `warn` / `fail` helpers. `zdev run` lists commands, `--show` prints what would run, `--json` is for agents and completion. See [docs/project-commands.md](docs/project-commands.md).
+- **`zdev run --convert-just`** converts `.zdev/commands/*.just` into job files and keeps the originals as `.just.converted`. It refuses on anything it can't translate faithfully.
+- **HTTPS for nested routing domains.** A wildcard certificate covers one label, so `routing.domain` values like `api.myproj.0ploy.dev` or hosts outside the zdev domain failed certificate checks. Each project now gets its own certificate for those hosts, issued on `zdev start` / `zdev update`.
+- **`mutagen.sync_mode` in the global config is now applied** to every sync session. It was read but never passed on. The one-way modes sync host to container only.
+
+### Bug Fixes
+
+- **`zdev exec` passes piped input.** `cat dump.sql | zdev exec db mysql app` sent nothing and exited 0, because stdin was only attached together with a terminal.
+- **`zdev exec` and justfile commands are no longer killed after 30 minutes.** A shell or a dev server left open died at 30:00.
+- **`--config` no longer hijacks commands run inside a container.** It was read from anywhere on the command line, so `zdev exec app vitest --config vitest.config.ts` tried to load a project from `vitest.config.ts`. It is now only read before the command name.
+- **A local config no longer rewrites values in the committed config.** With a `.zdev/local/config.yaml` present, unquoted values were reinterpreted: `8.10` became `8.1`, `0644` became `420`, `2024-01-01` became a timestamp. A `mutagen.file_mode: 0644` silently synced files with the wrong mode, but only on machines that had a local config.
+- **Projects without an explicit `domain:` use the configured global `domain`.** They were always routed at `<name>.0ploy.dev`.
+- **`zdev start` / `zdev update` no longer wait 10 seconds per synced service** on projects that are already running.
+- **`zdev down` works after a shared service was disabled.** Setting e.g. `shared.mail: false` after a start left mail attached, so the network could not be removed and `zdev down` failed on every retry.
+- **`zdev update` keeps the old container when the new one can't be built.** A Dockerfile typo, a mistyped image tag or a 1Password failure used to leave the service removed.
+- **Shared services keep their project connections when a recreate fails.** A failed pull or start (port already in use) lost them, and later starts never restored them, so other projects returned 502. `zdev services recreate` now reports services it could not recreate instead of printing success.
+- **`zdev rename` can no longer lose volume data.** Old volumes were removed before steps that could still fail, a Docker error was read as "no such volume", and an existing volume under the new name was merged into. Rename now refuses those cases before stopping anything, removes the old volumes only once state and config carry the new name, and rolls the copies back on failure.
+- **Read-only directory mounts (`:ro`) work with file sync.** The `:ro` suffix ended up in the sync session's container path. Read-only mounts now stay plain Docker binds, which also re-enables the stale-mount check in `zdev status` for read-only single-file mounts.
+- **`zdev remove` no longer drops a project it could not clean up.** A project whose config failed to load, or whose teardown failed, was unregistered anyway with its containers left running. It now refuses unless `--force` is given. Removed projects are also taken out of their links.
+- **`zdev create` no longer suggests the non-existent `zdev setup`** for templates without a setup step.
+
+### Changed
+
+- **A second checkout of a project needs its own name.** Containers, volumes and the network are keyed by project name, so a git worktree or copy with the same `name:` took over the first checkout's resources, and `zdev down -v` there deleted them. zdev now refuses to start, update or `down` it; set a different `name:` in that checkout's `.zdev/local/config.yaml`.
+- Router image updated to Traefik v3.7, bundled just to 1.59.0.
+
+### Deprecations
+
+- **Justfiles (`.zdev/commands/*.just`) and the `zdev <cmd>` shorthand are deprecated** and will be removed in v1.0.0. Running one prints a warning. Convert with `zdev run --convert-just`.
+
+### Upgrade Notes
+
+- **The router is recreated once** for the new Traefik image. Connected projects are preserved.
+- **Services with a `:ro` mount are recreated once** on the next `zdev update`.
+- **With a custom global `domain`**, projects without an explicit `domain:` move to `<name>.<your domain>` on their next `zdev update`.
+
 ## v0.12.1
 
 The router quietly stopped serving projects it was still routing for. Two
