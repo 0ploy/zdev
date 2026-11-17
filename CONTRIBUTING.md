@@ -9,7 +9,7 @@ make build    # Build binary
 make test     # Run unit tests
 ```
 
-Requirements: Go 1.25+, Docker Desktop (for integration tests)
+Requirements: Go 1.27+, Docker Desktop (for integration tests)
 
 ## Project Structure
 

@@ -147,7 +147,7 @@ func Convert(name string, dumpJSON, source []byte) (*Result, error) {
 	}
 	for _, k := range sortedKeys(d.Settings) {
 		v := d.Settings[k]
-		if harmlessSettings[k] || v == nil || v == false {
+		if harmlessSettings[k] || isDefaultSetting(v) {
 			continue
 		}
 		problem("uses set %s", strings.ReplaceAll(k, "_", "-"))
@@ -739,6 +739,21 @@ func joinText(frags []any) string {
 		}
 	}
 	return sb.String()
+}
+
+// isDefaultSetting reports whether a dumped setting holds just's default:
+// null, false, or an empty list (newer just versions dump list-valued
+// settings such as dotenv_command as [] when unset).
+func isDefaultSetting(v any) bool {
+	switch x := v.(type) {
+	case nil:
+		return true
+	case bool:
+		return !x
+	case []any:
+		return len(x) == 0
+	}
+	return false
 }
 
 func boolSetting(settings map[string]any, key string) bool {

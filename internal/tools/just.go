@@ -20,10 +20,10 @@ func JustTool() ToolInfo {
 		BinaryName:  "just",
 		ArchiveType: "tar.gz",
 		Checksums: map[string]string{
-			"darwin/amd64": "e0b83a9352952ab25e5cf13f6cb03dd1872416e5d89388b56d6ca58f11b0a3a8",
-			"darwin/arm64": "d21b20df01ec9b9762b0ef08e56ae8dccf3738770edeafa8d2b3a750aee06d78",
-			"linux/amd64":  "05eb2f068b641b06e5b318796c2e27d4dcca608e65b34329a08c1b9f582611bd",
-			"linux/arm64":  "993b78f51004248114af22368f69715541542b3c9941c80e02f8ae10eb404ae0",
+			"darwin/amd64": "036ead9df9bc31dbae9934ae3b4236ed124d0bafcffd33439460ae084d5c9cb7",
+			"darwin/arm64": "6574cea774ed4cae12e24b6aa11857de33e80dab4667cf628fd5840df96a2a9d",
+			"linux/amd64":  "409044617b6f06517c1035e55ca38c8c856ff8b650e41bc2aa1ef82d5903a23e",
+			"linux/arm64":  "23871b1702bfd550fb5f901778fd4290ecf2ee034a45a889fbe96d89b188086d",
 		},
 		URLBuilder: func(template, version, goos, goarch string) string {
 			arch := JustArch(goarch)

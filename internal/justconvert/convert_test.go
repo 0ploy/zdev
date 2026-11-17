@@ -13,7 +13,7 @@ import (
 	"github.com/0ploy/zdev/internal/runtime"
 )
 
-// The testdata/*.json dumps were generated with just 1.49.0 (config.JustVersion):
+// The testdata/*.json dumps were generated with just 1.59.0 (config.JustVersion):
 //
 //	just --justfile testdata/<name>.just --dump --dump-format json > testdata/<name>.json
 func convertFixture(t *testing.T, name string) *Result {

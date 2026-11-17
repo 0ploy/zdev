@@ -21,7 +21,7 @@ const (
 // Shared service image versions
 const (
 	// RouterImage is the default Traefik router image
-	RouterImage = "traefik:v3.6"
+	RouterImage = "traefik:v3.7"
 
 	// MailImage is the default Mailpit image
 	MailImage = "axllent/mailpit:latest"
@@ -67,12 +67,12 @@ const (
 	MkcertURLTemplate = "https://github.com/FiloSottile/mkcert/releases/download/%s/mkcert-%s-%s-%s"
 
 	// JustVersion is the version of just to download
-	JustVersion = "1.49.0"
+	JustVersion = "1.59.0"
 
 	// JustURLTemplate is the download URL template for just
 	// Use with fmt.Sprintf(JustURLTemplate, JustVersion, JustVersion, arch, os)
 	// where arch is "x86_64" or "aarch64", os is "apple-darwin" or "unknown-linux-musl"
-	// Example: https://github.com/casey/just/releases/download/1.49.0/just-1.49.0-aarch64-apple-darwin.tar.gz
+	// Example: https://github.com/casey/just/releases/download/1.59.0/just-1.59.0-aarch64-apple-darwin.tar.gz
 	JustURLTemplate = "https://github.com/casey/just/releases/download/%s/just-%s-%s-%s.tar.gz"
 
 	// CtopVersion is the version of ctop to download
