@@ -31,9 +31,9 @@ func TestParseRef(t *testing.T) {
 
 	invalid := []string{
 		"op-env://",
-		"op-env://API_KEY",             // missing environment ID segment
-		"op-env:///API_KEY",            // empty environment ID
-		"op-env://" + testEnvID + "/",  // empty variable name
+		"op-env://API_KEY",            // missing environment ID segment
+		"op-env:///API_KEY",           // empty environment ID
+		"op-env://" + testEnvID + "/", // empty variable name
 		"op-env://" + testEnvID + "/KEY WITH SPACE",
 		"op-env://" + testEnvID + "/KEY=VALUE",
 		"op-env://" + testEnvID + "/a/b", // slash in variable name

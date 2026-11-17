@@ -162,8 +162,11 @@ func runCreate(cmd *cobra.Command, args []string) error {
 			fmt.Println("  zdev start")
 		} else if hasSetupJob(targetDir) {
 			fmt.Println("  zdev run setup")
-		} else {
+		} else if hasLegacySetupJustfile(targetDir) {
 			fmt.Println("  zdev setup")
+		} else {
+			// Nothing to set up: deps install on boot.
+			fmt.Println("  zdev start")
 		}
 	}
 
@@ -248,6 +251,13 @@ func promptProjectName() (string, error) {
 func hasSetupJob(projectDir string) bool {
 	_, err := os.Stat(filepath.Join(run.Dir(projectDir), "setup.toml"))
 	return err == nil
+}
+
+// hasLegacySetupJustfile reports whether a template still ships the
+// deprecated .zdev/commands/setup.just, the only case `zdev setup` exists.
+func hasLegacySetupJustfile(projectDir string) bool {
+	info, err := project.GetJustfileFromDir(projectDir, "setup")
+	return err == nil && info != nil
 }
 
 // runAutoSetup runs the project's setup command: the `setup` job

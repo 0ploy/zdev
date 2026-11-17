@@ -274,4 +274,3 @@ services:
 		t.Error("network should not exist after Down")
 	}
 }
-

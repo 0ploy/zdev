@@ -2,6 +2,7 @@ package project
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -266,5 +267,41 @@ func TestUpdate_FreshBuildImageIsNoop(t *testing.T) {
 	}
 	if mock.CallCount("RemoveContainer") != 0 {
 		t.Errorf("RemoveContainer called %d times, want 0", mock.CallCount("RemoveContainer"))
+	}
+}
+
+// TestUpdate_FailedBuildKeepsContainer: Update used to remove the container
+// and only then build, so a Dockerfile typo left the service gone.
+func TestUpdate_FailedBuildKeepsContainer(t *testing.T) {
+	mock := runtime.NewMockRuntime()
+	p := newBuildTestProject(t, mock, nil)
+	seedRunningBuildService(t, mock, p)
+	mock.ImagesExist[buildTestTag] = true
+	mock.ImageLabels[buildTestTag] = map[string]string{BuildHashLabel: "outdated"}
+	mock.Errors["BuildImage"] = errors.New("unknown instruction: RUNN")
+
+	if _, err := p.Update(context.Background()); err == nil {
+		t.Fatal("Update succeeded despite a failing build")
+	}
+	if n := mock.CallCount("RemoveContainer"); n != 0 {
+		t.Errorf("RemoveContainer called %d times, want 0 - the old container must survive a failed build", n)
+	}
+}
+
+// TestUpdate_ForceBuildBuildsOnce: Update builds before removing the
+// container; the start path that follows must not build a second time.
+func TestUpdate_ForceBuildBuildsOnce(t *testing.T) {
+	mock := runtime.NewMockRuntime()
+	p := newBuildTestProject(t, mock, nil)
+	p.BuildMode = BuildAlways
+	seedRunningBuildService(t, mock, p)
+	mock.ImagesExist[buildTestTag] = true
+	mock.ImageLabels[buildTestTag] = map[string]string{BuildHashLabel: "outdated"}
+
+	if _, err := p.Update(context.Background()); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if n := mock.CallCount("BuildImage"); n != 1 {
+		t.Errorf("BuildImage called %d times, want 1", n)
 	}
 }

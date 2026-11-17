@@ -1,5 +1,7 @@
 package runtime
 
+import "strings"
+
 import "io"
 
 // ContainerConfig defines how to create a container
@@ -25,8 +27,28 @@ type ContainerConfig struct {
 // VolumeMount defines a volume or bind mount
 type VolumeMount struct {
 	Source   string // Host path or volume name
-	Target   string // Container path
+	Target   string // Container path, without mode options
 	ReadOnly bool
+	// Options holds further comma-separated mount options from the config
+	// (e.g. "z", "cached"), passed through to docker as-is. "ro" and "rw"
+	// are never in here - ReadOnly carries that.
+	Options string
+}
+
+// Arg renders the mount as a `docker -v` value: source:target[:options].
+func (v VolumeMount) Arg() string {
+	mount := v.Source + ":" + v.Target
+	var opts []string
+	if v.ReadOnly {
+		opts = append(opts, "ro")
+	}
+	if v.Options != "" {
+		opts = append(opts, v.Options)
+	}
+	if len(opts) > 0 {
+		mount += ":" + strings.Join(opts, ",")
+	}
+	return mount
 }
 
 // ImageBuildConfig defines how to build a local image from a Dockerfile

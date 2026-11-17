@@ -68,8 +68,8 @@ func RouterContainerConfig(cfg RouterConfig) runtime.ContainerConfig {
 	}
 
 	labels := map[string]string{
-		"zdev.managed":       "true",
-		"zdev.service":       "router",
+		"zdev.managed":        "true",
+		"zdev.service":        "router",
 		DozzleVisibilityLabel: "true",
 		DozzleGroupLabel:      DozzleSharedGroup,
 	}

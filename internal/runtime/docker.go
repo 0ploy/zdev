@@ -207,11 +207,7 @@ func (d *DockerCLI) CreateContainer(ctx context.Context, cfg ContainerConfig) (s
 
 	// Add volume mounts
 	for _, vol := range cfg.Volumes {
-		mount := fmt.Sprintf("%s:%s", vol.Source, vol.Target)
-		if vol.ReadOnly {
-			mount += ":ro"
-		}
-		args = append(args, "-v", mount)
+		args = append(args, "-v", vol.Arg())
 	}
 
 	// Add port mappings
@@ -271,11 +267,7 @@ func (d *DockerCLI) RunContainer(ctx context.Context, cfg RunConfig) error {
 	}
 
 	for _, vol := range cfg.Volumes {
-		mount := fmt.Sprintf("%s:%s", vol.Source, vol.Target)
-		if vol.ReadOnly {
-			mount += ":ro"
-		}
-		args = append(args, "-v", mount)
+		args = append(args, "-v", vol.Arg())
 	}
 
 	if cfg.WorkingDir != "" {

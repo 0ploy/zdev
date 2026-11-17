@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"testing"
 
@@ -154,4 +155,38 @@ func sortedNetworkNames(networks map[string][]string) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// TestStartService_FailedStartKeepsProjectNetworks: the snapshot used to be
+// restored only after a successful start, so a start failure (port already
+// allocated) dropped it, and the next run took the plain-start branch and
+// never reattached - every other project 502ed.
+func TestStartService_FailedStartKeepsProjectNetworks(t *testing.T) {
+	mgr, mock := mockManager(t)
+	attach(mock, MailContainerName, "stale-hash", "alpha.zdev")
+	mock.Errors["StartContainer"] = errors.New("port is already allocated")
+
+	if err := mgr.StartMail(context.Background()); err == nil {
+		t.Fatal("StartMail succeeded despite a failing start")
+	}
+	if _, ok := mock.ContainerNetworks[MailContainerName]["alpha.zdev"]; !ok {
+		t.Errorf("created container lost alpha.zdev after a failed start (attached: %v)",
+			sortedNetworkNames(mock.ContainerNetworks[MailContainerName]))
+	}
+}
+
+// TestStartService_FailedPullKeepsContainer: the old container must survive
+// a pull failure on the recreate path.
+func TestStartService_FailedPullKeepsContainer(t *testing.T) {
+	mgr, mock := mockManager(t)
+	attach(mock, MailContainerName, "stale-hash", "alpha.zdev")
+	mock.ImagesExist["axllent/mailpit:latest"] = false
+	mock.Errors["PullImage"] = errors.New("registry unreachable")
+
+	if err := mgr.StartMail(context.Background()); err == nil {
+		t.Fatal("StartMail succeeded despite a failing pull")
+	}
+	if n := mock.CallCount("RemoveContainer"); n != 0 {
+		t.Errorf("RemoveContainer called %d times before a failed pull, want 0", n)
+	}
 }

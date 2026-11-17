@@ -148,6 +148,13 @@ func (p *Project) serviceSyncMounts(serviceName string, svc config.ServiceConfig
 			continue
 		}
 
+		// Read-only binds stay native binds: Mutagen writes into the
+		// container through the mount, which a read-only sync volume would
+		// refuse, and a writable one would break the promise of ":ro".
+		if readOnly, _ := volumeMountOptions(vol); readOnly {
+			continue
+		}
+
 		source, target, _ := parseVolumeMount(vol)
 
 		// Resolve source to absolute path
@@ -696,10 +703,7 @@ func (p *Project) transformVolumesForMutagen(serviceName string, volumes []strin
 
 		if isNamedVolume {
 			// Named volume - prefix with project name
-			result = append(result, runtime.VolumeMount{
-				Source: p.VolumeName(source),
-				Target: target,
-			})
+			result = append(result, volumeMount(vol, p.VolumeName(source), target))
 		} else if isBindMount(vol) {
 			// Bind mount - use the sync volume declared for THIS mount. Every
 			// directory bind of the service has its own; a lookup by service
@@ -713,17 +717,11 @@ func (p *Project) transformVolumesForMutagen(serviceName string, volumes []strin
 				})
 			} else {
 				// Fallback to bind mount if not in Mutagen mounts
-				result = append(result, runtime.VolumeMount{
-					Source: source,
-					Target: target,
-				})
+				result = append(result, volumeMount(vol, source, target))
 			}
 		} else {
 			// Regular bind mount
-			result = append(result, runtime.VolumeMount{
-				Source: source,
-				Target: target,
-			})
+			result = append(result, volumeMount(vol, source, target))
 		}
 	}
 

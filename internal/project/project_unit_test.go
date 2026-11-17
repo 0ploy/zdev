@@ -134,18 +134,17 @@ func TestParseVolumeMount_NoColon(t *testing.T) {
 }
 
 func TestParseVolumeMount_MultipleColons(t *testing.T) {
-	// SplitN with n=2 splits on the first colon only
-	// "C:\path:/container" -> first colon is after "C", so source="C", target="\path:/container"
-	source, target, isNamed := parseVolumeMount("C:\\path:/container")
-	if source != "C" {
-		t.Errorf("source = %q, want %q", source, "C")
+	// The third field is the mode ("ro", "z", ...), never part of the target:
+	// targets are used as container paths for sync sessions and mountinfo.
+	source, target, isNamed := parseVolumeMount("./conf:/etc/app:ro")
+	if source != "./conf" {
+		t.Errorf("source = %q, want %q", source, "./conf")
 	}
-	if target != "\\path:/container" {
-		t.Errorf("target = %q, want %q", target, "\\path:/container")
+	if target != "/etc/app" {
+		t.Errorf("target = %q, want %q", target, "/etc/app")
 	}
-	// "C" doesn't start with / or . so it's treated as a named volume
-	if !isNamed {
-		t.Error("isNamedVolume = false, want true ('C' doesn't start with / or .)")
+	if isNamed {
+		t.Error("isNamedVolume = true, want false")
 	}
 }
 

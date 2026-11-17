@@ -111,6 +111,7 @@ Service fields: `image`, `dockerfile`, `command`, `working_dir`, `volumes`, `env
 
 - **Bind mounts** start with `/`, `.` or `${`; **named volumes** are a bare name (`db_data:/var/lib/...`). Named volumes need no top-level declaration, persist across `stop`/`start` and `down`, and are removed only by `zdev down -v`.
 - **Mutagen** (macOS) syncs every directory bind at native speed. Always add dependency and build dirs to `mutagen.ignore` (`node_modules`, `vendor`, `.pnpm-store`, `.nuxt`, `.next`, `var/cache`); otherwise installs are 5-10x slower and `.pnpm-store` syncs ~500MB of platform-specific binaries that break on image changes.
+- **Read-only binds (`:ro`) are never synced** - they stay plain Docker binds, so they don't need `no_sync`.
 - **Directories read during container STARTUP** must be listed in `services.<name>.mutagen.no_sync` (e.g. `/docker-entrypoint-initdb.d`, nginx `conf.d`, certs): containers start before sync resumes, so those dirs would be empty when read. Entries must match one of the service's mount paths.
 - **Single-file binds** stay plain bind mounts. Make sure the host file exists first (Docker creates a missing source as a directory). They go stale when an editor replaces the file; `zdev status` flags it, restarting the service fixes it.
 - **Ownership:** if the container process runs as a non-root user (`www-data`, `node`), set `services.<name>.mutagen.user` / `group` so synced files are readable.
@@ -146,7 +147,7 @@ services:
 
 ## Local overrides
 
-`.zdev/local/config.yaml` (gitignored) deep-merges on top of `.zdev/config.yaml` before variable substitution: maps merge, scalars replace, **lists replace** (copy the whole `volumes:` / `mutagen.ignore:` list to change it). Put per-developer values there as `variables:` and reference them as `${VAR}` in the committed config. Team secrets belong in 1Password instead.
+`.zdev/local/config.yaml` (gitignored) deep-merges on top of `.zdev/config.yaml` before variable substitution: maps merge, scalars replace, **lists replace** (copy the whole `volumes:` / `mutagen.ignore:` list to change it). Put per-developer values there as `variables:` and reference them as `${VAR}` in the committed config. Team secrets belong in 1Password instead. A second checkout of the same project (git worktree) must set its own `name:` there - zdev refuses a name registered to another directory that still holds the project, since containers and volumes are keyed by name.
 
 ## Gotchas
 

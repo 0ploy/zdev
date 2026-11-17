@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/0ploy/zdev/internal/project"
@@ -17,8 +18,8 @@ var (
 )
 
 var removeCmd = &cobra.Command{
-	Use:               "remove NAME",
-	Short:             "Remove a project from the registry",
+	Use:   "remove NAME",
+	Short: "Remove a project from the registry",
 	Long: `Remove a registered project by name. If the project directory still exists,
 containers and networks are cleaned up (like 'zdev down'). If the directory
 no longer exists, the stale entry is simply removed from the registry.`,
@@ -54,8 +55,23 @@ func runRemoveImpl(ctx context.Context, name string) error {
 	}
 
 	// If the project directory exists, do a full cleanup
-	proj, err := project.LoadFromDir(entry.Path)
-	if err == nil {
+	proj, loadErr := project.LoadFromDir(entry.Path)
+	if loadErr != nil {
+		if _, statErr := os.Stat(entry.Path); statErr == nil && !removeForce {
+			// The directory is there but its config doesn't load (syntax
+			// error, a field this zdev doesn't know). Its containers and
+			// volumes are still out there - dropping the entry would orphan
+			// them without asking.
+			return fmt.Errorf("cannot load project %q at %s: %w\n"+
+				"Fix the config and retry, or use --force to drop the registry entry anyway "+
+				"(containers and volumes are kept; 'zdev cleanup' lists them)", name, entry.Path, loadErr)
+		}
+		if !removeForce && !confirm(fmt.Sprintf("Project directory %s is gone. Remove the registry entry for %q? [y/N]: ", entry.Path, name)) {
+			fmt.Println("Aborted.")
+			return nil
+		}
+		fmt.Println("Removing stale registry entry (leftover containers and volumes: 'zdev cleanup')...")
+	} else {
 		if !removeForce {
 			var msg string
 			if removeVolumes {
@@ -71,14 +87,19 @@ func runRemoveImpl(ctx context.Context, name string) error {
 
 		fmt.Printf("Removing project %s...\n", name)
 		if err := proj.Down(ctx, removeVolumes); err != nil {
+			if !removeForce {
+				return fmt.Errorf("cleanup failed, project kept registered so it can be retried: %w\n"+
+					"Use --force to drop the registry entry anyway", err)
+			}
 			fmt.Printf("Warning: cleanup failed: %v\n", err)
 		}
-	} else {
-		fmt.Printf("Project directory not loadable, removing stale entry...\n")
 	}
 
 	if err := stateMgr.UnregisterProject(name); err != nil {
 		return fmt.Errorf("failed to unregister project: %w", err)
+	}
+	if err := stateMgr.RemoveProjectFromLinks(name); err != nil {
+		fmt.Printf("Warning: failed to remove %s from its links: %v\n", name, err)
 	}
 	if err := ssl.RemoveProjectCert(name); err != nil {
 		fmt.Printf("Warning: failed to remove project certificate: %v\n", err)

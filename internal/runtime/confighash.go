@@ -51,7 +51,12 @@ func ComputeConfigHash(cfg ContainerConfig) string {
 
 	volumes := make([]string, 0, len(cfg.Volumes))
 	for _, v := range cfg.Volumes {
-		volumes = append(volumes, fmt.Sprintf("%s:%s:%v", v.Source, v.Target, v.ReadOnly))
+		entry := fmt.Sprintf("%s:%s:%v", v.Source, v.Target, v.ReadOnly)
+		if v.Options != "" {
+			// Only when set, so hashes of mounts without options are unchanged.
+			entry += ":" + v.Options
+		}
+		volumes = append(volumes, entry)
 	}
 	sort.Strings(volumes)
 

@@ -248,4 +248,3 @@ func TestMigrateIfNeededConvertsLegacyLayout(t *testing.T) {
 		t.Fatalf("second migrateIfNeeded: %v", err)
 	}
 }
-

@@ -240,6 +240,11 @@ func (m *Manager) startService(ctx context.Context, containerName, displayName, 
 		}
 		if currentLabels[runtime.ConfigHashLabel] != expectedCfg.Labels[runtime.ConfigHashLabel] {
 			fmt.Printf("%s config drift detected, recreating...\n", displayName)
+			// Pull first: a failed pull must leave the old container (and
+			// its project network attachments) in place.
+			if err := m.ensureImage(ctx, image, displayName); err != nil {
+				return err
+			}
 			preservedNetworks = m.snapshotProjectNetworks(ctx, containerName)
 			_ = m.runtime.StopContainer(ctx, containerName)
 			if err := m.runtime.RemoveContainer(ctx, containerName); err != nil {
@@ -255,17 +260,8 @@ func (m *Manager) startService(ctx context.Context, containerName, displayName, 
 		}
 	}
 
-	// Pull image if needed
-	imageExists, err := m.runtime.ImageExists(ctx, image)
-	if err != nil {
-		return fmt.Errorf("failed to check %s image: %w", displayName, err)
-	}
-
-	if !imageExists {
-		fmt.Printf("Pulling image %s...\n", image)
-		if err := m.runtime.PullImage(ctx, image); err != nil {
-			return fmt.Errorf("failed to pull %s image: %w", displayName, err)
-		}
+	if err := m.ensureImage(ctx, image, displayName); err != nil {
+		return err
 	}
 
 	fmt.Printf("Creating %s container...\n", strings.ToLower(displayName))
@@ -273,13 +269,32 @@ func (m *Manager) startService(ctx context.Context, containerName, displayName, 
 		return fmt.Errorf("failed to create %s container: %w", displayName, err)
 	}
 
+	// Reattach BEFORE starting: a created container accepts network
+	// connects, and if the start fails (port already allocated) the
+	// attachments survive on the container the next plain start reuses.
+	m.restoreProjectNetworks(ctx, containerName, preservedNetworks)
+
 	fmt.Printf("Starting %s...\n", strings.ToLower(displayName))
 	if err := m.runtime.StartContainer(ctx, containerName); err != nil {
 		return fmt.Errorf("failed to start %s: %w", displayName, err)
 	}
 
-	m.restoreProjectNetworks(ctx, containerName, preservedNetworks)
+	return nil
+}
 
+// ensureImage pulls image when it is not present locally.
+func (m *Manager) ensureImage(ctx context.Context, image, displayName string) error {
+	exists, err := m.runtime.ImageExists(ctx, image)
+	if err != nil {
+		return fmt.Errorf("failed to check %s image: %w", displayName, err)
+	}
+	if exists {
+		return nil
+	}
+	fmt.Printf("Pulling image %s...\n", image)
+	if err := m.runtime.PullImage(ctx, image); err != nil {
+		return fmt.Errorf("failed to pull %s image: %w", displayName, err)
+	}
 	return nil
 }
 
@@ -340,6 +355,13 @@ func (m *Manager) disconnectServiceFromProject(ctx context.Context, containerNam
 // to (see snapshotProjectNetworks) - otherwise every project except the one
 // being started loses its route.
 func (m *Manager) StartRouter(ctx context.Context) error {
+	return m.startRouter(ctx, nil)
+}
+
+// startRouter is StartRouter with network attachments carried in from a
+// caller that already removed the container (RefreshRouter), so they are
+// restored between create and start like the router's own snapshot.
+func (m *Manager) startRouter(ctx context.Context, carried map[string][]string) error {
 	// The router bind-mounts the Docker socket; fail early with guidance if
 	// it can't be mounted (e.g. Docker Desktop's default socket is disabled)
 	// rather than letting the daemon surface a cryptic mkdir error.
@@ -371,7 +393,8 @@ func (m *Manager) StartRouter(ctx context.Context) error {
 	}
 
 	// Project networks the router is on today, carried across a recreate.
-	var preservedNetworks map[string][]string
+	preservedNetworks := carried
+	image := m.cfg.Shared.Router.Image
 
 	if container != nil {
 		currentLabels, err := m.runtime.GetContainerLabels(ctx, RouterContainerName)
@@ -387,6 +410,10 @@ func (m *Manager) StartRouter(ctx context.Context) error {
 
 		if currentLabels[runtime.ConfigHashLabel] != expectedCfg.Labels[runtime.ConfigHashLabel] {
 			fmt.Println("Router config drift detected, recreating...")
+			// Pull first: a failed pull must leave the old router in place.
+			if err := m.ensureImage(ctx, image, "Router"); err != nil {
+				return err
+			}
 			preservedNetworks = m.snapshotProjectNetworks(ctx, RouterContainerName)
 			_ = m.runtime.StopContainer(ctx, RouterContainerName)
 			if err := m.runtime.RemoveContainer(ctx, RouterContainerName); err != nil {
@@ -401,17 +428,8 @@ func (m *Manager) StartRouter(ctx context.Context) error {
 		}
 	}
 
-	image := m.cfg.Shared.Router.Image
-	imageExists, err := m.runtime.ImageExists(ctx, image)
-	if err != nil {
-		return fmt.Errorf("failed to check router image: %w", err)
-	}
-
-	if !imageExists {
-		fmt.Printf("Pulling image %s...\n", image)
-		if err := m.runtime.PullImage(ctx, image); err != nil {
-			return fmt.Errorf("failed to pull router image: %w", err)
-		}
+	if err := m.ensureImage(ctx, image, "Router"); err != nil {
+		return err
 	}
 
 	// Recreate with the required (narrower) port set - if we're recreating
@@ -423,12 +441,13 @@ func (m *Manager) StartRouter(ctx context.Context) error {
 		return fmt.Errorf("failed to create router container: %w", err)
 	}
 
+	// Before start, so a failed start (port already allocated) keeps them.
+	m.restoreProjectNetworks(ctx, RouterContainerName, preservedNetworks)
+
 	fmt.Println("Starting router...")
 	if err := m.runtime.StartContainer(ctx, RouterContainerName); err != nil {
 		return fmt.Errorf("failed to start router: %w", err)
 	}
-
-	m.restoreProjectNetworks(ctx, RouterContainerName, preservedNetworks)
 
 	return nil
 }
@@ -561,18 +580,15 @@ func (m *Manager) RefreshRouter(ctx context.Context) error {
 	fmt.Println("Updating router ports...")
 	// Snapshot here, not in StartRouter: by the time it runs the container is
 	// already gone, so it has nothing left to read the old topology from.
+	// The snapshot is handed to startRouter, which restores it between
+	// create and start.
 	preservedNetworks := m.snapshotProjectNetworks(ctx, RouterContainerName)
 	_ = m.runtime.StopContainer(ctx, RouterContainerName)
 	if err := m.runtime.RemoveContainer(ctx, RouterContainerName); err != nil {
 		return fmt.Errorf("failed to remove router container: %w", err)
 	}
 
-	if err := m.StartRouter(ctx); err != nil {
-		return err
-	}
-
-	m.restoreProjectNetworks(ctx, RouterContainerName, preservedNetworks)
-	return nil
+	return m.startRouter(ctx, preservedNetworks)
 }
 
 // parsePortCSV parses the comma-separated port list stored in

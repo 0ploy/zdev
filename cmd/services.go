@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -227,22 +228,48 @@ func runServicesRecreateImpl(ctx context.Context) error {
 		_ = stopSharedService(ctx, mgr, registry[i])
 	}
 
-	// Remove containers (reverse order)
+	// Remove containers (reverse order). A removal that fails leaves the
+	// old container in place; starting it would only re-run the old config
+	// and report success, so it is skipped and reported instead.
 	fmt.Println("Removing containers...")
+	var errs []error
+	notRemoved := map[string]bool{}
 	for i := len(registry) - 1; i >= 0; i-- {
-		_ = docker.RemoveContainer(ctx, registry[i].ContainerName)
-	}
-
-	// Start fresh
-	fmt.Println("Starting services...")
-	for _, svc := range registry {
-		if !svc.IsEnabled(mgr) {
+		name := registry[i].ContainerName
+		exists, err := docker.ContainerExists(ctx, name)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s: failed to check container: %w", registry[i].Name, err))
+			notRemoved[name] = true
 			continue
 		}
-		if err := svc.Start(ctx, mgr); err != nil {
-			return err
+		if !exists {
+			continue
 		}
-		mgr.RestoreProjectNetworks(ctx, svc.ContainerName, preserved[svc.ContainerName])
+		if err := docker.RemoveContainer(ctx, name); err != nil {
+			errs = append(errs, fmt.Errorf("%s: failed to remove container: %w", registry[i].Name, err))
+			notRemoved[name] = true
+		}
+	}
+
+	// Start fresh. One failure doesn't stop the others, and every container
+	// that got created is reattached - even one whose start failed, so the
+	// attachments survive on the container the next plain start reuses.
+	fmt.Println("Starting services...")
+	for _, svc := range registry {
+		if !svc.IsEnabled(mgr) || notRemoved[svc.ContainerName] {
+			continue
+		}
+		startErr := svc.Start(ctx, mgr)
+		if exists, err := docker.ContainerExists(ctx, svc.ContainerName); err == nil && exists {
+			mgr.RestoreProjectNetworks(ctx, svc.ContainerName, preserved[svc.ContainerName])
+		}
+		if startErr != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", svc.Name, startErr))
+		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("some shared services were not recreated:\n%w", errors.Join(errs...))
 	}
 
 	printSharedServiceURLs(cfg, "Shared services recreated:")

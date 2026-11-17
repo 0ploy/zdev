@@ -19,16 +19,16 @@ const (
 
 // Manager handles first-run detection and setup
 type Manager struct {
-	zdevHome string
-	domain    string
+	zdevHome   string
+	domain     string
 	sslEnabled bool
 }
 
 // NewManager creates a new first-run manager
 func NewManager(cfg *config.GlobalConfig) (*Manager, error) {
 	return &Manager{
-		zdevHome: config.GetZdevHome(),
-		domain:    cfg.Domain,
+		zdevHome:   config.GetZdevHome(),
+		domain:     cfg.Domain,
 		sslEnabled: cfg.SSL.Enabled,
 	}, nil
 }

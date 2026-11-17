@@ -200,6 +200,29 @@ func (m *Manager) UnregisterProject(name string) error {
 	})
 }
 
+// RemoveProjectFromLinks drops a project's memberships from every link.
+// Only for a project that is gone for good (`zdev remove`, a stale entry in
+// `zdev cleanup`) - not part of UnregisterProject, which `zdev down` also
+// calls and after which the project's links must survive. Without it, a
+// later project that reuses the name silently joins the old links.
+func (m *Manager) RemoveProjectFromLinks(name string) error {
+	return m.Mutate(func(st *State) error {
+		for linkName, link := range st.Links {
+			kept := link.Members[:0]
+			for _, member := range link.Members {
+				if member.Project != name {
+					kept = append(kept, member)
+				}
+			}
+			if len(kept) != len(link.Members) {
+				link.Members = kept
+				st.Links[linkName] = link
+			}
+		}
+		return nil
+	})
+}
+
 // GetProject returns a single project entry
 func (m *Manager) GetProject(name string) (*ProjectEntry, error) {
 	state, err := m.Load()

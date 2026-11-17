@@ -11,11 +11,11 @@ import (
 
 // DNSCheckResult contains the result of a DNS verification
 type DNSCheckResult struct {
-	Domain       string
-	SystemDNS    []string // IPs resolved via system DNS
-	PublicDNS    []string // IPs resolved via 1.1.1.1
-	SystemError  error
-	PublicError  error
+	Domain        string
+	SystemDNS     []string // IPs resolved via system DNS
+	PublicDNS     []string // IPs resolved via 1.1.1.1
+	SystemError   error
+	PublicError   error
 	ResolvesTo127 bool
 }
 

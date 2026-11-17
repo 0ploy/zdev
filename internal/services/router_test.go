@@ -89,7 +89,7 @@ func TestRouterContainerConfig(t *testing.T) {
 			if !containsString(cfg.Ports, "443:443") {
 				t.Error("expected port 443:443")
 			}
-				// Check TCP ports
+			// Check TCP ports
 			for _, p := range tt.tcpPorts {
 				expected := fmt.Sprintf("%d:%d", p, p)
 				if !containsString(cfg.Ports, expected) {

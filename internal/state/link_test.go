@@ -405,3 +405,25 @@ func TestLinksDoNotAffectProjects(t *testing.T) {
 		t.Fatal("expected project to still exist after link deletion")
 	}
 }
+
+func TestRemoveProjectFromLinks(t *testing.T) {
+	mgr := newTestManager(t)
+	_ = mgr.CreateLink("test-net")
+	_ = mgr.AddLinkMembers("test-net", []LinkMember{
+		{Project: "proj-a"},
+		{Project: "proj-a", Service: "worker"},
+		{Project: "proj-b", Service: "app"},
+	})
+
+	if err := mgr.RemoveProjectFromLinks("proj-a"); err != nil {
+		t.Fatalf("RemoveProjectFromLinks: %v", err)
+	}
+
+	link, _ := mgr.GetLink("test-net")
+	if link == nil {
+		t.Fatal("link should still exist")
+	}
+	if len(link.Members) != 1 || link.Members[0].Project != "proj-b" {
+		t.Errorf("members = %+v, want only proj-b", link.Members)
+	}
+}

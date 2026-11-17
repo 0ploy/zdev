@@ -124,6 +124,13 @@ func (p *Project) serviceBuildStale(ctx context.Context, name string, svc config
 func (p *Project) ensureBuiltImage(ctx context.Context, name string, svc config.ServiceConfig) (bool, error) {
 	tag := p.buildImageTag(name, svc)
 
+	// Built once per run is enough: Update builds before removing the old
+	// container (so a broken Dockerfile keeps it), and the start path that
+	// follows must not build again under --build.
+	if p.builtImages[tag] {
+		return false, nil
+	}
+
 	if p.BuildMode == BuildNever {
 		exists, err := p.Runtime.ImageExists(ctx, tag)
 		if err != nil {
@@ -164,5 +171,29 @@ func (p *Project) ensureBuiltImage(ctx context.Context, name string, svc config.
 	}); err != nil {
 		return false, fmt.Errorf("failed to build image %s: %w", tag, err)
 	}
+	if p.builtImages == nil {
+		p.builtImages = map[string]bool{}
+	}
+	p.builtImages[tag] = true
 	return true, nil
+}
+
+// ensureServiceImage makes the service's image available locally - built
+// (when stale) for a `dockerfile:` service, pulled when missing otherwise -
+// so callers can do it BEFORE removing a container: a Dockerfile typo or a
+// mistyped image tag must fail with the old container still in place.
+func (p *Project) ensureServiceImage(ctx context.Context, name string, svc config.ServiceConfig) error {
+	if svc.Dockerfile != "" {
+		_, err := p.ensureBuiltImage(ctx, name, svc)
+		return err
+	}
+	exists, err := p.Runtime.ImageExists(ctx, svc.Image)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		fmt.Printf("Pulling image %s...\n", svc.Image)
+		return p.Runtime.PullImage(ctx, svc.Image)
+	}
+	return nil
 }

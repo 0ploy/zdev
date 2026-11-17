@@ -214,6 +214,9 @@ func runCleanup(cmd *cobra.Command, args []string) error {
 				fmt.Printf("failed: %v\n", err)
 			} else {
 				fmt.Println("done")
+				if err := stateMgr.RemoveProjectFromLinks(p.name); err != nil {
+					fmt.Printf("Warning: failed to remove %s from its links: %v\n", p.name, err)
+				}
 				if err := ssl.RemoveProjectCert(p.name); err != nil {
 					fmt.Printf("Warning: failed to remove certificate for %s: %v\n", p.name, err)
 				}

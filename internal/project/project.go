@@ -44,6 +44,11 @@ type Project struct {
 	// sync gate only waits for wrappers that can still be on their way to
 	// the gate (see awaitSyncGate). Lazily initialized by startContainer.
 	startedContainers map[string]bool
+
+	// builtImages records image tags this Project built, so a build done
+	// before a container removal isn't repeated by the start path that
+	// follows (see ensureBuiltImage).
+	builtImages map[string]bool
 }
 
 // startContainer starts a container and remembers that this run started it.
@@ -175,11 +180,13 @@ func isTLSAvailable() bool {
 	return true
 }
 
-// parseVolumeMount parses a volume string like "db_data:/var/lib/data" or "/host/path:/container/path"
-// Returns (source, target, isNamedVolume)
+// parseVolumeMount parses a volume string like "db_data:/var/lib/data" or
+// "/host/path:/container/path:ro". Returns (source, target, isNamedVolume);
+// target never includes the mode suffix (see volumeMountOptions) - it is
+// used as a container path for sync sessions, volume lookups and mountinfo.
 func parseVolumeMount(volume string) (source, target string, isNamedVolume bool) {
-	parts := strings.SplitN(volume, ":", 2)
-	if len(parts) != 2 {
+	parts := strings.SplitN(volume, ":", 3)
+	if len(parts) < 2 {
 		return volume, volume, false
 	}
 
@@ -190,6 +197,33 @@ func parseVolumeMount(volume string) (source, target string, isNamedVolume bool)
 	isNamedVolume = !strings.HasPrefix(source, "/") && !strings.HasPrefix(source, ".")
 
 	return source, target, isNamedVolume
+}
+
+// volumeMountOptions returns the mode suffix of a volume string: whether it
+// is read-only, and any further options to pass through to docker.
+func volumeMountOptions(volume string) (readOnly bool, options string) {
+	parts := strings.SplitN(volume, ":", 3)
+	if len(parts) < 3 {
+		return false, ""
+	}
+	var rest []string
+	for _, opt := range strings.Split(parts[2], ",") {
+		switch opt {
+		case "ro":
+			readOnly = true
+		case "rw", "":
+		default:
+			rest = append(rest, opt)
+		}
+	}
+	return readOnly, strings.Join(rest, ",")
+}
+
+// volumeMount builds the runtime mount for a volume string with the given
+// (already resolved) source.
+func volumeMount(volume, source, target string) runtime.VolumeMount {
+	readOnly, options := volumeMountOptions(volume)
+	return runtime.VolumeMount{Source: source, Target: target, ReadOnly: readOnly, Options: options}
 }
 
 // detectConfigRename checks whether `.zdev/config.yaml`'s `name:` was edited
@@ -213,6 +247,72 @@ func (p *Project) detectConfigRename() (string, error) {
 		}
 	}
 	return "", nil
+}
+
+// detectNameCollision reports the directory of another checkout that owns
+// this project's name in state. Containers, volumes and the network are
+// keyed by name only, so a second checkout with the same `name:` (a git
+// worktree, a copy) would adopt the first one's resources - and `zdev down
+// -v` there would delete them. A registered path that no longer holds a
+// project of that name is a moved or deleted checkout and is not a
+// collision; one whose config cannot be read counts as one, because the
+// resources may still be its.
+func (p *Project) detectNameCollision() (string, error) {
+	stateMgr, err := state.DefaultManager()
+	if err != nil {
+		return "", fmt.Errorf("failed to load state: %w", err)
+	}
+	entry, err := stateMgr.GetProject(p.Config.Name)
+	if err != nil {
+		return "", fmt.Errorf("failed to read project registry: %w", err)
+	}
+	if entry == nil || entry.Path == "" || samePath(entry.Path, p.Dir) {
+		return "", nil
+	}
+	if _, err := os.Stat(filepath.Join(entry.Path, ".zdev", "config.yaml")); err != nil {
+		return "", nil // moved or deleted - this checkout takes over
+	}
+	other, err := config.LoadProject(entry.Path)
+	if err != nil || other.Name == p.Config.Name {
+		return entry.Path, nil
+	}
+	return "", nil
+}
+
+// samePath compares two directories, resolving symlinks (/var vs
+// /private/var on macOS) when the plain paths differ.
+func samePath(a, b string) bool {
+	if filepath.Clean(a) == filepath.Clean(b) {
+		return true
+	}
+	ra, errA := filepath.EvalSymlinks(a)
+	rb, errB := filepath.EvalSymlinks(b)
+	return errA == nil && errB == nil && ra == rb
+}
+
+// errNameCollision formats guidance for detectNameCollision.
+func errNameCollision(name, otherDir string) error {
+	return fmt.Errorf("project name %q is already used by %s.\n"+
+		"Containers, volumes and the network are keyed by name, so this checkout would take over that project's resources.\n"+
+		"Give this checkout its own name in .zdev/local/config.yaml (not committed), for example:\n"+
+		"    name: %s-2",
+		name, otherDir, name)
+}
+
+// checkProjectIdentity runs the name checks every lifecycle entry point
+// needs before touching resources keyed by the project name.
+func (p *Project) checkProjectIdentity() error {
+	if registered, err := p.detectConfigRename(); err != nil {
+		return err
+	} else if registered != "" {
+		return errConfigRenameDetected(registered, p.Config.Name)
+	}
+	if otherDir, err := p.detectNameCollision(); err != nil {
+		return err
+	} else if otherDir != "" {
+		return errNameCollision(p.Config.Name, otherDir)
+	}
+	return nil
 }
 
 // errConfigRenameDetected formats a guidance error for the case where the user
@@ -319,10 +419,8 @@ func (p *Project) StartService(ctx context.Context, name string) error {
 // and state/shared/link wiring all respect the same filter so single-service
 // starts don't touch unrelated state.
 func (p *Project) start(ctx context.Context, filter map[string]bool) error {
-	if registered, err := p.detectConfigRename(); err != nil {
+	if err := p.checkProjectIdentity(); err != nil {
 		return err
-	} else if registered != "" {
-		return errConfigRenameDetected(registered, p.Config.Name)
 	}
 
 	// Check port availability before starting anything
@@ -416,6 +514,10 @@ func (p *Project) startServiceWithMutagen(ctx context.Context, name string, svc 
 		// The image was rebuilt under the container - recreate it so the
 		// running service actually uses the new image.
 		fmt.Printf("Recreating service %s with rebuilt image...\n", name)
+		// Resolve before touching the old container so failures preserve it.
+		if err := p.prefetchSecrets(ctx, name, svc); err != nil {
+			return err
+		}
 		if err := p.removeServiceContainer(ctx, name); err != nil {
 			return err
 		}
@@ -447,6 +549,9 @@ func (p *Project) startServiceWithMutagen(ctx context.Context, name string, svc 
 		// recreating the container is the only way to clear it. Safe to do:
 		// named and sync volumes reattach by name.
 		fmt.Printf("Service %s references a network that no longer exists - recreating the container...\n", name)
+		if err := p.prefetchSecrets(ctx, name, svc); err != nil {
+			return err
+		}
 		if err := p.removeServiceContainer(ctx, name); err != nil {
 			return err
 		}
@@ -775,6 +880,14 @@ func (p *Project) removeStaleProjectContainers(ctx context.Context) (bool, error
 // Down stops and removes all project containers and the network.
 // If removeVolumes is true, also removes volumes.
 func (p *Project) Down(ctx context.Context, removeVolumes bool) error {
+	// Only the collision check: a config rename is exactly what `down`
+	// must still be able to clean up after.
+	if otherDir, err := p.detectNameCollision(); err != nil {
+		return err
+	} else if otherDir != "" {
+		return errNameCollision(p.Config.Name, otherDir)
+	}
+
 	if err := p.teardownContainers(ctx); err != nil {
 		return err
 	}
@@ -840,10 +953,8 @@ func (p *Project) Down(ctx context.Context, removeVolumes bool) error {
 // Update checks for config changes and recreates containers as needed
 // Returns true if any changes were made
 func (p *Project) Update(ctx context.Context) (bool, error) {
-	if registered, err := p.detectConfigRename(); err != nil {
+	if err := p.checkProjectIdentity(); err != nil {
 		return false, err
-	} else if registered != "" {
-		return false, errConfigRenameDetected(registered, p.Config.Name)
 	}
 
 	updated, err := p.removeStaleProjectContainers(ctx)
@@ -972,7 +1083,12 @@ func (p *Project) updateService(ctx context.Context, serviceName string, svc con
 
 	if needsRecreate {
 		fmt.Printf("Recreating service %s...\n", serviceName)
-		// Resolve before touching the old container so failures preserve it.
+		// Build/pull the image and resolve secrets before touching the old
+		// container, so a broken Dockerfile, a mistyped image tag or a
+		// 1Password failure leaves it in place.
+		if err := p.ensureServiceImage(ctx, serviceName, svc); err != nil {
+			return false, fmt.Errorf("service %s kept as is: %w", serviceName, err)
+		}
 		if err := p.prefetchSecrets(ctx, serviceName, svc); err != nil {
 			return false, err
 		}
@@ -1107,10 +1223,7 @@ func (p *Project) buildContainerConfig(name string, svc config.ServiceConfig, mu
 			if isNamedVolume {
 				source = p.VolumeName(source)
 			}
-			cfg.Volumes = append(cfg.Volumes, runtime.VolumeMount{
-				Source: source,
-				Target: target,
-			})
+			cfg.Volumes = append(cfg.Volumes, volumeMount(vol, source, target))
 		}
 	}
 

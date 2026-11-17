@@ -119,6 +119,8 @@ variables:
   STRIPE_KEY: sk_test_abc123
 ```
 
+**A second checkout of the same project** (a git worktree, a copy) needs its own name, because containers, volumes and the network are keyed by project name. zdev refuses to start, update or `down` a checkout whose name is already registered to another directory that still holds that project. Set a different `name:` in the second checkout's `.zdev/local/config.yaml`. A project whose registered directory was moved or deleted is simply taken over.
+
 ## Volumes
 
 **Bind mounts** (`${PROJECTPATH}:/app`) sync your source code into the container. Edits on the host are reflected immediately. On macOS, zdev handles fast sync automatically via Mutagen. Add `node_modules`, `.pnpm-store`, and build caches to `mutagen.ignore` so they stay inside the container (fast) and don't sync back to the host.
@@ -138,6 +140,8 @@ services:
       no_sync:
         - /docker-entrypoint-initdb.d   # seeded before startup, never synced
 ```
+
+Read-only binds (`./conf:/etc/app:ro`) are never synced either: Mutagen writes into the container through the mount, so they always stay plain Docker binds and keep their `:ro`.
 
 Each entry must match one of that service's mount paths, otherwise the config is rejected - a typo would silently sync the directory you meant to keep native. Single-file binds (`${PROJECTPATH}/etc/app/.env:/app/config/.env`) are not synced and stay plain bind mounts - but make sure the file exists on the host before starting, because Docker creates a missing bind source as a *directory*, which turns the entry into a synced directory bind.
 

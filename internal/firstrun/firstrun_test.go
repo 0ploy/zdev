@@ -17,7 +17,7 @@ func TestIsInitialized(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	mgr := &Manager{
-		zdevHome:  tmpDir,
+		zdevHome:   tmpDir,
 		domain:     config.DefaultDomain,
 		sslEnabled: true,
 	}
@@ -52,7 +52,7 @@ func TestMarkInitialized(t *testing.T) {
 	zdevHome := filepath.Join(tmpDir, "subdir", ".zdev")
 
 	mgr := &Manager{
-		zdevHome:  zdevHome,
+		zdevHome:   zdevHome,
 		domain:     config.DefaultDomain,
 		sslEnabled: true,
 	}

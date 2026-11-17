@@ -7,51 +7,51 @@ import (
 
 func TestRenderMarkdown(t *testing.T) {
 	tests := []struct {
-		name      string
-		input     string
-		plainMode bool
+		name            string
+		input           string
+		plainMode       bool
 		wantContains    []string
 		wantNotContains []string
 	}{
 		{
-			name:      "heading removal",
-			input:     "## My Heading\n",
-			plainMode: false,
+			name:            "heading removal",
+			input:           "## My Heading\n",
+			plainMode:       false,
 			wantContains:    []string{"My Heading", ansiGreen, ansiBold},
 			wantNotContains: []string{"##"},
 		},
 		{
-			name:      "h3 heading",
-			input:     "### Subheading\n",
-			plainMode: false,
+			name:            "h3 heading",
+			input:           "### Subheading\n",
+			plainMode:       false,
 			wantContains:    []string{"Subheading", ansiYellow, ansiBold},
 			wantNotContains: []string{"###"},
 		},
 		{
-			name:      "inline code",
-			input:     "Use `code` here\n",
-			plainMode: false,
+			name:            "inline code",
+			input:           "Use `code` here\n",
+			plainMode:       false,
 			wantContains:    []string{"code", ansiCyan},
 			wantNotContains: []string{"`"},
 		},
 		{
-			name:      "code block",
-			input:     "```bash\necho hello\n```\n",
-			plainMode: false,
+			name:            "code block",
+			input:           "```bash\necho hello\n```\n",
+			plainMode:       false,
 			wantContains:    []string{"echo hello", ansiCyan},
 			wantNotContains: []string{"```"},
 		},
 		{
-			name:      "bold text",
-			input:     "This is **bold** text\n",
-			plainMode: false,
+			name:            "bold text",
+			input:           "This is **bold** text\n",
+			plainMode:       false,
 			wantContains:    []string{"bold", ansiBold},
 			wantNotContains: []string{"**"},
 		},
 		{
-			name:      "plain mode returns input unchanged",
-			input:     "## Heading\n`code`\n",
-			plainMode: true,
+			name:            "plain mode returns input unchanged",
+			input:           "## Heading\n`code`\n",
+			plainMode:       true,
 			wantContains:    []string{"##", "`code`"},
 			wantNotContains: []string{ansiGreen, ansiCyan},
 		},
