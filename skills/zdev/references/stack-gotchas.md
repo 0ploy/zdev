@@ -2,7 +2,7 @@
 
 Runtime behaviors that bite when running a language/framework stack inside an zdev container.
 These apply to **any** zdev project - scaffolded from a template or added to an existing repo.
-For template-authoring patterns (`.setup-complete`, scaffolding, `setup.just`), see `templates.md`.
+For template-authoring patterns (`.setup-complete`, scaffolding, the setup command), see `templates.md`.
 
 ## Node.js / pnpm
 

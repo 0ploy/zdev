@@ -62,7 +62,7 @@ Default project lifecycle: `zdev start` -> develop -> `zdev stop` (or `zdev down
 - **Runtime abstraction:** All Docker operations go through a `Runtime` interface. The `DockerCLI` implementation shells out to the `docker` binary. Exists for future Podman support; do not introduce the Docker SDK.
 - **Config variables are NOT env vars:** `variables:` are `${VAR}` placeholders substituted at config-load time (second pass of `LoadProject()`). They do not reach containers - that's what `environment:` is for.
 - **Per-service routing domain:** `routing.domain` allows individual services to have custom domains (HTTP/HTTPS only). Useful for frontend + backend splits on the same project.
-- **Project templates:** `zdev create` downloads GitHub repos or copies local dirs. Template repos follow naming convention `zdev-template-<name>`. Templates use a `.setup-complete` marker pattern to solve the container startup vs setup circular dependency. Template authoring guide at `templates/README.md`.
+- **Project templates:** `zdev create` downloads GitHub repos or copies local dirs. Template repos follow naming convention `zdev-template-<name>`. Templates use a `.setup-complete` marker pattern to solve the container startup vs setup circular dependency. Template authoring guide at `docs/templates.md`.
 - **ui.StatusStep / `zdev step`:** Framework-level progress messages use bold cyan `▶` + two blank leading lines to stand out from the noise of nested command output (apk, composer, npm). Template justfiles should use `@zdev step "..."` instead of `@echo "..."` for top-level phase markers.
 - **1Password secrets (op-env):** Two config forms of one token: `services.<name>.op-env: <environment-id>` injects EVERY variable of a 1Password Environment into the container env (explicit `environment:` entries win), and `op-env://<environment-id>/<VARIABLE>` env values inject single variables (self-contained, so one project can mix Environments). The Environment ID is not secret and commits safely; `${VAR}` substitution keeps it DRY. Resolution happens ONLY at container creation via the beta 1Password CLI (`op environment read`, cached per Environment per process) - `start` of existing containers, `restart`, `status`, and no-op `update` never contact 1Password. The config hash covers the UNRESOLVED reference plus the attached ID (`zdev.op-env` label), so rotation never causes surprise recreates; `--refresh-secrets` is the explicit rotation path. On recreates, secrets resolve BEFORE the old container is removed. Never log resolved values; op's stdout may contain secrets and must never be folded into errors. CI uses `OP_SERVICE_ACCOUNT_TOKEN`. Values must be single-line; a reference must be the entire env value (no mid-string interpolation).
 - **ZDEV_HOME** relocates the entire zdev home (config, state, certs, downloaded tools; default `~/.zdev`). Every storage path flows through `config.GetZdevHome()`.
@@ -95,7 +95,7 @@ Default project lifecycle: `zdev start` -> develop -> `zdev stop` (or `zdev down
 - `internal/ui/` - terminal output helpers (colors, hyperlinks, `StatusStep`)
 - `internal/updatecheck/` - background update checker + auto-installer
 - `skills/zdev/SKILL.md` - AI agent integration skill (with `references/` for config examples and template authoring)
-- `templates/README.md` - template authoring guide
+- `docs/templates.md` - template authoring guide
 
 ## Naming Conventions
 
@@ -212,7 +212,7 @@ Downloaded to `~/.zdev/bin/` on first use: mkcert v1.4.4, just 1.49.0, mutagen 0
 - Config options or flags if applicable
 - Edge cases (what happens on error, missing Docker, project not registered, etc.)
 - Whether `make test` / `make test-integration` should pass
-- Which docs must stay in sync (`README.md`, `templates/README.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `skills/zdev/SKILL.md`)
+- Which docs must stay in sync (`README.md`, `docs/templates.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `skills/zdev/SKILL.md`)
 
 **Scope:** One concern per ticket. A new shared service is one ticket. Adding a flag to an existing command is one ticket. Don't combine unrelated changes.
 

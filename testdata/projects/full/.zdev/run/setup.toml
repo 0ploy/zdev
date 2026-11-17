@@ -1,0 +1,24 @@
+# Mirrors .zdev/commands/setup.just (the legacy justfile example).
+description = "Setup commands for testing"
+
+[jobs.all]
+description = "Run complete setup"
+needs = ["install"]
+run = '''
+echo "Setup complete for $PROJECTNAME"
+'''
+
+[jobs.install]
+description = "Install dependencies"
+run = '''
+step "Installing dependencies"
+'''
+
+[jobs.env]
+description = "Show environment variables"
+run = '''
+echo "PROJECTNAME: $PROJECTNAME"
+echo "PROJECTPATH: $PROJECTPATH"
+echo "PROJECTDIR: $PROJECTDIR"
+echo "ZDEV_DOMAIN: $ZDEV_DOMAIN"
+'''

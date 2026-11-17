@@ -19,11 +19,13 @@ internal/
   config/                # Config parsing, defaults, variable substitution
   create/                # Template resolution, download, copy (zdev create)
   project/               # Project lifecycle (start, stop, down, exec, routing)
+  run/                   # zdev run: job file loader, resolution, plan, runner
+  justconvert/           # .just -> .zdev/run/*.toml converter (removed with just)
   runtime/               # Docker abstraction (interface + DockerCLI implementation)
   services/              # Shared infrastructure (router, mail, adminer, redis)
   mutagen/               # Mutagen binary wrapper
   state/                 # Global project registry (~/.zdev/state.yaml)
-  tools/                 # External tool management (mkcert, just, mutagen)
+  tools/                 # External tool management (mkcert, just (deprecated), mutagen)
   firstrun/              # First-time setup (certs, shared network)
   ssl/                   # Certificate management
   ui/                    # Terminal output (colors, hyperlinks, markdown)
@@ -150,15 +152,16 @@ Enables future Podman support. The `Runtime` interface (`internal/runtime/runtim
 
 A side benefit: because zdev only ever uses the `docker` CLI and the active docker context, it is engine-agnostic across Docker Desktop, OrbStack, and Colima with no per-engine code. The one place that needs care is the Docker socket bind-mount for the Traefik router and Dozzle: never hardcode `/var/run/docker.sock` as the host source (that symlink isn't guaranteed on OrbStack-without-admin or Colima). Use `runtime.HostDockerSocketPath()`, which resolves the active context's real socket and falls back to the conventional path. See `ALTERNATIVE_BACKENDS.md` for the compatibility analysis and a cross-engine filesystem benchmark.
 
-### Why justfiles for custom commands?
+### Why `zdev run` with TOML job files (and not just)?
 
-Each `.zdev/commands/<name>.just` file becomes a `zdev <name>` command. We chose [just](https://github.com/casey/just) over Makefiles because:
-- No build system baggage (no implicit rules, no tab sensitivity issues)
-- Multiple recipes per file (e.g., `zdev test` runs default, `zdev test watch` runs the `watch` recipe)
-- Justfiles are discoverable - agents and developers can `ls .zdev/commands/` to see all available commands
-- Just supports arguments, dependencies, and conditional logic
+Project commands live in `.zdev/run/<cmd>.toml` and run as `zdev run <cmd> [job] [args]`. They replaced `.zdev/commands/*.just` (deprecated, removal planned; `zdev run --convert-just` converts). Why:
 
-Commands run on the **host**, not in containers. Use `zdev exec app <cmd>` inside justfiles to run commands in containers.
+- **Own namespace.** Justfiles ran as `zdev <name>` and built-ins took precedence, so every new built-in could silently shadow a project's command. `zdev run <cmd>` never resolves to a built-in.
+- **No extra language or binary.** The script is plain shell (or any shebang); TOML only carries metadata (`service`, `needs`, `output`, ...) and keeps script bodies verbatim in `''''` strings. No third-party download, no argument quirks (`cache:clear` passes through as is).
+- **Not in `.zdev/config.yaml`:** a new config key breaks every released binary (`KnownFields(true)`). Job files are read only by new code and treat unknown keys as warnings, so they stay forward-compatible.
+- **More than just:** jobs can run inside a service container, run quietly, ask for confirmation, and list themselves as JSON for agents.
+
+Code: `internal/run/` (loader `load.go`, resolution `resolve.go`, dependency plan `plan.go`, execution `exec.go`, quiet output `output.go`) and `cmd/run.go`. Container jobs go through `Runtime.ExecStream`. Host jobs are tested against real bash, container jobs against the mock runtime.
 
 ### Why auto-discover named volumes?
 
@@ -196,33 +199,34 @@ A service with `dockerfile:` gets its image built locally instead of pulled (`in
 
 ## Documentation
 
-Three docs must stay in sync with the code:
+These docs must stay in sync with the code:
 
 | File | Purpose | Update when |
 |------|---------|-------------|
-| `README.md` | User-facing docs and marketing | New commands, config options, features |
-| `templates/README.md` | Template authoring guide | Config changes, scaffolding patterns, new framework notes |
-| `CLAUDE.md` | Agent guidance (decisions, gotchas) | Architecture changes, new conventions, non-obvious patterns |
+| `README.md` | Lean entry page: intro, quick start, how it works, links | Rarely - only when the big picture changes |
+| `docs/*.md` | User docs, one topic per file (CLI, configuration, project commands, templates, ...) | New commands, config options, features |
+| `skills/zdev/` | Agent skill: terse rules and gotchas, deep dives in `references/` | Every user-visible change (same trigger as `docs/`) |
+| `CLAUDE.md` | Agent guidance for working on zdev (decisions, gotchas) | Architecture changes, new conventions, non-obvious patterns |
 
-Don't duplicate information across docs. README has config reference and examples. `templates/README.md` has template-specific patterns. CLAUDE.md has decisions and gotchas only.
+Every user-visible change needs a check of both `docs/` and `skills/zdev/`. Within the human docs, keep one home per topic and link instead of repeating. CLAUDE.md has decisions and gotchas only.
 
 ## Creating Templates
 
-Templates enable `zdev create <template> <name>` for one-command project scaffolding. See the [Template Authoring Guide](templates/README.md) for the full reference.
+Templates enable `zdev create <template> <name>` for one-command project scaffolding. See the [template guide](docs/templates.md) for the full reference.
 
 Key patterns:
-- **Create-time scaffold hook** (`.zdev/scaffold.sh`, preferred) - `zdev create` runs it once in a throwaway container (entrypoint overridden to a shell) to generate the project, then auto-disables it. Keeps scaffolding machinery out of the created project (no `.setup-complete`, no re-scaffolding `setup.just`). Wired in `cmd/create.go` + `internal/project/scaffold.go`.
-- **`.setup-complete` marker** (older setup.just scaffolding) solves the container startup vs setup circular dependency
+- **Create-time scaffold hook** (`.zdev/scaffold.sh`, preferred) - `zdev create` runs it once in a throwaway container (entrypoint overridden to a shell) to generate the project, then auto-disables it. Keeps scaffolding machinery out of the created project (no `.setup-complete`, no re-scaffolding setup command). Wired in `cmd/create.go` + `internal/project/scaffold.go`.
+- **`.setup-complete` marker** (setup-command scaffolding) solves the container startup vs setup circular dependency
 - **Scaffold in-place** (`--force`) for frameworks that support non-empty dirs (Nuxt)
 - **Scaffold in /tmp** for frameworks that require empty dirs (Symfony) - safe for PHP, not for Node.js
-- **`setup.just`** runs on host with interactive terminal - framework prompts work here but not in the container entrypoint
+- **`.zdev/run/setup.toml`** (`zdev run setup`, also run by `zdev create --auto-setup`) runs on host with interactive terminal - framework prompts work here but not in the container entrypoint
 
 ## Style
 
 - Never use em-dashes (-). Use regular hyphens (-) everywhere.
 - Error messages: `fmt.Errorf("failed to <action>: %w", err)` - wrap with context
 - User-facing output: `fmt.Printf` for status, `fmt.Println` for section headers
-- Top-level progress markers during multi-step flows (setup, start, sync): use `ui.StatusStep(msg, plainMode)` instead of plain `fmt.Println`. Adds two blank lines + cyan `▶` + bold text so framework messages stand out from verbose nested command output. Same styling is exposed as `zdev step <msg>` for template justfiles.
+- Top-level progress markers during multi-step flows (setup, start, sync): use `ui.StatusStep(msg, plainMode)` instead of plain `fmt.Println`. Adds two blank lines + cyan `▶` + bold text so framework messages stand out from verbose nested command output. Job scripts get the same styling from the `step "<msg>"` helper (`zdev step <msg>` for legacy justfiles, removed with just).
 - Commands return errors (Cobra handles display with `SilenceUsage: true`)
 
 ## Release Process

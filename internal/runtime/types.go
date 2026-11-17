@@ -1,5 +1,7 @@
 package runtime
 
+import "io"
+
 // ContainerConfig defines how to create a container
 type ContainerConfig struct {
 	Name        string
@@ -79,4 +81,20 @@ type Volume struct {
 type ExecOptions struct {
 	User    string // Username or UID to run command as
 	Workdir string // Working directory inside the container
+}
+
+// ExecStreamOptions configures ExecStream: unlike Exec, the caller owns the
+// streams (so output can be captured) and can pass env vars.
+type ExecStreamOptions struct {
+	User    string
+	Workdir string
+	// Env is passed as `-e KEY` with the value in the docker CLI's own
+	// environment, so values never show up in the process list.
+	Env map[string]string
+	// Interactive keeps stdin attached (-i). TTY allocates a terminal (-t).
+	Interactive bool
+	TTY         bool
+	Stdin       io.Reader
+	Stdout      io.Writer
+	Stderr      io.Writer
 }

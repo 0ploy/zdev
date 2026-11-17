@@ -1,0 +1,25 @@
+# Mirrors .zdev/commands/test.just (the legacy justfile example).
+description = "Test commands for testing"
+
+[jobs.all]
+description = "Run all tests"
+needs = ["unit", "lint"]
+
+[jobs.unit]
+description = "Run unit tests"
+aliases = ["u"]
+run = "echo 'Running unit tests...'"
+
+[jobs.lint]
+description = "Run linter"
+output = "quiet"
+run = '''
+echo "lint details nobody needs to see"
+echo "▶ Linting"
+'''
+
+[jobs.run]
+description = "Run specific tests"
+run = '''
+printf 'Running tests with arg: %s\n' "$@"
+'''

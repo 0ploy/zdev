@@ -3,6 +3,8 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -61,6 +63,7 @@ func runStatusImpl(ctx context.Context, proj *project.Project) error {
 	fmt.Println()
 
 	printStaleFileMounts(ctx, proj, plainMode)
+	printShadowedJustfiles(os.Stdout, shadowedJustfiles(proj), plainMode)
 
 	printSharedServiceStatus(ctx, proj, cfg, plainMode)
 
@@ -119,4 +122,38 @@ func printStaleFileMounts(ctx context.Context, proj *project.Project, plainMode 
 	fmt.Println("  These containers hold a deleted copy of the file - the host version is")
 	fmt.Println("  fine. Restart the affected services to reattach them.")
 	fmt.Println()
+}
+
+// shadowedJustfiles returns the names of .zdev/commands/*.just files that a
+// built-in command shadows: `zdev <name>` runs the built-in, so the file
+// never runs and nothing else says so.
+func shadowedJustfiles(proj *project.Project) []string {
+	justfiles, err := proj.DiscoverJustfiles()
+	if err != nil {
+		return nil
+	}
+	var names []string
+	for _, jf := range justfiles {
+		if isBuiltinCommand(jf.Name) {
+			names = append(names, jf.Name)
+		}
+	}
+	return names
+}
+
+func printShadowedJustfiles(w io.Writer, names []string, plainMode bool) {
+	if len(names) == 0 {
+		return
+	}
+	note := "never runs"
+	if !plainMode && ui.SupportsColors() {
+		note = ui.Color(note, "yellow", false)
+	}
+	fmt.Fprintln(w, "Shadowed commands:")
+	for _, name := range names {
+		fmt.Fprintf(w, "  %-15s %s: `zdev %s` is a built-in\n", name+".just", note, name)
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "  Convert them with `zdev run --convert-just` and run them as `zdev run <name>`.")
+	fmt.Fprintln(w)
 }

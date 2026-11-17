@@ -1,0 +1,16 @@
+# Setting up zdev for an existing project
+
+Different from template scaffolding: the source code is already on the host, so the container's `command:` doesn't need the `.setup-complete` wait loop - just install deps and exec the dev server. A `.zdev/run/setup.toml` is optional; only create one if there's a multi-step onboarding (migrations, seed data, asset build).
+
+1. **Read the existing stack.** `package.json` / `composer.json` / `requirements.txt` for framework and dev command. `.env` / `.env.example` for `DATABASE_URL`, `MAILER_DSN`, `HOST`, `PORT`, `APP_URL`. Existing `docker-compose.yml` / `Dockerfile` as a hint (ports, volumes) - not source of truth. README for any manual setup steps.
+2. **Pick a starting config** from `config-examples.md` matching the stack; field rules in `configuration.md`. Prefer a stock image; if the app needs system packages or tooling baked in (or compose has a `build:` section), write a dev Dockerfile in `.zdev/` and point the service at it with `dockerfile: .zdev/Dockerfile` - zdev builds it automatically, no build script needed.
+3. **Bind the dev server to all interfaces** in the `command:` - otherwise the container port isn't reachable from Traefik: `HOST=0.0.0.0` (Node), `--host 0.0.0.0` (Vite), `--allow-all-ip` (Symfony CLI), `0.0.0.0` (Django `runserver`).
+4. **Rewire env for the zdev network.** Change `DATABASE_URL` host from `localhost` / `127.0.0.1` / compose's service name to the zdev service name you declared (commonly `db`). Set `MAILER_DSN: "smtp://mail:1025"` so outbound mail is caught by Mailpit. **For any Symfony / Sylius / Shopware / Laravel project**, also set `SYMFONY_TRUSTED_PROXIES: private_ranges` now - without it, the debug toolbar and login flows break behind Traefik. Laravel equivalent: `TRUSTED_PROXIES=*`.
+5. **Mirror the existing DB** (image, version, credentials, database name) - the app's `.env` usually tells you all three.
+6. **`mutagen.ignore`** for dependency and build artifact dirs: `node_modules`, `.pnpm-store`, `vendor`, `var/cache`, `.nuxt`, `.next`, framework-specific build output. Without this, installs are 5-10x slower on macOS.
+7. **`.gitignore`:** add `.zdev/local/` (always) and `.pnpm-store/` (pnpm projects). Per-developer overrides go in `.zdev/local/config.yaml` (see `configuration.md`). For secrets the whole team needs, prefer 1Password Environments (`op-env`, see `secrets.md`) over per-developer copies - the existing `.env` can be imported into an Environment directly.
+8. **Project commands:** turn recurring tasks from the README or `package.json` scripts into `.zdev/run/*.toml` files (`project-commands.md`); a `console.toml` wrapping the framework CLI is almost always worth it. Existing `.zdev/commands/*.just` files: `zdev run --convert-just`.
+9. **`zdev start`, then verify in a browser** (not just curl): check the console and network tabs for mixed-content, missing assets, JS errors. `curl 200` lies for HTML apps.
+10. **Document** `zdev start`, `zdev run` and `zdev exec app <cmd>` in the project README and its `CLAUDE.md` / `AGENTS.md` so future agents know how to operate the env.
+
+Stack-specific landmines when writing the config or entrypoint (Node corepack, pnpm build scripts, PHP `memory_limit`, PHP extensions, Webpack Encore / Vite rebuild, mailer DSN): `stack-gotchas.md`.

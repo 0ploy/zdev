@@ -113,11 +113,13 @@ func Execute() error {
 
 		// Skip if it's a built-in command
 		if isBuiltinCommand(cmdName) {
+			warnShadowedJustfile(cmdName)
 			return rootCmd.Execute()
 		}
 
 		// Try to find a matching justfile
 		if justfile := findJustfile(cmdName); justfile != nil {
+			fmt.Fprintln(os.Stderr, justDeprecationWarning(justfile.Name))
 			if err := runJustfile(justfile, os.Args[2:]); err != nil {
 				fmt.Fprintf(os.Stderr, "       in %s\n", justfile.Path)
 				return err
@@ -182,7 +184,7 @@ func getProjectCommandsString() string {
 	}
 
 	var sb strings.Builder
-	sb.WriteString("\nProject Commands:\n")
+	sb.WriteString("\nProject Commands (just, deprecated - convert with: zdev run --convert-just):\n")
 
 	// Try to get just binary for listing recipes
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

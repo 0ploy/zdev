@@ -75,6 +75,22 @@ func (j *Just) Run(ctx context.Context, justfile, workingDir string, args []stri
 	return cmd.Run()
 }
 
+// Dump returns just's JSON dump of a justfile (`--dump --dump-format json`),
+// the input of the zdev run --convert-just converter.
+func (j *Just) Dump(ctx context.Context, justfile string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, j.binaryPath, "--justfile", justfile, "--dump", "--dump-format", "json")
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return nil, fmt.Errorf("%s", msg)
+		}
+		return nil, err
+	}
+	return out, nil
+}
+
 // List shows available recipes in a justfile
 func (j *Just) List(ctx context.Context, justfile string) (string, error) {
 	return RunTool(ctx, j.binaryPath, "--justfile", justfile, "--list")

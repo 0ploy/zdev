@@ -148,8 +148,8 @@ Key points:
 - **Worker pattern**: same `image:` and bind-mounted `/app` as the app service, only the `command:`
   differs. Add more workers (email dispatcher, import processor) by duplicating and changing the
   command. Because workers hold a TTY-less long-running process, don't try to scaffold things in
-  their command - keep scaffolding in `setup.just`.
-- **Per-service routing domain** (see SKILL.md → "Multiple routed services in one project"): without
+  their command - keep scaffolding in the setup command (`.zdev/run/setup.toml`).
+- **Per-service routing domain** (see `configuration.md` → Routing): without
   `routing.domain` on `rabbitmq`, the management UI would collide with the app on the same host and
   only one would work.
 - **Service-name DNS**: `app` and `worker` reach RabbitMQ at `rabbitmq:5672` and MySQL at `db:3306`
@@ -226,7 +226,7 @@ RUN apk add --no-cache openssl git
 ```
 
 Dev containers only: build args, multi-stage targets, custom contexts, secrets, and registry push
-are out of scope - for those, keep a custom build command (justfile) producing the `image:` tag.
+are out of scope - for those, keep a custom project command (`.zdev/run/*.toml`) producing the `image:` tag.
 Files the Dockerfile `COPY`s are not change-detected; after editing them run `zdev update --build`.
 
 ## Mutagen Ignore by Stack

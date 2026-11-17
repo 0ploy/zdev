@@ -1,0 +1,9 @@
+# Single-job file running inside the app container.
+description = "Run a command in the app container"
+aliases = ["c"]
+service = "app"
+workdir = "/app"
+env = { APP_DEBUG = "1" }
+run = '''
+echo "console: $*"
+'''

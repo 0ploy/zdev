@@ -405,6 +405,40 @@ func (d *DockerCLI) Exec(ctx context.Context, container string, command []string
 	return cmd.Run()
 }
 
+// ExecStream runs a command in a running container with the caller's streams.
+func (d *DockerCLI) ExecStream(ctx context.Context, container string, command []string, opts ExecStreamOptions) error {
+	args := []string{"exec"}
+	if opts.Interactive {
+		args = append(args, "-i")
+	}
+	if opts.TTY {
+		args = append(args, "-t")
+	}
+	if opts.User != "" {
+		args = append(args, "--user", opts.User)
+	}
+	if opts.Workdir != "" {
+		args = append(args, "--workdir", opts.Workdir)
+	}
+	keys := make([]string, 0, len(opts.Env))
+	for k := range opts.Env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	cmd := d.command(ctx)
+	for _, k := range keys {
+		args = append(args, "-e", k)
+		cmd.Env = append(cmd.Env, k+"="+opts.Env[k])
+	}
+	args = append(args, container)
+	args = append(args, command...)
+	cmd.Args = append([]string{d.Binary}, args...)
+	cmd.Stdin = opts.Stdin
+	cmd.Stdout = opts.Stdout
+	cmd.Stderr = opts.Stderr
+	return cmd.Run()
+}
+
 // ContainerExists checks if a container with the given name exists
 func (d *DockerCLI) ContainerExists(ctx context.Context, name string) (bool, error) {
 	// Use docker inspect - returns error if container doesn't exist

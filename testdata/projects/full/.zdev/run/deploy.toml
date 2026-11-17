@@ -1,0 +1,26 @@
+# Exercises the remaining job file features.
+description = "Deployment"
+env_file = ".zdev/run/deploy.env"
+env = { STAGE = "{1}" }
+
+[jobs.release]
+description = "Test, build and release to a stage"
+needs = ["test unit", "build {1}", "notify {1}"]
+confirm = "Release to {1}?"
+run = '''
+step "Releasing to $STAGE"
+echo "region=$REGION stage=$STAGE"
+'''
+
+[jobs.build]
+description = "Build for a stage"
+workdir = "scripts"
+script = "scripts/build.sh --stage {1}"
+
+[jobs.notify]
+hidden = true
+run = '''
+#!/usr/bin/env python3
+import os
+print("notified " + os.environ["STAGE"])
+'''

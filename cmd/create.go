@@ -12,6 +12,7 @@ import (
 	"github.com/0ploy/zdev/internal/config"
 	"github.com/0ploy/zdev/internal/create"
 	"github.com/0ploy/zdev/internal/project"
+	"github.com/0ploy/zdev/internal/run"
 	"github.com/0ploy/zdev/internal/tools"
 	"github.com/spf13/cobra"
 )
@@ -48,7 +49,7 @@ func init() {
 	createCmd.Flags().StringVar(&createBranch, "branch", "", "GitHub branch to use")
 	createCmd.Flags().StringVar(&createTag, "tag", "", "GitHub tag to use")
 	createCmd.Flags().BoolVar(&createAutoStart, "auto-start", false, "Run zdev start after create")
-	createCmd.Flags().BoolVar(&createAutoSetup, "auto-setup", false, "Run zdev setup after create (implies --auto-start)")
+	createCmd.Flags().BoolVar(&createAutoSetup, "auto-setup", false, "Run the project's setup command after create (implies --auto-start)")
 	rootCmd.AddCommand(createCmd)
 }
 
@@ -159,6 +160,8 @@ func runCreate(cmd *cobra.Command, args []string) error {
 			// The scaffold hook already generated the project; the app just
 			// needs to start (deps install on boot).
 			fmt.Println("  zdev start")
+		} else if hasSetupJob(targetDir) {
+			fmt.Println("  zdev run setup")
 		} else {
 			fmt.Println("  zdev setup")
 		}
@@ -241,8 +244,32 @@ func promptProjectName() (string, error) {
 	return name, nil
 }
 
-// runAutoSetup finds and executes the setup.just justfile for a project
+// hasSetupJob reports whether a project ships .zdev/run/setup.toml.
+func hasSetupJob(projectDir string) bool {
+	_, err := os.Stat(filepath.Join(run.Dir(projectDir), "setup.toml"))
+	return err == nil
+}
+
+// runAutoSetup runs the project's setup command: the `setup` job
+// (.zdev/run/setup.toml), or during the just deprecation a legacy setup.just.
 func runAutoSetup(projectDir string) error {
+	if hasSetupJob(projectDir) {
+		set, err := run.Load(projectDir, run.Options{})
+		if err != nil {
+			return err
+		}
+		target, err := set.Resolve([]string{"setup"})
+		if err != nil {
+			return err
+		}
+		if target.Job == nil {
+			return fmt.Errorf("setup.toml has several jobs; auto-setup needs a single-job setup.toml")
+		}
+		fmt.Println()
+		fmt.Println("Running setup...")
+		return runInProject(projectDir, []string{"setup"})
+	}
+
 	proj, err := project.LoadFromDir(projectDir)
 	if err != nil {
 		return fmt.Errorf("failed to load project: %w", err)

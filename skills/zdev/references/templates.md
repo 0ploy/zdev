@@ -10,15 +10,15 @@ my-template/
   .zdev/
     config.yaml              # Container config, routing, volumes, mutagen
     Dockerfile               # Optional: custom dev image, referenced via dockerfile:
-    commands/
-      setup.just             # Setup script
+    run/
+      setup.toml             # Setup command (zdev run setup)
   README.md
 ```
 
 **Static templates** (e.g. Express) also include source files (`app.js`, `package.json`, `.gitignore`).
 **Scaffold templates** (e.g. Nuxt, Symfony) ship only `.zdev/` - the framework's create command generates the app files.
 
-There are two ways a scaffold template can generate those files: a **create-time scaffold hook** (`.zdev/scaffold.sh`, preferred - keeps scaffolding out of the created project), or scaffolding inside **`setup.just`** (the older approach, with a `.setup-complete` gate). New templates should prefer the hook.
+There are two ways a scaffold template can generate those files: a **create-time scaffold hook** (`.zdev/scaffold.sh`, preferred - keeps scaffolding out of the created project), or scaffolding inside the **setup command** (`.zdev/run/setup.toml`, the older approach, with a `.setup-complete` gate). New templates should prefer the hook.
 
 ## Create-time scaffold hook (`.zdev/scaffold.sh`) - preferred (zdev >= v0.11.0)
 
@@ -35,15 +35,15 @@ pnpm dlx nuxi@latest init . --template minimal --no-install --packageManager pnp
 
 - **Scaffold source only; install at boot.** Use `--no-install`; install deps in the boot path (a zpinit `entrypoint.d/` step, or the container `command:`) so a clone just runs `zdev start` and pulled dependency changes are picked up. Install-at-scaffold-time only populates the throwaway bind mount, not the persistent volume.
 - **Prefer a non-interactive scaffold; don't let the scaffolder install.** zdev *can* attach a TTY (it does when `zdev create` runs from a terminal), but an interactive scaffolder prompt is usually a trap: create-nuxt's module picker is coupled to its own `pnpm install`, which writes `node_modules` into the one-time bind mount (i.e. onto the host, where it doesn't belong) and is unreliable (it doesn't pass pnpm's `--config.dangerouslyAllowAllBuilds`, so pnpm v11 aborts with `ERR_PNPM_IGNORED_BUILDS` on native build scripts). Scaffold source deterministically with a fixed template + `--no-install`, and expose post-create customization (e.g. adding framework modules) as a `zdev <cmd>` recipe that runs **inside the container** where the framework is installed — see the `zdev module` recipe in `zdev-template-nuxt4` (`nuxi module add`, version-aware, keeps `node_modules` container-side).
-- **No gate, no `.setup-complete`.** Because scaffolding happens at create time, the steady-state image needs no wait loop and the created project carries no re-scaffolding `setup.just`.
+- **No gate, no `.setup-complete`.** Because scaffolding happens at create time, the steady-state image needs no wait loop and the created project carries no re-scaffolding setup command.
 - **zdev auto-disables the hook** after a successful run (renames `scaffold.sh` -> `scaffold.sh.disabled`, never deletes it). A `.disabled` hook is skipped, so reusing the project as a template won't re-scaffold. Safe even if the user never reads the create output.
 - The scaffold runs in the sole service, or the one named `app`. It requires Docker (build/pull + run).
 
-The reference implementation is `0ploy/zdev-template-nuxt4`. The rest of this file covers the older `setup.just` scaffolding approach.
+The reference implementation is `0ploy/zdev-template-nuxt4`. The rest of this file covers the older setup-command scaffolding approach. (Older templates still ship `.zdev/commands/setup.just`, run as `zdev setup`; just is deprecated, convert with `zdev run --convert-just`.)
 
-## The .setup-complete Pattern (setup.just scaffolding)
+## The .setup-complete Pattern (setup-command scaffolding)
 
-Scaffolding inside `setup.just` must solve a circular dependency: the container needs to be running for `zdev exec`
+Scaffolding inside the setup command must solve a circular dependency: the container needs to be running for `zdev exec`
 (used by setup), but the app can't start until setup completes.
 
 **In config.yaml command:**
@@ -52,7 +52,7 @@ Scaffolding inside `setup.just` must solve a circular dependency: the container 
 command: >-
   sh -c "corepack enable &&
   if [ ! -f .setup-complete ]; then
-    echo 'Waiting for setup... Run: zdev setup';
+    echo 'Waiting for setup... Run: zdev run setup';
     while [ ! -f .setup-complete ]; do sleep 2; done;
   fi;
   pnpm install && exec pnpm dev"
@@ -65,57 +65,55 @@ command: >-
 The dep install (`pnpm install`, `composer install`) MUST be in the entrypoint so restart
 picks up new packages without re-running setup.
 
-**In setup.just** - `touch .setup-complete` goes last, only after everything succeeds.
+**In the setup command** - `touch .setup-complete` goes last, only after everything succeeds.
 
 **In mutagen.ignore** - `.setup-complete` MUST be ignored so it persists in the container
 volume independently of the host.
 
-## Writing setup.just
+## Writing the setup command (`.zdev/run/setup.toml`)
 
-Setup runs on the **host**, uses `zdev exec` for container commands. The interactive terminal
-from `zdev exec` is important - framework prompts work here but would crash in the entrypoint
-(which has no TTY).
+Setup runs on the **host** (`zdev run setup`), uses `zdev exec` for container commands. The
+interactive terminal from `zdev exec` is important - framework prompts work here but would crash in
+the entrypoint (which has no TTY). Keep it a single-job file so `zdev run setup` and
+`zdev create --auto-setup` run it directly.
 
 Setup also produces a wall of output (apk/composer/npm installing hundreds of deps, compilers,
-scaffolders). Plain `@echo` status lines disappear in that noise. `@zdev step "<msg>"` prints two
-leading blank lines + a cyan `▶` + bold text so each phase reads as a clear section header. Styling
-auto-strips when stdout isn't a TTY, when `NO_COLOR` is set, or when global plain mode is on, so
-the same recipe works in logs and CI.
+scaffolders). Plain `echo` status lines disappear in that noise. `step "<msg>"` (a helper every
+shell job gets) prints two leading blank lines + a cyan `▶` + bold text so each phase reads as a
+clear section header. Styling auto-strips when the output isn't a terminal, when `NO_COLOR` is set,
+or when global plain mode is on, so the same script works in logs and CI.
 
-```just
-# Description
-
-[no-exit-message]
-default:
-    zdev start -q
-    @zdev step "Installing dependencies"
-    zdev exec app sh -c "corepack enable && pnpm install && touch .setup-complete"
-    @zdev step "Setup complete! App will start automatically."
-    zdev info
+```toml
+description = "Install dependencies and start the app"
+run = '''
+zdev start -q
+step "Installing dependencies"
+zdev exec app sh -c "corepack enable && pnpm install && touch .setup-complete"
+step "Setup complete! App will start automatically."
+zdev info
+'''
 ```
 
 Conventions:
 - `zdev start -q` first (quiet: skips info display since setup shows it at the end)
 - `touch .setup-complete` last in exec (only on success)
-- `@zdev step "<msg>"` for each top-level phase; reserve `@echo` for sub-detail lines that don't need to stand out
-- Keep echo ON for `zdev start`, `zdev exec`, `zdev info` so the user sees what's running
-- `[no-exit-message]` suppresses just's exit message
-- Break long chains into separate `zdev exec` calls with a `@zdev step` marker between them
+- `step "<msg>"` for each top-level phase; reserve `echo` for sub-detail lines that don't need to stand out
+- The script stops at the first failing line (append `|| true` where failure is fine); keep it bash 3.2 compatible
+- Break long chains into separate `zdev exec` calls with a `step` marker between them
 
 ## Forwarding colon-namespaced CLIs
 
-For wrappers like `bin/console cache:clear` or `artisan migrate:fresh`, declare a recipe
-named after the file. zdev auto-prepends it so colon args pass through as recipe params
-instead of being parsed as just's module path:
+A single-job file passes every argument through verbatim, colons included:
 
-```just
-# .zdev/commands/console.just
-console *args:
-    zdev exec app php bin/console {{args}}
+```toml
+# .zdev/run/console.toml
+description = "Symfony console"
+run = '''
+zdev exec app php bin/console "$@"
+'''
 ```
 
-`zdev console cache:clear` -> `bin/console cache:clear`. Without a filename-matching
-recipe, the first arg is still treated as the recipe name (legacy behavior).
+`zdev run console cache:clear` -> `bin/console cache:clear`.
 
 ## Handling Framework Scaffolding
 
@@ -169,7 +167,7 @@ Language/framework behaviors (Node corepack, pnpm build scripts, PHP extensions,
 template-authoring-specific** - they apply to any zdev-managed container. See
 `stack-gotchas.md` for the full list. System-level deps (PHP extensions, apk/apt packages) belong
 in a `.zdev/Dockerfile` referenced via `dockerfile:` (zdev builds it automatically); runtime env
-and per-project setup go in the entrypoint and/or `setup.just`. The same split applies when
+and per-project setup go in the entrypoint and/or the setup command. The same split applies when
 adding zdev to an existing project.
 
 ## Template Naming and Testing
@@ -178,7 +176,7 @@ Name repos `zdev-template-<name>`. The `0ploy` org has shorthand:
 `zdev create express` -> `0ploy/zdev-template-express`
 
 Test locally: `zdev create ./my-template test-app && cd test-app && zdev start`
-(a `scaffold.sh` runs during `zdev create`; older `setup.just` templates need `zdev setup` instead).
+(a `scaffold.sh` runs during `zdev create`; templates with a setup command need `zdev run setup` instead).
 
 Verify: create scaffolds, `zdev start` serves the URL, `zdev restart` works, file changes reflected.
 

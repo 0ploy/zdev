@@ -1,6 +1,7 @@
 package project
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -57,30 +58,30 @@ func (p *Project) DiscoverJustfiles() ([]JustfileInfo, error) {
 	return justfiles, nil
 }
 
+// RunEnv returns the variables host-side project commands (zdev run jobs,
+// justfiles) get on top of the process environment: the zdev variables,
+// then the project-level environment: from config.
+func (p *Project) RunEnv() map[string]string {
+	env := map[string]string{
+		"PROJECTNAME": p.Config.Name,
+		"PROJECTPATH": p.Dir,
+		"PROJECTDIR":  filepath.Base(p.Dir),
+		"ZDEV_DOMAIN": config.GetZdevDomain(),
+		"ZDEV_HOME":   config.GetZdevHome(),
+	}
+	maps.Copy(env, p.Config.Environment)
+	return env
+}
+
 // BuildJustEnv creates the environment variables to pass to just
 func (p *Project) BuildJustEnv() map[string]string {
 	env := make(map[string]string)
-
-	// Copy current environment
 	for _, e := range os.Environ() {
-		parts := strings.SplitN(e, "=", 2)
-		if len(parts) == 2 {
-			env[parts[0]] = parts[1]
+		if k, v, ok := strings.Cut(e, "="); ok {
+			env[k] = v
 		}
 	}
-
-	// Add zdev-specific variables (override any existing)
-	env["PROJECTNAME"] = p.Config.Name
-	env["PROJECTPATH"] = p.Dir
-	env["PROJECTDIR"] = filepath.Base(p.Dir)
-	env["ZDEV_DOMAIN"] = config.GetZdevDomain()
-	env["ZDEV_HOME"] = config.GetZdevHome()
-
-	// Add project environment variables from config
-	for k, v := range p.Config.Environment {
-		env[k] = v
-	}
-
+	maps.Copy(env, p.RunEnv())
 	return env
 }
 

@@ -13,15 +13,15 @@ var stepCmd = &cobra.Command{
 	Short: "Print a visually distinct status step",
 	Long: `Print a visually distinct status step (two blank lines, colored prefix, bold text).
 
-Intended for use inside .zdev/commands/*.just recipes so template progress
-markers stand out against verbose nested command output. Example:
+For legacy .zdev/commands/*.just recipes (just is deprecated). Jobs in
+.zdev/run/*.toml get the same output from the built-in step helper:
 
-    setup:
-        @zdev step "Installing PHP extensions"
-        zdev exec app sh -c "apk add ..."
+    run = '''
+    step "Installing PHP extensions"
+    zdev exec app sh -c "apk add ..."
+    '''
 
-        @zdev step "Scaffolding project"
-        zdev exec app composer create-project ...`,
+Convert justfiles with: zdev run --convert-just`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		message := strings.Join(args, " ")
