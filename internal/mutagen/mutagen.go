@@ -49,12 +49,16 @@ func (m *Mutagen) IsDaemonRunning(ctx context.Context) bool {
 
 // Session management
 
+// DefaultSyncMode is the Mutagen sync mode used when none is configured.
+const DefaultSyncMode = "two-way-safe"
+
 // SessionConfig defines the configuration for creating a sync session
 type SessionConfig struct {
-	Name    string   // Session name (e.g., sync.app.myproject.zdev)
-	Alpha   string   // Local path (host filesystem)
-	Beta    string   // Docker endpoint (docker://container/path)
-	Ignores []string // Paths to ignore from sync
+	Name     string   // Session name (e.g., sync.app.myproject.zdev)
+	Alpha    string   // Local path (host filesystem)
+	Beta     string   // Docker endpoint (docker://container/path)
+	Ignores  []string // Paths to ignore from sync
+	SyncMode string   // Mutagen sync mode; empty means DefaultSyncMode
 	// Beta-side defaults stamped on NEW files/dirs only - empty string means
 	// "don't pass the flag, let Mutagen use its built-in default". Changing
 	// these on an existing session has no effect on already-materialized files.
@@ -64,6 +68,14 @@ type SessionConfig struct {
 	DefaultDirectoryModeBeta string
 }
 
+// syncMode returns the configured sync mode, falling back to DefaultSyncMode.
+func (cfg SessionConfig) syncMode() string {
+	if cfg.SyncMode == "" {
+		return DefaultSyncMode
+	}
+	return cfg.SyncMode
+}
+
 // Hash returns a deterministic sha256 over the parts of SessionConfig that,
 // if changed, require terminating and recreating the session for the change
 // to take effect. Name, Alpha, Beta are intentionally excluded - those are
@@ -71,14 +83,22 @@ type SessionConfig struct {
 func (cfg SessionConfig) Hash() string {
 	ignores := append([]string(nil), cfg.Ignores...)
 	sort.Strings(ignores)
+	// The default sync mode hashes as empty (omitted), so sessions created
+	// before the mode was configurable keep their hash and aren't recreated.
+	syncMode := cfg.syncMode()
+	if syncMode == DefaultSyncMode {
+		syncMode = ""
+	}
 	payload := struct {
 		Ignores                  []string
+		SyncMode                 string `json:",omitempty"`
 		DefaultOwnerBeta         string
 		DefaultGroupBeta         string
 		DefaultFileModeBeta      string
 		DefaultDirectoryModeBeta string
 	}{
 		Ignores:                  ignores,
+		SyncMode:                 syncMode,
 		DefaultOwnerBeta:         cfg.DefaultOwnerBeta,
 		DefaultGroupBeta:         cfg.DefaultGroupBeta,
 		DefaultFileModeBeta:      cfg.DefaultFileModeBeta,
@@ -101,7 +121,7 @@ func (m *Mutagen) CreateSession(ctx context.Context, cfg SessionConfig) error {
 		cfg.Alpha,
 		cfg.Beta,
 		"--name", cfg.Name,
-		"--sync-mode", "two-way-safe",
+		"--sync-mode", cfg.syncMode(),
 	}
 
 	if cfg.DefaultOwnerBeta != "" {

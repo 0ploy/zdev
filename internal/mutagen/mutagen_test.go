@@ -2,9 +2,13 @@ package mutagen
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -172,6 +176,7 @@ func TestSessionConfigHash(t *testing.T) {
 		{"file_mode", func(c *SessionConfig) { c.DefaultFileModeBeta = "0600" }},
 		{"directory_mode", func(c *SessionConfig) { c.DefaultDirectoryModeBeta = "0700" }},
 		{"ignores", func(c *SessionConfig) { c.Ignores = []string{".git"} }},
+		{"sync_mode", func(c *SessionConfig) { c.SyncMode = "one-way-safe" }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -188,6 +193,78 @@ func TestSessionConfigHash(t *testing.T) {
 	reordered.Ignores = []string{"vendor", ".git"}
 	if reordered.Hash() != base.Hash() {
 		t.Error("Hash should be invariant to Ignores order")
+	}
+}
+
+// The default sync mode must hash exactly like sessions created before the
+// mode was configurable, or every existing session gets recreated on upgrade.
+func TestSessionConfigHashDefaultSyncModeIsLegacyHash(t *testing.T) {
+	cfg := SessionConfig{Ignores: []string{".git"}, DefaultOwnerBeta: "www-data"}
+
+	legacy := struct {
+		Ignores                  []string
+		DefaultOwnerBeta         string
+		DefaultGroupBeta         string
+		DefaultFileModeBeta      string
+		DefaultDirectoryModeBeta string
+	}{Ignores: []string{".git"}, DefaultOwnerBeta: "www-data"}
+	b, _ := json.Marshal(legacy)
+	sum := sha256.Sum256(b)
+	want := hex.EncodeToString(sum[:])
+
+	if got := cfg.Hash(); got != want {
+		t.Errorf("empty SyncMode: hash %s, want legacy %s", got, want)
+	}
+	cfg.SyncMode = DefaultSyncMode
+	if got := cfg.Hash(); got != want {
+		t.Errorf("explicit %s: hash %s, want legacy %s", DefaultSyncMode, got, want)
+	}
+}
+
+func TestCreateSessionPassesSyncMode(t *testing.T) {
+	tests := []struct {
+		name     string
+		syncMode string
+		want     string
+	}{
+		{"default", "", DefaultSyncMode},
+		{"configured", "two-way-resolved", "two-way-resolved"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			argsFile := filepath.Join(dir, "args")
+			binary := filepath.Join(dir, "mutagen")
+			script := fmt.Sprintf("#!/bin/sh\necho \"$@\" >> %q\n", argsFile)
+			if err := os.WriteFile(binary, []byte(script), 0o755); err != nil {
+				t.Fatalf("write stub binary: %v", err)
+			}
+
+			err := New(binary).CreateSession(context.Background(), SessionConfig{
+				Name:     "s",
+				Alpha:    "/host",
+				Beta:     "docker://c/app",
+				SyncMode: tc.syncMode,
+			})
+			if err != nil {
+				t.Fatalf("CreateSession: %v", err)
+			}
+
+			out, err := os.ReadFile(argsFile)
+			if err != nil {
+				t.Fatalf("read args: %v", err)
+			}
+			var got string
+			fields := strings.Fields(string(out))
+			for i, f := range fields {
+				if f == "--sync-mode" && i+1 < len(fields) {
+					got = fields[i+1]
+				}
+			}
+			if got != tc.want {
+				t.Errorf("--sync-mode = %q, want %q (args %q)", got, tc.want, out)
+			}
+		})
 	}
 }
 

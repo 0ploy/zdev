@@ -299,14 +299,19 @@ func (p *Project) createMutagenVolumes(ctx context.Context, mounts []MutagenSync
 // SessionConfigFor builds the Mutagen session configuration for one mount.
 // Single source of truth: `zdev start` and `zdev mutagen reset` both go
 // through it, so a session created by either carries the same ignores and the
-// same per-service ownership defaults.
+// same per-service ownership defaults and the global sync mode.
 func (p *Project) SessionConfigFor(mount MutagenSyncMount) mutagen.SessionConfig {
 	containerName := p.ContainerName(mount.ServiceName)
+	var syncMode string
+	if globalCfg, err := config.LoadGlobalConfig(); err == nil {
+		syncMode = globalCfg.Mutagen.SyncMode
+	}
 	return mutagen.SessionConfig{
 		Name:                     mount.SessionName,
 		Alpha:                    mount.HostPath,
 		Beta:                     fmt.Sprintf("docker://%s%s", containerName, mount.ContainerPath),
 		Ignores:                  mutagen.MergeIgnores(p.Config.Mutagen.Ignore),
+		SyncMode:                 syncMode,
 		DefaultOwnerBeta:         mount.Owner,
 		DefaultGroupBeta:         mount.Group,
 		DefaultFileModeBeta:      mount.FileMode,

@@ -188,10 +188,12 @@ ssl:
   enabled: true
 mutagen:
   enabled: auto       # "auto" (macOS only), "true" (always), "false" (never)
-  sync_mode: two-way-safe  # default sync mode
+  sync_mode: two-way-safe  # two-way-safe (default), two-way-resolved, one-way-safe, one-way-replica
 shared:
   logs:
     shell: false      # enable Dozzle's in-container shell (default false; see below)
 ```
+
+`mutagen.sync_mode` is passed to every Mutagen session as `--sync-mode`. Changing it recreates the sync sessions on the next `zdev start`. The one-way modes sync host to container only, so files a container writes (`vendor/` from `composer install`, generated code) never come back to the host.
 
 Environment variables zdev itself honors: `ZDEV_HOME` relocates the zdev home directory (config, state, certs, downloaded tools; default `~/.zdev`), `ZDEV_PLAIN=1` forces plain output (no colors, hyperlinks, or step markers - overrides the `terminal.plain` config setting), `ZDEV_NO_UPDATE_CHECK=1` disables the background self-update check, and `OP_SERVICE_ACCOUNT_TOKEN` authenticates 1Password secret resolution in CI.
