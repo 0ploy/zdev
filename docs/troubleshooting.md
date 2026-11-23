@@ -32,6 +32,25 @@ lsof -i :80
 lsof -i :443
 ```
 
+## 1Password: "No accounts configured for use with 1Password CLI" (macOS)
+
+`op` finds your account through the 1Password desktop app, not its own config. If `op account list`
+prints nothing:
+
+1. The 1Password app is installed in `/Applications`, signed in and unlocked as the same macOS user
+   that runs `op`.
+2. In the app, **Settings > Developer > Integrate with 1Password CLI** is on. Quit the app (⌘Q),
+   reopen it, then open a new terminal window.
+3. **macOS permission (common on fresh installs):** the first time `op` talks to the app, macOS asks
+   whether your terminal may access data from another app. If that prompt was dismissed or denied,
+   `op` silently finds no accounts. Allow your terminal (Terminal, iTerm, Ghostty, cmux, …) under
+   **System Settings > Privacy & Security > App Management**, or reset the decision so macOS asks
+   again: `tccutil reset All <terminal-bundle-id>` (e.g. `com.apple.Terminal`), restart the
+   terminal, run `op account list` and click **Allow**.
+
+If `op account list --debug` still shows nothing useful, try the built-in Terminal.app: if it works
+there, the permission in step 3 is the cause.
+
 ## Symfony/Sylius/Laravel: stuck "Loading…" debug toolbar, broken admin login, mixed-content errors
 
 Traefik terminates HTTPS and forwards plain HTTP to your app on its internal port. Without a

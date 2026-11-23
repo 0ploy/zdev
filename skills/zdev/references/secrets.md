@@ -135,6 +135,7 @@ failures become actionable errors instead of hangs.
 | `1Password CLI (op) not found in PATH` | Install the beta: `brew install 1password-cli@beta`. On a TTY zdev offers to run this itself |
 | `authorization timeout` | The 1Password app's approval dialog went unanswered - unlock the app, rerun, approve the popup |
 | `not signed in` / `no accounts configured` | On a TTY zdev drives `op signin` / `op account add` interactively; otherwise enable the desktop-app CLI integration or set `OP_SERVICE_ACCOUNT_TOKEN` |
+| `no accounts configured` even though the app integration is on (macOS) | The terminal was denied access to the 1Password app's data ("Terminal would like to access data from other apps"), so `op account list` is silently empty. Allow the terminal in System Settings > Privacy & Security > App Management, or `tccutil reset All <terminal-bundle-id>`, restart the terminal and approve the prompt. Quick check: works in Terminal.app but not the usual terminal |
 | `does not support Environments` | Stable `op` build installed - Environments need the beta (`1password-cli@beta`) |
 | `expected op-env://<environment-id>/<VARIABLE>` | Reference is missing its Environment ID segment - the old single-segment form (`op-env://KEY`) is not valid |
 | `variable X not found in 1Password Environment` | Variable missing in that Environment (names are case-sensitive) - check Developer > Environments in the app |
