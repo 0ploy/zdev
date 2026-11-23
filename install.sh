@@ -72,10 +72,13 @@ fi
 
 # Symlink into a PATH location. The real binary stays in the user-owned
 # $BIN_DIR so future `zdev self-update` runs never need sudo.
-if [ -w "$SYMLINK_DIR" ]; then
+# A fresh macOS (no Homebrew) has no /usr/local/bin at all, even though it is
+# on the default PATH via /etc/paths - create it rather than failing in ln.
+if [ -d "$SYMLINK_DIR" ] && [ -w "$SYMLINK_DIR" ]; then
   ln -sfn "$BIN_DIR/$BINARY" "$SYMLINK_DIR/$BINARY"
 else
   echo "Creating symlink in ${SYMLINK_DIR} (requires sudo, one-time)..."
+  sudo mkdir -p "$SYMLINK_DIR"
   sudo ln -sfn "$BIN_DIR/$BINARY" "$SYMLINK_DIR/$BINARY"
 fi
 
