@@ -428,6 +428,9 @@ func (p *Project) start(ctx context.Context, filter map[string]bool) error {
 		return err
 	}
 
+	// Before any container is built: its config mounts the CA copy.
+	p.ensureCATrustFiles(ctx)
+
 	m, mutagenMounts, mutagenMountMap, err := p.prepareMutagen(ctx)
 	if err != nil {
 		return err
@@ -479,7 +482,41 @@ func (p *Project) start(ctx context.Context, filter map[string]bool) error {
 	// top of the sync problem. Report both.
 	syncErr := p.finalizeMutagen(ctx, m, finalizedMounts)
 
-	return errors.Join(syncErr, p.registerAndConnect(ctx))
+	err = errors.Join(syncErr, p.registerAndConnect(ctx))
+	p.warnOutdatedServices(ctx, filter)
+	return err
+}
+
+// warnOutdatedServices tells the user when start/restart reused a container
+// whose config no longer matches what zdev would create now - a config edit,
+// or a zdev upgrade that changed container setup (e.g. the CA mounts).
+// Start deliberately keeps existing containers; only `zdev update`
+// recreates. Checked after starting, so a container start just recreated
+// (rebuilt image, stale network) doesn't count. Best effort: a Docker error
+// here only skips the hint.
+func (p *Project) warnOutdatedServices(ctx context.Context, filter map[string]bool) {
+	var outdated []string
+	for name, svc := range p.Config.Services {
+		if len(filter) > 0 && !filter[name] {
+			continue
+		}
+		exists, err := p.Runtime.ContainerExists(ctx, p.ContainerName(name))
+		if err != nil || !exists {
+			continue
+		}
+		if stale, err := p.serviceNeedsRecreate(ctx, name, svc); err == nil && stale {
+			outdated = append(outdated, name)
+		}
+	}
+	if len(outdated) == 0 {
+		return
+	}
+	sort.Strings(outdated)
+	if len(outdated) == 1 {
+		fmt.Printf("Service %s runs with an outdated config - run 'zdev update' to apply the changes\n", outdated[0])
+		return
+	}
+	fmt.Printf("Services %s run with an outdated config - run 'zdev update' to apply the changes\n", strings.Join(outdated, ", "))
 }
 
 // startServiceWithMutagen starts a service with optional Mutagen volume transformation
@@ -705,9 +742,12 @@ func (p *Project) registerAndConnect(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to load state: %w", err)
 	}
-	if err := stateMgr.RegisterProjectWithRouting(p.Config.Name, p.Dir, tcpPorts, udpPorts); err != nil {
+	if err := stateMgr.RegisterProjectWithRouting(p.Config.Name, p.Dir, tcpPorts, udpPorts, p.resolvableHosts()); err != nil {
 		return fmt.Errorf("failed to register project: %w", err)
 	}
+	// Before the router is connected below: it reads every project's hosts
+	// from state for its aliases.
+	backfillRoutedHosts(stateMgr)
 
 	// After registration, never before: StartRouter (ours below, or another
 	// project's running concurrently) sweeps certs of unregistered projects,
@@ -966,6 +1006,9 @@ func (p *Project) Update(ctx context.Context) (bool, error) {
 	if err := p.checkPortAvailability(ctx, nil); err != nil {
 		return updated, err
 	}
+
+	// Before the drift compare: the expected config mounts the CA copy.
+	p.ensureCATrustFiles(ctx)
 
 	// Ensure network exists
 	networkName := p.NetworkName()
@@ -1227,6 +1270,11 @@ func (p *Project) buildContainerConfig(name string, svc config.ServiceConfig, mu
 		}
 	}
 
+	// Trust the zdev CA, so HTTPS calls to other projects' URLs verify.
+	// After the config volumes, so a user mount on the same path errors
+	// loudly instead of being silently shadowed.
+	applyCATrust(&cfg)
+
 	// Parse command
 	if svc.Command != "" {
 		// When Mutagen is enabled for this service, wrap with sync-ready gate
@@ -1369,6 +1417,7 @@ func (p *Project) RestartService(ctx context.Context, name string) error {
 		}
 	}
 
+	p.warnOutdatedServices(ctx, map[string]bool{name: true})
 	return nil
 }
 

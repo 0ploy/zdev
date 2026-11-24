@@ -38,7 +38,8 @@ Check it's installed with `zdev version`; otherwise
 - **Config edits need `zdev update`, not `zdev restart`.** Restart keeps the old container; update
   recreates exactly the services whose config changed.
 - **Inside containers, other services are reached by service name** (`db:5432`, `mail:1025`), never
-  `localhost`, and never `https://*.0ploy.dev` (that resolves to the container's own loopback).
+  `localhost`. Other projects are reached by their real URL (`https://api.0ploy.dev`, through the
+  router; containers trust the zdev CA out of the box, see `references/configuration.md`, Routing).
 - **Only use config fields that exist** (`references/configuration.md`): unknown fields make the
   whole config fail to load.
 
@@ -104,7 +105,8 @@ Read the one that matches the task; don't load them all.
 | Write or convert project commands (`.zdev/run/*.toml`, justfiles) | `references/project-commands.md` |
 | Something is broken | `references/debugging.md` |
 | Secrets, 1Password, `op-env`, `.env` migration | `references/secrets.md` |
-| Two projects need to talk to each other | `references/linking.md` |
+| A container calls another project (real URL, no link) | `references/configuration.md` (Routing) |
+| Direct access to another project's internal port (link networks) | `references/linking.md` |
 | Build a template for `zdev create` (scaffold hook, setup command) | `references/templates.md` |
 | Stack runtime landmines (corepack, pnpm builds, PHP extensions, asset builds) | `references/stack-gotchas.md` |
 

@@ -1,5 +1,7 @@
 # Linking projects
 
+You don't need a link to call another project by its URL (`https://other.0ploy.dev`): that works from every container through the router, see [Routing](routing.md#calling-other-projects-from-a-container). Use a link when a container needs another project's internal port directly, without Traefik, or a service that isn't routed at all.
+
 Link networks enable direct container-to-container communication between separate projects. Each project runs on its own isolated Docker network, so by default containers in project A cannot reach containers in project B. Link networks solve this by creating a shared Docker network that selected containers join.
 
 ```bash
@@ -26,7 +28,7 @@ Linked containers reach each other by their **container name**, not the project 
 curl http://app.sec-scan-decoder.zdev:3000
 ```
 
-**Why container names, not project domains?** The project domain (e.g., `sec-scan-decoder.0ploy.dev`) uses wildcard DNS that resolves to `127.0.0.1`. Inside a container, `127.0.0.1` points to the container itself, not the host or Traefik - so the domain is unreachable. Container names (e.g., `app.sec-scan-decoder.zdev`) are resolved by Docker's built-in DNS, which returns the actual container IP on the shared link network. This works reliably and without TLS certificate issues.
+**Container names vs. project domains:** on a link network, container names (e.g., `app.sec-scan-decoder.zdev`) resolve to the container itself, so traffic goes straight to its internal port without Traefik or TLS. Project domains (`sec-scan-decoder.0ploy.dev`) also work from containers, link or not, but go through the router ([Routing](routing.md#calling-other-projects-from-a-container)).
 
 The container name pattern is `<service>.<project>.zdev` - the same name shown by `zdev link status`.
 

@@ -71,6 +71,14 @@ func (c *CertManager) CertsExist() bool {
 func (c *CertManager) EnsureCerts(ctx context.Context, domain string) (string, string, bool, error) {
 	certPath, keyPath := c.GetCertPaths()
 
+	// Keep the trust files containers mount in step with the CA that signs
+	// the certs (and the host's public roots). Runs on first setup and on
+	// every router start. Best effort: without them only HTTPS calls from
+	// containers fail to verify.
+	if err := c.SyncCATrust(ctx); err != nil {
+		fmt.Printf("Warning: failed to update the CA files for containers: %v\n", err)
+	}
+
 	// Check if certs already exist
 	if c.CertsExist() {
 		// Verify certs are valid for current CA

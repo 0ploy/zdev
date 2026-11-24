@@ -146,3 +146,161 @@ func TestEnsureProjectCert_TLSUnavailableNeedsNoMkcert(t *testing.T) {
 
 	routedTestProject().ensureProjectCert(context.Background())
 }
+
+// TCP routes match HostSNI(*) and need no cert, but containers still dial
+// them by hostname, so the router must carry those names as aliases too.
+func TestResolvableHosts_IncludesTCPRoutes(t *testing.T) {
+	p := routedTestProject()
+	want := []string{"admin.example.test", "api.myproj.0ploy.dev", "myproj.0ploy.dev"}
+	if got := p.resolvableHosts(); !reflect.DeepEqual(got, want) {
+		t.Errorf("resolvableHosts() = %v, want %v", got, want)
+	}
+
+	p.Config.Shared.Router = false
+	if got := p.resolvableHosts(); len(got) != 0 {
+		t.Errorf("router disabled: resolvableHosts() = %v, want none", got)
+	}
+}
+
+// caSigner serves a CAROOT directory holding a rootCA.pem.
+type caSigner struct{ dir string }
+
+func (s caSigner) GetCARoot(context.Context) (string, error) { return s.dir + "\n", nil }
+func (s caSigner) GenerateCert(context.Context, string, string, ...string) error {
+	return nil
+}
+
+func TestEnsureCATrustFiles_CreatesFromMkcert(t *testing.T) {
+	defer setupTestEnv(t)()
+	enableTLS(t)
+	caRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(caRoot, "rootCA.pem"), []byte("CA-1"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	old := newCertManager
+	newCertManager = func() (*ssl.CertManager, error) { return ssl.NewCertManagerWithSigner(caSigner{dir: caRoot}) }
+	t.Cleanup(func() { newCertManager = old })
+
+	newTestProject(runtime.NewMockRuntime()).ensureCATrustFiles(context.Background())
+
+	got, err := os.ReadFile(ssl.CAPath())
+	if err != nil || string(got) != "CA-1" {
+		t.Fatalf("ca.pem = %q, %v; want CA-1", got, err)
+	}
+}
+
+// writeTrustFiles creates the trust files as SyncCATrust would.
+func writeTrustFiles(t *testing.T, withBundle bool) {
+	t.Helper()
+	if err := os.MkdirAll(config.GetTrustDir(), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ssl.CAPath(), []byte("CA"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if withBundle {
+		if err := os.WriteFile(ssl.CABundlePath(), []byte("ROOTS+CA"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func mountsByTarget(cfg runtime.ContainerConfig) map[string]runtime.VolumeMount {
+	m := map[string]runtime.VolumeMount{}
+	for _, v := range cfg.Volumes {
+		m[v.Target] = v
+	}
+	return m
+}
+
+func TestBuildContainerConfig_TrustsZdevCA(t *testing.T) {
+	defer setupTestEnv(t)()
+	enableTLS(t)
+	p := routedTestProject()
+
+	// No trust files yet: nothing to mount.
+	cfg := p.buildContainerConfig("web", p.Config.Services["web"], false, nil)
+	if _, ok := cfg.Env["NODE_EXTRA_CA_CERTS"]; ok {
+		t.Fatal("NODE_EXTRA_CA_CERTS set without trust files")
+	}
+	if _, ok := mountsByTarget(cfg)[containerTrustDir]; ok {
+		t.Fatal("trust dir mounted without trust files")
+	}
+
+	writeTrustFiles(t, true)
+	cfg = p.buildContainerConfig("web", p.Config.Services["web"], false, nil)
+	mounts := mountsByTarget(cfg)
+	want := map[string]string{containerTrustDir: config.GetTrustDir()}
+	for _, target := range systemCABundlePaths {
+		want[target] = ssl.CABundlePath()
+	}
+	if len(want) != 4 {
+		t.Fatalf("want 4 trust mounts, test lists %d", len(want))
+	}
+	for target, source := range want {
+		v, ok := mounts[target]
+		if !ok {
+			t.Errorf("no mount at %s", target)
+			continue
+		}
+		if v.Source != source || !v.ReadOnly {
+			t.Errorf("mount at %s = %+v, want read-only from %s", target, v, source)
+		}
+	}
+	if cfg.Env["NODE_EXTRA_CA_CERTS"] != containerCAPath {
+		t.Errorf("NODE_EXTRA_CA_CERTS = %q, want %q", cfg.Env["NODE_EXTRA_CA_CERTS"], containerCAPath)
+	}
+	if cfg.Env["REQUESTS_CA_BUNDLE"] != containerBundlePath {
+		t.Errorf("REQUESTS_CA_BUNDLE = %q, want %q", cfg.Env["REQUESTS_CA_BUNDLE"], containerBundlePath)
+	}
+	if _, ok := cfg.Env["SSL_CERT_FILE"]; ok {
+		t.Error("SSL_CERT_FILE must not be set")
+	}
+
+	// User-set env vars and user mounts on the same paths win.
+	svc := p.Config.Services["web"]
+	svc.Environment = map[string]string{"NODE_EXTRA_CA_CERTS": "/custom.pem", "REQUESTS_CA_BUNDLE": "/custom-bundle.pem"}
+	svc.Volumes = append(svc.Volumes, "./certs.crt:/etc/ssl/certs/ca-certificates.crt:ro")
+	cfg = p.buildContainerConfig("web", svc, false, nil)
+	if cfg.Env["NODE_EXTRA_CA_CERTS"] != "/custom.pem" || cfg.Env["REQUESTS_CA_BUNDLE"] != "/custom-bundle.pem" {
+		t.Errorf("user env overridden: %v", cfg.Env)
+	}
+	n := 0
+	for _, v := range cfg.Volumes {
+		if v.Target == "/etc/ssl/certs/ca-certificates.crt" {
+			n++
+			if v.Source == ssl.CABundlePath() {
+				t.Error("zdev bundle mounted over the user's own mount")
+			}
+		}
+	}
+	if n != 1 {
+		t.Errorf("%d mounts at /etc/ssl/certs/ca-certificates.crt, want 1 (duplicates fail docker run)", n)
+	}
+}
+
+// Without host roots there is no bundle: the image's system CA files stay
+// untouched and only Node gets the zdev CA.
+func TestBuildContainerConfig_NoBundleLeavesSystemStore(t *testing.T) {
+	defer setupTestEnv(t)()
+	enableTLS(t)
+	p := routedTestProject()
+	writeTrustFiles(t, false)
+
+	cfg := p.buildContainerConfig("web", p.Config.Services["web"], false, nil)
+	mounts := mountsByTarget(cfg)
+	if _, ok := mounts[containerTrustDir]; !ok {
+		t.Error("trust dir not mounted")
+	}
+	for _, target := range systemCABundlePaths {
+		if _, ok := mounts[target]; ok {
+			t.Errorf("%s mounted without a bundle", target)
+		}
+	}
+	if _, ok := cfg.Env["REQUESTS_CA_BUNDLE"]; ok {
+		t.Error("REQUESTS_CA_BUNDLE set without a bundle")
+	}
+	if cfg.Env["NODE_EXTRA_CA_CERTS"] != containerCAPath {
+		t.Errorf("NODE_EXTRA_CA_CERTS = %q, want %q", cfg.Env["NODE_EXTRA_CA_CERTS"], containerCAPath)
+	}
+}

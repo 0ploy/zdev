@@ -498,7 +498,7 @@ func TestRouting_PortConflict(t *testing.T) {
 	}
 
 	// Register fake project with port 19999
-	if err := stateMgr.RegisterProjectWithRouting("fake-conflict-project", "/tmp/fake", []int{19999}, nil); err != nil {
+	if err := stateMgr.RegisterProjectWithRouting("fake-conflict-project", "/tmp/fake", []int{19999}, nil, nil); err != nil {
 		t.Fatalf("failed to register fake project: %v", err)
 	}
 	defer stateMgr.UnregisterProject("fake-conflict-project")

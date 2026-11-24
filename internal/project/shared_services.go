@@ -8,6 +8,7 @@ import (
 	"github.com/0ploy/zdev/internal/config"
 	"github.com/0ploy/zdev/internal/runtime"
 	"github.com/0ploy/zdev/internal/services"
+	"github.com/0ploy/zdev/internal/state"
 )
 
 // connectEnabledSharedServices connects every shared service whose
@@ -112,6 +113,51 @@ func (p *Project) routedHosts() []string {
 	}
 	sort.Strings(hosts)
 	return hosts
+}
+
+// resolvableHosts returns every hostname the router serves for this
+// project, any protocol, sorted and deduplicated. Unlike routedHosts it
+// includes TCP/UDP routes: their HostSNI(*) needs no cert, but a container
+// calling db.<project>.<domain>:5432 still needs the name to resolve to the
+// router. Registered in state, then used as router network aliases.
+func (p *Project) resolvableHosts() []string {
+	seen := map[string]bool{}
+	var hosts []string
+	for _, svc := range p.Config.Services {
+		if !p.routesService(svc) {
+			continue
+		}
+		if h := p.routingHost(svc.Routing); h != "" && !seen[h] {
+			seen[h] = true
+			hosts = append(hosts, h)
+		}
+	}
+	sort.Strings(hosts)
+	return hosts
+}
+
+// backfillRoutedHosts records the routed hostnames of registered projects
+// that have none recorded yet - projects last started by a zdev that didn't
+// record hosts. It reads each one's config from disk, so the router gets
+// their hostnames as aliases without every project being restarted after an
+// upgrade. A project whose config can't be loaded (moved, deleted, broken)
+// is skipped and retried on the next start. Best effort: a missing host
+// only means that project isn't reachable by URL from containers yet.
+func backfillRoutedHosts(stateMgr *state.Manager) {
+	pending, err := stateMgr.ProjectsWithoutHosts()
+	if err != nil {
+		return
+	}
+	for name, dir := range pending {
+		cfg, err := config.LoadProject(dir)
+		if err != nil {
+			continue
+		}
+		other := &Project{Dir: dir, Config: cfg}
+		if err := stateMgr.SetProjectHosts(name, other.resolvableHosts()); err != nil {
+			fmt.Printf("Warning: failed to record hostnames of %s: %v\n", name, err)
+		}
+	}
 }
 
 // configureRouting adds Traefik labels for routing based on the routing config

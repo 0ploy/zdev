@@ -8,6 +8,13 @@
 2. Corporate VPNs sometimes block external DNS - try a different network
 3. Add entries to `/etc/hosts` as a workaround
 
+## "Can't reach another project's URL from a container"
+
+`https://other.0ploy.dev` from inside a container should go through the router (see [Routing](routing.md#calling-other-projects-from-a-container)). If it doesn't:
+
+- `zdev exec app getent hosts other.0ploy.dev` prints `127.0.0.1`: the hostname isn't known to the router. Start the target project once (that registers its hostnames), then `zdev start` the calling project. Both need `shared.router` enabled.
+- A certificate error: the client doesn't trust the zdev CA. zdev mounts a bundle with it over the system CA files and sets `NODE_EXTRA_CA_CERTS` and `REQUESTS_CA_BUNDLE` (see [HTTPS from inside containers](https-and-dns.md#https-from-inside-containers)). Check `zdev exec app ls /etc/zdev`: if it's empty or missing, run `zdev update` to recreate the containers. Java needs the CA imported into its keystore.
+
 ## "Containers won't start"
 
 ```bash

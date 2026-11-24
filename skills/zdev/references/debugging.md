@@ -22,7 +22,10 @@ Start with `zdev status` (services, stale file mounts, shadowed justfiles, share
 
 **DB connection refused:** use the service name (`db`), not `localhost`. Example: `postgres://postgres:postgres@db:5432/app`.
 
-**Can't reach `https://other-project.0ploy.dev` from inside a container:** `*.0ploy.dev` resolves to `127.0.0.1`, which inside a container is its own loopback, not the host's Traefik. Container-to-container traffic goes HTTP-direct to the container name: `http://<service>.<project>.zdev:<internal-port>`, and both projects must be joined to a shared link (`linking.md`).
+**Can't reach `https://other-project.0ploy.dev` from inside a container:** the router carries every registered routed hostname as an alias on each project network, so this normally resolves to Traefik. Check in order:
+- `getent hosts other-project.0ploy.dev` in the container. `127.0.0.1` means the name isn't an alias: the target was never started with zdev (not registered), isn't routed (`shared.router` off), or the host is a wildcard from custom labels (not covered). `zdev start` the target, then the caller.
+- Certificate error: the client doesn't trust the zdev CA. zdev mounts a bundle with it over the system CA files and sets `NODE_EXTRA_CA_CERTS`/`REQUESTS_CA_BUNDLE` (`configuration.md`, Routing). `ls /etc/zdev` empty or missing: `zdev update` to recreate the container. A user mount or env var on those paths overrides zdev's. Java needs a `keytool` import.
+- To bypass Traefik entirely, use a link and `http://<service>.<project>.zdev:<internal-port>`.
 
 **Symfony/Sylius behind Traefik - stuck "Loading…" debug toolbar, broken admin login, mixed-content errors:** Traefik terminates TLS and forwards HTTP to the app. Without trusted-proxy config, Symfony generates `http://` URLs inside the HTTPS page and the browser blocks them. Fix: `SYMFONY_TRUSTED_PROXIES: private_ranges` in the app service `environment:`, then `zdev update`. Laravel: `TRUSTED_PROXIES=*`.
 

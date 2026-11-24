@@ -24,6 +24,15 @@ type ProjectEntry struct {
 	Path        string       `yaml:"path"`
 	LastStarted time.Time    `yaml:"last_started,omitempty"`
 	Routing     RoutingState `yaml:"routing,omitempty"`
+	// Hosts are the project's routed HTTP(S) hostnames. The router joins
+	// every project network with all registered hosts as aliases, so a
+	// container can call another project by its real URL.
+	Hosts []string `yaml:"hosts,omitempty"`
+	// HostsRecorded tells an empty Hosts ("routes nothing") apart from
+	// "never recorded" (registered by a zdev before hosts existed, or by
+	// RegisterProject). Unrecorded projects get their hosts backfilled from
+	// their config, so an upgrade doesn't need every project restarted.
+	HostsRecorded bool `yaml:"hosts_recorded,omitempty"`
 }
 
 // LinkMember represents a member of a link network - either a whole project or a specific service
@@ -172,13 +181,19 @@ func (m *Manager) saveLocked(state *State) error {
 	return nil
 }
 
-// RegisterProject adds or updates a project in the state
+// RegisterProject adds or updates a project in the state.
+// Its hosts stay unrecorded, so the next start of any project backfills them.
 func (m *Manager) RegisterProject(name, path string) error {
-	return m.RegisterProjectWithRouting(name, path, nil, nil)
+	return m.register(name, path, nil, nil, nil, false)
 }
 
-// RegisterProjectWithRouting adds or updates a project with routing info
-func (m *Manager) RegisterProjectWithRouting(name, path string, tcpPorts, udpPorts []int) error {
+// RegisterProjectWithRouting adds or updates a project with routing info:
+// its TCP/UDP router ports and its routed HTTP(S) hostnames.
+func (m *Manager) RegisterProjectWithRouting(name, path string, tcpPorts, udpPorts []int, hosts []string) error {
+	return m.register(name, path, tcpPorts, udpPorts, hosts, true)
+}
+
+func (m *Manager) register(name, path string, tcpPorts, udpPorts []int, hosts []string, hostsRecorded bool) error {
 	return m.Mutate(func(state *State) error {
 		state.Projects[name] = ProjectEntry{
 			Path:        path,
@@ -187,7 +202,41 @@ func (m *Manager) RegisterProjectWithRouting(name, path string, tcpPorts, udpPor
 				TCPPorts: tcpPorts,
 				UDPPorts: udpPorts,
 			},
+			Hosts:         hosts,
+			HostsRecorded: hostsRecorded,
 		}
+		return nil
+	})
+}
+
+// ProjectsWithoutHosts returns name -> path of every registered project
+// whose routed hostnames were never recorded.
+func (m *Manager) ProjectsWithoutHosts() (map[string]string, error) {
+	st, err := m.Load()
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]string{}
+	for name, entry := range st.Projects {
+		if !entry.HostsRecorded {
+			out[name] = entry.Path
+		}
+	}
+	return out, nil
+}
+
+// SetProjectHosts records a project's routed hostnames without touching
+// the rest of its entry (no LastStarted bump: it may not be running). A
+// project unregistered in the meantime is left alone.
+func (m *Manager) SetProjectHosts(name string, hosts []string) error {
+	return m.Mutate(func(st *State) error {
+		entry, ok := st.Projects[name]
+		if !ok {
+			return nil
+		}
+		entry.Hosts = hosts
+		entry.HostsRecorded = true
+		st.Projects[name] = entry
 		return nil
 	})
 }
@@ -286,6 +335,28 @@ func (m *Manager) GetAllRoutingPorts() (tcpPorts, udpPorts []int, err error) {
 	sort.Ints(udpPorts)
 
 	return tcpPorts, udpPorts, nil
+}
+
+// GetAllRoutedHosts returns the routed hostnames of every registered
+// project, sorted and deduplicated. Sorted so callers comparing alias sets
+// get a stable order.
+func (m *Manager) GetAllRoutedHosts() ([]string, error) {
+	state, err := m.Load()
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]bool)
+	var hosts []string
+	for _, entry := range state.Projects {
+		for _, host := range entry.Hosts {
+			if host != "" && !seen[host] {
+				seen[host] = true
+				hosts = append(hosts, host)
+			}
+		}
+	}
+	sort.Strings(hosts)
+	return hosts, nil
 }
 
 // GetTCPPortOwner returns the project name that owns the given TCP port, or empty string

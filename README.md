@@ -77,7 +77,8 @@ Every project runs in its own isolated Docker network and gets its own HTTPS sub
 - **Shared services.** Mailpit, Adminer, Redis Insights and Dozzle run once for all projects. [Shared services](docs/shared-services.md)
 - **Fast file sync on macOS.** Source code syncs at native speed while `node_modules` stays inside the container. [File sync](docs/file-sync.md)
 - **Project commands.** `.zdev/run/*.toml` files hold the project's tasks, run with `zdev run`. [Project commands](docs/project-commands.md)
-- **Projects can talk to each other** through named link networks. [Linking](docs/linking.md)
+- **Projects call each other by their real URLs**, from inside containers too, with trusted HTTPS. [Routing](docs/routing.md#calling-other-projects-from-a-container)
+- **Direct container access across projects** through named link networks. [Linking](docs/linking.md)
 
 ## Documentation
 

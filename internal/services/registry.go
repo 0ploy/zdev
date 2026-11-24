@@ -121,13 +121,15 @@ func AllSharedServices() []SharedServiceDef {
 			ProjectEnabled: func(*config.ProjectSharedConfig) bool { return true },
 		},
 		{
-			Name:           "Router",
-			Subdomain:      "router.shared",
-			ContainerName:  RouterContainerName,
-			Start:          func(ctx context.Context, m *Manager) error { return m.StartRouter(ctx) },
-			Stop:           stopClosure(RouterContainerName, "Router"),
-			Status:         func(ctx context.Context, m *Manager) (*ServiceStatus, error) { return m.RouterStatus(ctx) },
-			Connect:        connectClosure(RouterContainerName, "Router", "router"),
+			Name:          "Router",
+			Subdomain:     "router.shared",
+			ContainerName: RouterContainerName,
+			Start:         func(ctx context.Context, m *Manager) error { return m.StartRouter(ctx) },
+			Stop:          stopClosure(RouterContainerName, "Router"),
+			Status:        func(ctx context.Context, m *Manager) (*ServiceStatus, error) { return m.RouterStatus(ctx) },
+			// Not connectClosure: the router's aliases are every routed
+			// hostname, so containers resolve <project>.<domain> to it.
+			Connect:        func(ctx context.Context, m *Manager, network string) error { return m.ConnectRouter(ctx, network) },
 			Disconnect:     disconnectClosure(RouterContainerName, "Router"),
 			ProjectEnabled: func(s *config.ProjectSharedConfig) bool { return s.Router },
 		},

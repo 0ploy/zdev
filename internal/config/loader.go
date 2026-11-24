@@ -566,6 +566,13 @@ func GetCertsDir() string {
 	return filepath.Join(getZdevHome(), "certs")
 }
 
+// GetTrustDir returns the directory holding the CA files project containers
+// mount (public certificates only). Kept apart from GetCertsDir, which holds
+// private keys that must never be mounted into project containers.
+func GetTrustDir() string {
+	return filepath.Join(getZdevHome(), "trust")
+}
+
 // EnsureTraefikConfig creates the Traefik dynamic config file if certs exist
 // Returns the config directory path, or empty string if certs don't exist
 func EnsureTraefikConfig() (string, error) {

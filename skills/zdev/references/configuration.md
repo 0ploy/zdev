@@ -8,7 +8,7 @@ Unknown fields are rejected (the whole config fails to load), so only use fields
 - Variables, environment, built-ins
 - Shared services: hostnames and access
 - Volumes and file sync (Mutagen)
-- Routing (HTTP, multiple domains, TCP/UDP)
+- Routing (HTTP, multiple domains, TCP/UDP, calling other projects, HTTPS from containers)
 - Custom dev images (`dockerfile:`)
 - Local overrides
 - Gotchas
@@ -133,7 +133,21 @@ Service fields: `image`, `dockerfile`, `command`, `working_dir`, `volumes`, `env
   Nested domains like this one get a trusted per-project certificate automatically on `zdev start` / `zdev update` (the main cert's wildcard covers only one label). If HTTPS fails with "no alternative certificate subject name", run `zdev update`.
 
 - **TCP/UDP** for host tools (DB clients): `routing: { protocol: tcp, port: 5432, host_port: 5432 }`. Host ports must be unique across projects.
-- Services in one project reach each other by service name (`db`, `redis`). Other projects need a link (`linking.md`).
+- Services in one project reach each other by service name (`db`, `redis`).
+- **Other projects are reached by their real URL** (`https://api.0ploy.dev`, TCP routes like
+  `db.api.0ploy.dev:5432`, shared UIs like `https://mail.shared.0ploy.dev`), no link needed: the
+  router carries every registered routed hostname as a network alias on every project network, so
+  the name resolves to Traefik, not `127.0.0.1`. Needs `shared.router` on in both projects and the
+  target started with zdev at least once. Only config hostnames resolve (no wildcards from
+  custom labels).
+- **HTTPS from containers works without setup.** zdev mounts `~/.zdev/trust` at `/etc/zdev`
+  (`ca.pem` = zdev CA, `ca-bundle.pem` = host public roots + zdev CA), mounts the bundle over
+  `/etc/ssl/certs/ca-certificates.crt`, `/etc/pki/tls/certs/ca-bundle.crt` and
+  `/etc/ssl/ca-bundle.pem`, and sets `NODE_EXTRA_CA_CERTS` and `REQUESTS_CA_BUNDLE`. Public HTTPS
+  keeps working. Don't add `update-ca-certificates` steps or set `SSL_CERT_FILE`. Not covered: Java
+  (`keytool` import of `/etc/zdev/ca.pem`), Rust with `webpki-roots`.
+- A link (`linking.md`) is only for reaching another project's internal port without Traefik, or
+  unrouted services.
 
 ## Custom dev images (`dockerfile:`)
 

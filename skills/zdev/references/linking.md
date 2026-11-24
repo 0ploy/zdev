@@ -1,5 +1,11 @@
 # Linking projects
 
+To call another project by its URL you don't need a link: `https://api.0ploy.dev` works from every
+container through the router (`configuration.md`, Routing). Use a link only to reach another project's
+internal port without Traefik, or services that aren't routed.
+
+## Link networks
+
 Each zdev project has its own isolated Docker network, so by default two projects can't talk to
 each other. When they need to (a monolith calling a microservice you're also developing locally,
 split front-end/back-end, shared gateway), create a named **link** - a shared Docker network that
@@ -20,20 +26,17 @@ Across a link, containers are reachable by their fully-qualified name `<service>
 only injects on *the project's own* network - on a link network multiple projects could have a
 service called `app`, so always use the long name for cross-project calls.
 
-## Cross-project calls are HTTP to the internal port, not HTTPS on 443
+## Over a link, use the internal port
 
-The public `https://*.0ploy.dev` domains resolve to `127.0.0.1`, which from inside a
-container means the container's own loopback - not the host's Traefik. TLS termination and Traefik
-routing only exist host-side. From one container to another, go direct:
+A link bypasses Traefik, so there is no TLS and no routing - call the container directly:
 
 ```
 http://app.api.zdev:8000      # ✓ cross-project via link (FQDN + internal port)
 http://app:8000                # ✓ same project only (short alias)
-https://api.0ploy.dev # ✗ resolves to 127.0.0.1, hits container's own loopback
+https://api.0ploy.dev          # ✓ via the router, no link needed
 ```
 
-When wiring one project's URL into another's env, use the internal port the target service listens
-on (the value of its `routing.port`), not 443.
+Over a link, use the internal port the target service listens on (its `routing.port`), not 443.
 
 ## Persistence
 

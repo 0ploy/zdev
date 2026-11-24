@@ -166,12 +166,24 @@ func (m *Manager) restoreProjectNetworks(ctx context.Context, containerName stri
 	if len(snapshot) == 0 {
 		return
 	}
+	// The router's aliases are derived from state, not carried over: a
+	// recreate is a free chance to bring stale hostnames up to date.
+	var routerAliases []string
+	if containerName == RouterContainerName {
+		if aliases, err := m.routerAliases(); err == nil {
+			routerAliases = aliases
+		}
+	}
 	for _, network := range sortedKeys(snapshot) {
 		exists, err := m.runtime.NetworkExists(ctx, network)
 		if err != nil || !exists {
 			continue
 		}
-		if err := m.runtime.NetworkConnect(ctx, network, containerName, snapshot[network]...); err != nil {
+		aliases := snapshot[network]
+		if routerAliases != nil {
+			aliases = routerAliases
+		}
+		if err := m.runtime.NetworkConnect(ctx, network, containerName, aliases...); err != nil {
 			errStr := strings.ToLower(err.Error())
 			if strings.Contains(errStr, "already exists") || strings.Contains(errStr, "already connected") {
 				continue
