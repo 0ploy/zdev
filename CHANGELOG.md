@@ -1,3 +1,30 @@
+## v0.14.0
+
+Containers can call other projects by the URL you use in the browser:
+`https://api.0ploy.dev` now works from inside any project container, over
+verified HTTPS, without a link network.
+
+### Features
+
+- **Project URLs resolve inside containers.** `*.0ploy.dev` points at `127.0.0.1` in public DNS, which inside a container is the container itself. The router now joins every project network with each registered project's routed hostnames (HTTP and TCP/UDP routes) and the shared service hosts as network aliases, so `https://other.0ploy.dev` or `db.other.0ploy.dev:5432` reach the router and take the same path as in the browser. The aliases only change when a project with new hostnames starts. Only hostnames under the zdev domain are covered, so one project can't take over a real domain for the others. See [docs/routing.md](docs/routing.md#calling-other-projects-from-a-container).
+- **Containers trust the zdev CA.** zdev keeps the mkcert root and a bundle (your host's public root CAs plus the zdev CA) in `~/.zdev/trust/` and mounts them read-only into every project container: at `/etc/zdev`, and over the system CA files of Debian/Ubuntu/Alpine/Wolfi/distroless/scratch, Fedora/RHEL/Amazon Linux and openSUSE. `NODE_EXTRA_CA_CERTS` and `REQUESTS_CA_BUNDLE` are set. Node, curl, PHP, Python and Go verify zdev certificates without setup, and public HTTPS keeps working. Your own env vars or mounts on those paths take precedence. Not covered: Java keystores. See [docs/https-and-dns.md](docs/https-and-dns.md#https-from-inside-containers).
+- **`zdev start` and `zdev restart` say when a container is outdated.** They keep existing containers as before, but now print `Service X runs with an outdated config - run 'zdev update' to apply the changes` when the config changed since the container was created.
+
+### Bug Fixes
+
+- **`install.sh` works on a fresh macOS** where `/usr/local/bin` doesn't exist yet.
+
+### Changed
+
+- Linking docs now describe link networks only, for direct access to internal ports. Calling another project by its URL no longer needs a link.
+- `spf13/pflag` updated to v1.1.0.
+- Troubleshooting covers the macOS permission fix for the 1Password CLI error "No accounts configured".
+
+### Upgrade Notes
+
+- **Run `zdev update` in each project once.** Existing containers don't have the CA mounts yet; `zdev start` points this out per service.
+- **No restarts needed for the hostnames.** The first `zdev start` or `zdev update` of any project records the hostnames of every registered project and updates the router on all project networks. That reconnect briefly drops requests in flight, once.
+
 ## v0.13.0
 
 Project commands get their own home: `.zdev/run/*.toml` jobs run with `zdev run`,
