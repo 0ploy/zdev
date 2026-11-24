@@ -13,9 +13,14 @@ import (
 // to reach the router on their network.
 const routerShortAlias = "router"
 
+// docsHostPrefix + domain is the docs page the router serves from its file
+// provider (see config.EnsureDocsConfig); not in the shared service registry.
+const docsHostPrefix = "docs.shared."
+
 // routerAliases returns the network aliases the router should carry on
 // every project network: its short name, the web UI host of every shared
-// service, and the routed hostnames of every registered project.
+// service and the docs page, and the routed hostnames of every registered
+// project that fall under the zdev domain.
 //
 // This is what makes *.<domain> work inside containers. The public DNS
 // record answers 127.0.0.1, which in a container is the container itself;
@@ -23,6 +28,13 @@ const routerShortAlias = "router"
 // so <project>.<domain> resolves to the router and the request takes the
 // same path as in the browser. Wildcards can't be expressed as aliases -
 // only hostnames zdev knows from config are covered.
+//
+// Only hosts under the zdev domain: routing.domain accepts any hostname,
+// and an alias applies to EVERY project's containers, which also trust the
+// zdev CA. An outside host (a production domain routed locally, or a
+// malicious config routing api.stripe.com) would silently take over that
+// domain for all other projects - while the browser still reaches the real
+// site. Outside hosts keep working from the host, as before.
 //
 // Sorted, so callers can compare alias sets and pass a stable order.
 func (m *Manager) routerAliases() ([]string, error) {
@@ -35,13 +47,16 @@ func (m *Manager) routerAliases() ([]string, error) {
 		}
 	}
 
-	if m.cfg != nil && m.cfg.Domain != "" {
-		for _, def := range AllSharedServices() {
-			if def.HasWebUI() {
-				add(def.Subdomain + "." + m.cfg.Domain)
-			}
+	if m.cfg == nil || m.cfg.Domain == "" {
+		return aliases, nil
+	}
+	domain := strings.ToLower(m.cfg.Domain)
+	for _, def := range AllSharedServices() {
+		if def.HasWebUI() {
+			add(def.Subdomain + "." + domain)
 		}
 	}
+	add(docsHostPrefix + domain)
 
 	stateMgr, err := state.DefaultManager()
 	if err != nil {
@@ -52,7 +67,9 @@ func (m *Manager) routerAliases() ([]string, error) {
 		return nil, fmt.Errorf("failed to read routed hosts from state: %w", err)
 	}
 	for _, host := range hosts {
-		add(host)
+		if host = strings.ToLower(host); strings.HasSuffix(host, "."+domain) {
+			add(host)
+		}
 	}
 
 	sort.Strings(aliases)
@@ -68,7 +85,19 @@ func (m *Manager) routerAliases() ([]string, error) {
 // in-flight requests routed to that project for a moment, so it only
 // happens when the set actually changed (a project with new hostnames
 // started) - a restart of a known project touches nothing.
+//
+// Serialized across zdev processes: each run computes the alias set once,
+// so two concurrent starts could otherwise finish in the wrong order and
+// put back an older set, losing the other project's hostnames.
 func (m *Manager) ConnectRouter(ctx context.Context, projectNetwork string) error {
+	stateMgr, err := state.DefaultManager()
+	if err != nil {
+		return m.connectRouter(ctx, projectNetwork)
+	}
+	return stateMgr.WithRouterLock(func() error { return m.connectRouter(ctx, projectNetwork) })
+}
+
+func (m *Manager) connectRouter(ctx context.Context, projectNetwork string) error {
 	status, err := m.RouterStatus(ctx)
 	if err != nil {
 		return err
@@ -120,7 +149,7 @@ func (m *Manager) ensureRouterAliases(ctx context.Context, network string, curre
 		return nil
 	}
 
-	if sameStringSet(current, desired) {
+	if sameStringSet(managedAliases(current), desired) {
 		return nil
 	}
 
@@ -139,6 +168,21 @@ func (m *Manager) ensureRouterAliases(ctx context.Context, network string, curre
 		return fmt.Errorf("failed to update router hostnames on %s, kept the old ones: %w", network, err)
 	}
 	return nil
+}
+
+// managedAliases drops aliases zdev didn't set. Docker before API 1.44
+// (Docker 25) lists the container's short ID under Aliases too; compared
+// raw, the sets would never match and every start would reconnect the
+// router on every project network. zdev's aliases are "router" and
+// hostnames; a short ID has no dot.
+func managedAliases(aliases []string) []string {
+	out := make([]string, 0, len(aliases))
+	for _, a := range aliases {
+		if a == routerShortAlias || strings.Contains(a, ".") {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 // isAlreadyConnectedErr matches the daemon's error for connecting an

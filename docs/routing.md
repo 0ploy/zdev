@@ -70,6 +70,7 @@ Requirements and limits:
 - Both projects use the router (`shared.router: true`, the default), and the target has been started with zdev at least once (that registers it). After upgrading zdev, the first `zdev start` of any project picks up the hostnames of every registered project, no restarts needed.
 - Containers created by an older zdev don't trust the zdev CA yet. `zdev start` says so ("runs with an outdated config"); `zdev update` recreates them.
 - Only hostnames from project config resolve. A wildcard you route yourself (e.g. `*.shop.0ploy.dev` via custom labels) does not.
+- Only hostnames under the zdev domain (`*.0ploy.dev`). A `routing.domain` outside it (`app.example.com`) keeps working from your browser, but containers resolve it through public DNS as before. Otherwise one project could take over a real domain for every other project's containers.
 - When a project with new hostnames starts, zdev reconnects the router to the other project networks to add them (Docker can't change aliases in place). In-flight requests to those projects can fail for a moment.
 
 To reach another project's internal port directly, without Traefik, use a [link](linking.md).

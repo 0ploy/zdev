@@ -34,7 +34,7 @@ func TestRouterAliases_SharedUIsAndProjectHosts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]bool{"router": true, "alpha.0ploy.dev": true, "beta.0ploy.dev": true, "router.shared.0ploy.dev": true, "mail.shared.0ploy.dev": true}
+	want := map[string]bool{"router": true, "alpha.0ploy.dev": true, "beta.0ploy.dev": true, "router.shared.0ploy.dev": true, "mail.shared.0ploy.dev": true, "docs.shared.0ploy.dev": true}
 	set := map[string]bool{}
 	for _, a := range got {
 		if set[a] {
@@ -49,6 +49,56 @@ func TestRouterAliases_SharedUIsAndProjectHosts(t *testing.T) {
 	}
 	if set["."+mgr.cfg.Domain] {
 		t.Errorf("service without web UI (DNS) produced an alias: %v", got)
+	}
+}
+
+// routing.domain accepts any hostname, but an alias applies to every
+// project's containers (which trust the zdev CA): a host outside the zdev
+// domain must never become one, or that project takes the domain over for
+// everyone else.
+func TestRouterAliases_OnlyHostsUnderZdevDomain(t *testing.T) {
+	registerHosts(t, map[string][]string{
+		"alpha": {"alpha.0ploy.dev", "API.Alpha.0ploy.dev"},
+		"evil":  {"api.stripe.com", "app.customer.com", "0ploy.dev.attacker.com", "x0ploy.dev"},
+	})
+	mgr, _ := mockManager(t)
+
+	got, err := mgr.routerAliases()
+	if err != nil {
+		t.Fatal(err)
+	}
+	set := map[string]bool{}
+	for _, a := range got {
+		set[a] = true
+	}
+	for _, bad := range []string{"api.stripe.com", "app.customer.com", "0ploy.dev.attacker.com", "x0ploy.dev"} {
+		if set[bad] {
+			t.Errorf("outside host %q became a router alias: %v", bad, got)
+		}
+	}
+	if !set["alpha.0ploy.dev"] || !set["api.alpha.0ploy.dev"] {
+		t.Errorf("zdev hosts missing (case-normalized): %v", got)
+	}
+}
+
+// Docker before 25 lists the router's short container ID under Aliases. It
+// must not make an up-to-date set look stale, or every start reconnects the
+// router on every project network.
+func TestConnectRouter_IgnoresDockerShortIDAlias(t *testing.T) {
+	registerHosts(t, map[string][]string{"alpha": {"alpha.0ploy.dev"}})
+	mgr, mock := mockManager(t)
+	desired, err := mgr.routerAliases()
+	if err != nil {
+		t.Fatal(err)
+	}
+	attach(mock, RouterContainerName, "hash", "alpha.zdev")
+	mock.ContainerNetworks[RouterContainerName]["alpha.zdev"] = append([]string{"3f2a1b9c4d5e"}, desired...)
+
+	if err := mgr.ConnectRouter(context.Background(), "alpha.zdev"); err != nil {
+		t.Fatalf("ConnectRouter: %v", err)
+	}
+	if n := mock.CallCount("NetworkDisconnect") + mock.CallCount("NetworkConnect"); n != 0 {
+		t.Errorf("%d connect/disconnect calls, want 0", n)
 	}
 }
 

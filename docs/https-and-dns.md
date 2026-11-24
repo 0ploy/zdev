@@ -13,11 +13,11 @@ Containers trust the zdev CA without any setup, so HTTPS calls to other projects
 | Container path | What reads it |
 |---|---|
 | `/etc/zdev/ca.pem`, `/etc/zdev/ca-bundle.pem` | `NODE_EXTRA_CA_CERTS` (Node), `REQUESTS_CA_BUNDLE` (Python `requests`) |
-| `/etc/ssl/certs/ca-certificates.crt` (bundle) | OpenSSL, curl, PHP, Python, Go, Ruby on Debian, Ubuntu, Alpine, Wolfi, Arch, distroless, `scratch` |
+| `/etc/ssl/certs/ca-certificates.crt` (bundle) | OpenSSL, curl, PHP, Python, Go (and other OpenSSL-based runtimes) on Debian, Ubuntu, Alpine, Wolfi, Arch, distroless, `scratch` |
 | `/etc/pki/tls/certs/ca-bundle.crt` (bundle) | the same on Fedora, RHEL, Amazon Linux |
 | `/etc/ssl/ca-bundle.pem` (bundle) | the same on openSUSE |
 
-The bundle replaces the image's own CA list. It contains all public roots, so calls to public HTTPS sites keep working. Running containers pick up a CA change without a restart. If you set `NODE_EXTRA_CA_CERTS`/`REQUESTS_CA_BUNDLE` yourself or mount your own file on one of these paths, yours wins.
+The bundle replaces the image's own CA list. It contains all public roots, so calls to public HTTPS sites keep working. A CA change reaches the files in running containers right away, but processes that load the CA at startup (Node, Go) keep the old one until they restart (`zdev restart`). If you set `NODE_EXTRA_CA_CERTS`/`REQUESTS_CA_BUNDLE` yourself or mount your own file on one of these paths, yours wins.
 
 Not covered: Java (its own keystore; import `/etc/zdev/ca.pem` with `keytool`), Rust built with `webpki-roots`, images that rebuild their CA file at runtime, and corporate CAs that live only in the macOS keychain.
 

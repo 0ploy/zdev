@@ -24,9 +24,10 @@ type ProjectEntry struct {
 	Path        string       `yaml:"path"`
 	LastStarted time.Time    `yaml:"last_started,omitempty"`
 	Routing     RoutingState `yaml:"routing,omitempty"`
-	// Hosts are the project's routed HTTP(S) hostnames. The router joins
-	// every project network with all registered hosts as aliases, so a
-	// container can call another project by its real URL.
+	// Hosts are the project's routed hostnames, any protocol. The router
+	// joins every project network with the registered hosts under the zdev
+	// domain as aliases, so a container can call another project by its
+	// real URL.
 	Hosts []string `yaml:"hosts,omitempty"`
 	// HostsRecorded tells an empty Hosts ("routes nothing") apart from
 	// "never recorded" (registered by a zdev before hosts existed, or by

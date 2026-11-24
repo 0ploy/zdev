@@ -109,7 +109,7 @@ func (p *Project) ensureCATrustFiles(ctx context.Context) {
 //
 //   - the trust dir, read-only, at /etc/zdev
 //   - the bundle (host public roots + zdev CA), read-only, over the system
-//     CA files - OpenSSL, curl, PHP, Python, Go, Ruby and .NET read these
+//     CA files - OpenSSL, curl, PHP, Python and Go read these (tested)
 //   - NODE_EXTRA_CA_CERTS=/etc/zdev/ca.pem (Node ignores the system store)
 //   - REQUESTS_CA_BUNDLE=/etc/zdev/ca-bundle.pem (requests ships certifi)
 //

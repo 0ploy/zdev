@@ -11,11 +11,23 @@ import (
 )
 
 func (m *Manager) withFileLock(exclusive bool, fn func() error) error {
-	if err := os.MkdirAll(filepath.Dir(m.path), 0755); err != nil {
+	return flockPath(m.path+".lock", exclusive, fn)
+}
+
+// WithRouterLock runs fn while holding an exclusive, cross-process lock
+// that serializes router alias updates (see services.ConnectRouter).
+// Separate from the state lock: fn reads state, and the state lock isn't
+// reentrant.
+func (m *Manager) WithRouterLock(fn func() error) error {
+	return flockPath(m.path+".router.lock", true, fn)
+}
+
+func flockPath(path string, exclusive bool, fn func() error) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return fmt.Errorf("failed to create state directory: %w", err)
 	}
 
-	lockFile, err := os.OpenFile(m.path+".lock", os.O_CREATE|os.O_RDWR, 0600)
+	lockFile, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return fmt.Errorf("failed to open state lock: %w", err)
 	}

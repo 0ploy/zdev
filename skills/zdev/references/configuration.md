@@ -138,8 +138,8 @@ Service fields: `image`, `dockerfile`, `command`, `working_dir`, `volumes`, `env
   `db.api.0ploy.dev:5432`, shared UIs like `https://mail.shared.0ploy.dev`), no link needed: the
   router carries every registered routed hostname as a network alias on every project network, so
   the name resolves to Traefik, not `127.0.0.1`. Needs `shared.router` on in both projects and the
-  target started with zdev at least once. Only config hostnames resolve (no wildcards from
-  custom labels).
+  target started with zdev at least once. Only config hostnames under the zdev domain resolve (no
+  wildcards from custom labels, no outside domains like `app.example.com`).
 - **HTTPS from containers works without setup.** zdev mounts `~/.zdev/trust` at `/etc/zdev`
   (`ca.pem` = zdev CA, `ca-bundle.pem` = host public roots + zdev CA), mounts the bundle over
   `/etc/ssl/certs/ca-certificates.crt`, `/etc/pki/tls/certs/ca-bundle.crt` and
