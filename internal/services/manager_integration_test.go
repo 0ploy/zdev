@@ -6,11 +6,14 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/0ploy/zdev/internal/config"
 	"github.com/0ploy/zdev/internal/runtime"
+	"github.com/0ploy/zdev/internal/state"
 )
 
 // Integration tests require Docker to be running
@@ -156,6 +159,67 @@ func TestManager_RouterLifecycle(t *testing.T) {
 	t.Run("StartRouter_Idempotent", func(t *testing.T) {
 		if err := mgr.StartRouter(ctx); err != nil {
 			t.Fatalf("StartRouter (second time) failed: %v", err)
+		}
+	})
+
+	// Router aliases against real Docker: the alias set is accepted, Docker
+	// DNS answers a public *.0ploy.dev name (127.0.0.1 in public DNS) with
+	// the router, a changed set is applied by reconnecting, and an unchanged
+	// set leaves the endpoint alone. Runs on the fresh test router, which is
+	// on no real project network, so the developer's aliases are untouched.
+	t.Run("RouterAliases_ResolveAndUpdate", func(t *testing.T) {
+		// State (registered hosts) from a temp home; reverted after the subtest.
+		t.Setenv("ZDEV_HOME", t.TempDir())
+		stateMgr, err := state.DefaultManager()
+		if err != nil {
+			t.Fatal(err)
+		}
+		alphaNet, betaNet := "zdev_itest_alias_alpha", "zdev_itest_alias_beta"
+		alphaHost := "zd-itest-alpha." + config.DefaultDomain
+		betaHost := "zd-itest-beta." + config.DefaultDomain
+		for _, n := range []string{alphaNet, betaNet} {
+			_ = docker.RemoveNetwork(ctx, n)
+			if err := docker.CreateNetwork(ctx, n); err != nil {
+				t.Fatalf("CreateNetwork %s: %v", n, err)
+			}
+			n := n
+			t.Cleanup(func() {
+				_ = docker.NetworkDisconnect(context.Background(), n, RouterContainerName)
+				_ = docker.RemoveNetwork(context.Background(), n)
+			})
+		}
+
+		if err := stateMgr.RegisterProjectWithRouting("zd-itest-alpha", "/tmp/a", nil, nil, []string{alphaHost}); err != nil {
+			t.Fatal(err)
+		}
+		if err := mgr.ConnectRouter(ctx, alphaNet); err != nil {
+			t.Fatalf("ConnectRouter(alpha): %v", err)
+		}
+		requireAliases(t, ctx, docker, alphaNet, routerShortAlias, alphaHost)
+		requireResolvesToRouter(t, ctx, alphaNet, alphaHost)
+		endpointBefore := routerEndpoint(t, alphaNet)
+
+		// A second project with a new hostname: alpha's network must learn it.
+		if err := stateMgr.RegisterProjectWithRouting("zd-itest-beta", "/tmp/b", nil, nil, []string{betaHost}); err != nil {
+			t.Fatal(err)
+		}
+		if err := mgr.ConnectRouter(ctx, betaNet); err != nil {
+			t.Fatalf("ConnectRouter(beta): %v", err)
+		}
+		requireAliases(t, ctx, docker, betaNet, alphaHost, betaHost)
+		requireAliases(t, ctx, docker, alphaNet, alphaHost, betaHost)
+		requireResolvesToRouter(t, ctx, alphaNet, betaHost)
+		if routerEndpoint(t, alphaNet) == endpointBefore {
+			t.Error("alpha endpoint unchanged although its alias set changed")
+		}
+
+		// Nothing changed: no reconnect anywhere.
+		alphaEP, betaEP := routerEndpoint(t, alphaNet), routerEndpoint(t, betaNet)
+		if err := mgr.ConnectRouter(ctx, betaNet); err != nil {
+			t.Fatalf("ConnectRouter(beta) again: %v", err)
+		}
+		if routerEndpoint(t, alphaNet) != alphaEP || routerEndpoint(t, betaNet) != betaEP {
+			t.Error("router reconnected although the alias set was unchanged")
 		}
 	})
 
@@ -528,4 +592,58 @@ func defFor(t *testing.T, containerName string) SharedServiceDef {
 	}
 	t.Fatalf("no shared service definition for %s", containerName)
 	return SharedServiceDef{}
+}
+
+// requireAliases fails unless the router's endpoint on network carries every
+// wanted alias.
+func requireAliases(t *testing.T, ctx context.Context, docker *runtime.DockerCLI, network string, want ...string) {
+	t.Helper()
+	networks, err := docker.GetContainerNetworks(ctx, RouterContainerName)
+	if err != nil {
+		t.Fatalf("GetContainerNetworks: %v", err)
+	}
+	got, ok := networks[network]
+	if !ok {
+		t.Fatalf("router not attached to %s", network)
+	}
+	have := map[string]bool{}
+	for _, a := range got {
+		have[a] = true
+	}
+	for _, w := range want {
+		if !have[w] {
+			t.Errorf("router aliases on %s = %v, missing %s", network, got, w)
+		}
+	}
+}
+
+// routerEndpoint returns the router's endpoint ID on network; it changes
+// exactly when the router is disconnected and reconnected.
+func routerEndpoint(t *testing.T, network string) string {
+	t.Helper()
+	return dockerInspect(t, fmt.Sprintf(`{{(index .NetworkSettings.Networks %q).EndpointID}}`, network))
+}
+
+func dockerInspect(t *testing.T, format string) string {
+	t.Helper()
+	out, err := exec.Command("docker", "inspect", "-f", format, RouterContainerName).CombinedOutput()
+	if err != nil {
+		t.Fatalf("docker inspect: %v: %s", err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// requireResolvesToRouter resolves host from a throwaway container on
+// network and expects the router's IP there - not the public 127.0.0.1.
+func requireResolvesToRouter(t *testing.T, ctx context.Context, network, host string) {
+	t.Helper()
+	routerIP := dockerInspect(t, fmt.Sprintf(`{{(index .NetworkSettings.Networks %q).IPAddress}}`, network))
+	out, err := exec.CommandContext(ctx, "docker", "run", "--rm", "--network", network, config.TestImage, "getent", "hosts", host).CombinedOutput()
+	if err != nil {
+		t.Fatalf("resolving %s on %s: %v: %s", host, network, err, out)
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) == 0 || fields[0] != routerIP {
+		t.Errorf("%s on %s resolves to %q, want the router at %s", host, network, strings.TrimSpace(string(out)), routerIP)
+	}
 }
