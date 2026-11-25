@@ -17,6 +17,8 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -714,20 +716,34 @@ func relayHandler(proj *project.Project, offLimits []string) agent.Handler {
 				}
 				return 0
 			}
+			mark := agent.NewExecMark()
+			env := map[string]string{agent.ExecMarkEnv: mark}
+			for k, v := range req.Env {
+				env[k] = v
+			}
 			cctx, cancel := context.WithCancel(ctx)
 			defer cancel()
+			interrupted := make(chan struct{})
 			go func() {
 				select {
 				case <-sigs:
+					close(interrupted)
 					cancel()
 				case <-cctx.Done():
 				}
 			}()
 			err := proj.Runtime.ExecStream(cctx, req.Container, req.Argv, runtime.ExecStreamOptions{
-				User: req.User, Workdir: req.Workdir, Env: req.Env, Interactive: true,
+				User: req.User, Workdir: req.Workdir, Env: env, Interactive: true,
 				Stdin: stdin, Stdout: stdout, Stderr: stderr,
 			})
-			return exitCodeOf(err)
+			select {
+			case <-interrupted:
+			case <-ctx.Done():
+			default:
+				return exitCodeOf(err)
+			}
+			killMarked(proj, []string{req.Container}, mark)
+			return 130
 		}
 
 		if err := agent.CheckRequest(req.Args, offLimits); err != nil {
@@ -738,10 +754,11 @@ func relayHandler(proj *project.Project, offLimits []string) agent.Handler {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
-		c := exec.CommandContext(ctx, self, req.Args...)
+		mark := agent.NewExecMark()
+		c := exec.Command(self, req.Args...)
 		c.Dir = proj.Dir
 		c.Stdin, c.Stdout, c.Stderr = stdin, stdout, stderr
-		c.Env = os.Environ()
+		c.Env = append(os.Environ(), agent.ExecMarkEnv+"="+mark)
 		c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		c.WaitDelay = 2 * time.Second
 		if err := c.Start(); err != nil {
@@ -750,6 +767,8 @@ func relayHandler(proj *project.Project, offLimits []string) agent.Handler {
 		}
 		done := make(chan error, 1)
 		go func() { done <- c.Wait() }()
+		interrupted := false
+		gone := ctx.Done()
 		for {
 			select {
 			case sig := <-sigs:
@@ -757,12 +776,55 @@ func relayHandler(proj *project.Project, offLimits []string) agent.Handler {
 				if sig == "INT" {
 					s = syscall.SIGINT
 				}
+				interrupted = true
 				_ = syscall.Kill(-c.Process.Pid, s)
+			case <-gone:
+				gone = nil
+				interrupted = true
+				_ = syscall.Kill(-c.Process.Pid, syscall.SIGTERM)
 			case err := <-done:
-				return exitCodeOf(err)
+				code := exitCodeOf(err)
+				if interrupted {
+					killMarked(proj, runningServices(proj, offLimits), mark)
+					if code == 0 {
+						code = 130 // the docker CLI exits 0 on SIGINT
+					}
+				}
+				return code
 			}
 		}
 	}
+}
+
+// killMarked stops what a cancelled relayed exec left behind: a killed
+// `docker exec` client doesn't stop its process in the container.
+func killMarked(proj *project.Project, containers []string, mark string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	for _, c := range containers {
+		_ = proj.Runtime.ExecStream(ctx, c, agent.KillMarkedArgv(mark), runtime.ExecStreamOptions{
+			User: "0", Stdout: io.Discard, Stderr: io.Discard,
+		})
+	}
+}
+
+// runningServices are the containers of the project's running services the
+// agent may exec into.
+func runningServices(proj *project.Project, offLimits []string) []string {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	var out []string
+	for svc := range proj.Config.Services {
+		if slices.Contains(offLimits, svc) {
+			continue
+		}
+		name := proj.ContainerName(svc)
+		if ok, err := proj.Runtime.IsContainerRunning(ctx, name); err == nil && ok {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func exitCodeOf(err error) int {

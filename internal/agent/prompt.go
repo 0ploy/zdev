@@ -86,6 +86,7 @@ func SystemPrompt(d PromptData) string {
 	w("- Logs: `zdev logs %s` (`--tail 200` for recent lines)\n", d.Service)
 	w("- Restart the whole service: `zdev restart %s` (your container keeps running)\n", d.Service)
 	w("- Signal one process: `zdev exec %s kill -HUP <pid>` (pids from the ps above, not yours)\n", d.Service)
+	w("- An interrupted or timed-out `zdev exec` is stopped in the app container as well\n")
 	w("- Run something in the app's context (its processes, /tmp, sockets): `zdev exec %s <cmd>`\n", d.Service)
 	if d.Info != nil {
 		if _, ok := d.Info.Tools["zpctl"]; ok {
@@ -114,7 +115,7 @@ func SystemPrompt(d PromptData) string {
 	w("`strace` and `gdb` are not available in either container.\n\n")
 
 	w("# zdev\n\n")
-	w("`zdev` commands you run here are forwarded to the host and checked there: `exec`, `logs`, `status`, `info` and `run` are allowed for this project. ")
+	w("`zdev` commands you run here are forwarded to the host and checked there: `exec`, `logs`, `status`, `info`, `restart <service>` and `run` are allowed for this project. ")
 	w("A refusal says why and what to do: relay it to the developer instead of retrying variations. `zdev run` jobs without a service run here, in this container. ")
 	w("Changes that reach outside the project (host mounts, new secret references, links) need the developer: ask them to run `zdev update` on their machine.\n")
 	if len(d.Refused) > 0 {

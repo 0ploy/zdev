@@ -25,8 +25,10 @@ func (r *Refusal) Error() string {
 
 // relayCommands are forwarded and run on the host for this project. `run` is
 // not among them: jobs run in the sandbox itself, their container steps go
-// through `exec`.
-var relayCommands = map[string]bool{"exec": true, "logs": true, "status": true, "info": true}
+// through `exec`. `restart` only with one service: that bounces the existing
+// container, while a project restart is a start, which creates containers
+// from the current config (lifecycle under policy is Phase 2).
+var relayCommands = map[string]bool{"exec": true, "logs": true, "status": true, "info": true, "restart": true}
 
 // execValueFlags are `zdev exec` flags that take a value.
 var execValueFlags = map[string]bool{"-u": true, "--user": true, "-w": true, "--workdir": true}
@@ -48,7 +50,11 @@ func CheckRequest(args []string, offLimits []string) error {
 	}
 	if !relayCommands[cmd] {
 		return &Refusal{Code: "not-allowed", Message: fmt.Sprintf("`zdev %s` is not allowed in agent mode", cmd),
-			Next: "allowed: zdev exec, logs, status, info; ask the developer to run anything else on their machine"}
+			Next: "allowed: zdev exec, logs, status, info, restart <service>; ask the developer to run anything else on their machine"}
+	}
+	if cmd == "restart" && (len(args) != 2 || strings.HasPrefix(args[1], "-")) {
+		return &Refusal{Code: "not-allowed", Message: "only `zdev restart <service>` is allowed in agent mode",
+			Next: "restart one service at a time; ask the developer for a project restart"}
 	}
 	if cmd == "exec" {
 		service := execService(args[1:])

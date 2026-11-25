@@ -426,6 +426,12 @@ func (d *DockerCLI) Exec(ctx context.Context, container string, command []string
 		args = append(args, "--workdir", opts.Workdir)
 	}
 
+	// A relayed exec from an agent sandbox: pass the marker on (the value
+	// comes from the CLI's environment), so a cancel can find the processes.
+	if os.Getenv(ExecMarkEnv) != "" {
+		args = append(args, "-e", ExecMarkEnv)
+	}
+
 	args = append(args, container)
 	args = append(args, command...)
 

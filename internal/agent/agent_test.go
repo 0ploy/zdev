@@ -17,23 +17,30 @@ func TestCheckRequest(t *testing.T) {
 		{"logs", "docker1"}, // logs of a socket service stay allowed
 		{"status"},
 		{"info"},
+		{"restart", "app"},
+		{"restart", "docker1"}, // a bounce, no exec
 	}
 	for _, args := range allowed {
 		if err := CheckRequest(args, off); err != nil {
 			t.Errorf("%v refused: %v", args, err)
 		}
 	}
-	refused := map[string][]string{
-		"not-allowed":   {"down"},
-		"other-project": {"exec", "--config", "/elsewhere", "app", "ls"},
-		"run-here":      {"run", "test"},
-		"docker-socket": {"exec", "-u", "root", "docker1", "docker", "ps"},
+	refused := []struct {
+		code string
+		args []string
+	}{
+		{"not-allowed", []string{"down"}},
+		{"not-allowed", []string{"restart"}},
+		{"not-allowed", []string{"restart", "app", "node1"}},
+		{"other-project", []string{"exec", "--config", "/elsewhere", "app", "ls"}},
+		{"run-here", []string{"run", "test"}},
+		{"docker-socket", []string{"exec", "-u", "root", "docker1", "docker", "ps"}},
 	}
-	for code, args := range refused {
-		err := CheckRequest(args, off)
+	for _, tc := range refused {
+		err := CheckRequest(tc.args, off)
 		var r *Refusal
-		if !errors.As(err, &r) || r.Code != code {
-			t.Errorf("%v: got %v, want refusal %s", args, err, code)
+		if !errors.As(err, &r) || r.Code != tc.code {
+			t.Errorf("%v: got %v, want refusal %s", tc.args, err, tc.code)
 		}
 	}
 	if err := CheckRequest([]string{"exec", "--config=/x", "app", "ls"}, nil); err == nil {

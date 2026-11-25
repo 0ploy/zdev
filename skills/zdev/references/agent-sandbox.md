@@ -4,8 +4,8 @@
 
 ## When you run in a sandbox
 
-- **zdev commands go to the host and are checked there.** Allowed: `zdev exec`, `logs`, `status`, `info` for this project. Everything else (`down`, `link`, `cleanup`, `update`, `--config` to another project) is refused with `zdev: refused (<code>)` and exit 126. Relay the refusal to the developer; don't retry variations.
-- **The app runs in its own container.** `ps` shows only your processes. Use `zdev exec app ps aux`, `zdev logs app`, `zdev restart app`, `zdev exec app <cmd>` for anything that must happen in the running app (supervised processes: `zdev exec app zpctl status`).
+- **zdev commands go to the host and are checked there.** Allowed: `zdev exec`, `logs`, `status`, `info` and `restart <service>` for this project. Everything else (`down`, `link`, `cleanup`, `update`, a project-wide `restart`, `--config` to another project) is refused with `zdev: refused (<code>)` and exit 126. Relay the refusal to the developer; don't retry variations.
+- **The app runs in its own container.** `ps` shows only your processes. Use `zdev exec app ps aux`, `zdev logs app`, `zdev restart app`, `zdev exec app <cmd>` for anything that must happen in the running app (supervised processes: `zdev exec app zpctl status`). A `zdev exec` that is interrupted or times out is stopped inside the app container too.
 - **Build and test in the sandbox itself:** it has the service's toolchain. Don't start a second instance of the app: you share its data volumes.
 - **`zdev run` runs here.** Jobs without `service` run in the sandbox, never on the developer's machine; jobs with `service = "x"` go to that container through the host. Jobs that need host tools (`open`, `op`, ssh keys) fail here.
 - **Git only here, never through `zdev exec`.** `.git/hooks` and `.git/config` are read-only: commit and branch, but ask the developer for pushes, remotes and git config.

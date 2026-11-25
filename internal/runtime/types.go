@@ -130,6 +130,11 @@ type ExecOptions struct {
 	Workdir string // Working directory inside the container
 }
 
+// ExecMarkEnv marks the processes of an exec relayed from an agent sandbox
+// (zdev claude): when it is set in zdev's environment, Exec passes it into
+// the container, where a cancel finds and kills the processes carrying it.
+const ExecMarkEnv = "ZDEV_EXEC_MARK"
+
 // ExecStreamOptions configures ExecStream: unlike Exec, the caller owns the
 // streams (so output can be captured) and can pass env vars.
 type ExecStreamOptions struct {

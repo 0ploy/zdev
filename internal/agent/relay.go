@@ -107,7 +107,8 @@ func clientConfig() *ssh.ClientConfig {
 }
 
 // Handler runs one validated request: stdin from the channel, stdout to it,
-// stderr to stderr, signals from sigs. It returns the exit code.
+// stderr to stderr, signals from sigs. ctx ends when the client goes away.
+// It returns the exit code.
 type Handler func(ctx context.Context, req Request, stdin io.Reader, stdout, stderr io.Writer, sigs <-chan string) int
 
 // Serve runs the host side over conn (the relay's stdio) until it closes.
@@ -161,6 +162,10 @@ func serveClient(ctx context.Context, ch ssh.Channel, cfg *ssh.ServerConfig, han
 
 func serveSession(ctx context.Context, sess ssh.Channel, reqs <-chan *ssh.Request, handle Handler) {
 	defer sess.Close()
+	// The request stream ends when the channel closes: also when the client
+	// in the container was killed mid-command, which then cancels it.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	sigs := make(chan string, 4)
 	started := false
 	for r := range reqs {

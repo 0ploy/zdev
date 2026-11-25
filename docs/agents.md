@@ -21,9 +21,9 @@ zdev claude -- app               # pass "app" to Claude (a prompt that equals a 
 | | |
 |---|---|
 | Build, test, run the project's tools | directly in the sandbox (the service's image) |
-| See and manage the running app | through zdev: `zdev exec app ps aux`, `zdev logs app`, `zdev restart app`, `zdev exec app <cmd>` |
+| See and manage the running app | through zdev: `zdev exec app ps aux`, `zdev logs app`, `zdev restart app` (one service at a time), `zdev exec app <cmd>`; an interrupted `zdev exec` stops in the container too |
 | `zdev status`, `zdev info`, `zdev run` | yes; `zdev run` jobs without a service run in the sandbox, never on your machine |
-| `zdev down`, `link`, `cleanup`, other projects | refused, with a reason Claude passes on to you |
+| `zdev start`, `stop`, `update`, `down`, `link`, `cleanup`, other projects | refused for now, with a reason Claude passes on to you |
 | Git | commit, branch, merge in the synced repository; `.git/hooks` and `.git/config` are read-only, so pushes, remotes and git config stay with you |
 | Network | the project's services and the internet; not your machine (`host.docker.internal`) or private networks |
 
