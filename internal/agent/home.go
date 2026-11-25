@@ -136,16 +136,25 @@ func PrepareHomeEnv(home, workdir, owner string) []string {
 	return []string{"H=" + home, "KEY=" + ProjectKey(workdir), "OWNER=" + owner, "SEED=" + firstStart(workdir)}
 }
 
+// TurnEndHook is the Stop hook that tells the host a turn ended.
+const TurnEndHook = "/opt/zdev/bin/zdev sandbox turn-end"
+
 // ManagedSettings is Claude's managed-settings.json for a session: tools run
 // without prompts (the container is the boundary), the updater is off,
-// claude.ai connectors only when the project allows them, and the host-only
-// plugins of agent.disable_plugins switched off.
-func ManagedSettings(connectors bool, disablePlugins []string) []byte {
+// claude.ai connectors only when the project allows them, the host-only
+// plugins of agent.disable_plugins switched off, and with turnHook the Stop
+// hook that lets the host replace the sandbox between turns.
+func ManagedSettings(connectors bool, disablePlugins []string, turnHook bool) []byte {
 	settings := map[string]any{
 		"permissions":                       map[string]string{"defaultMode": "bypassPermissions"},
 		"skipDangerousModePermissionPrompt": true,
 		"disableClaudeAiConnectors":         !connectors,
 		"env":                               map[string]string{"DISABLE_AUTOUPDATER": "1"},
+	}
+	if turnHook {
+		settings["hooks"] = map[string]any{
+			"Stop": []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": TurnEndHook, "timeout": 10}}}},
+		}
 	}
 	if len(disablePlugins) > 0 {
 		off := map[string]bool{}

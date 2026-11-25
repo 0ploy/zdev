@@ -206,6 +206,12 @@ type sandboxSpec struct {
 	Connectors bool
 	Limits     config.AgentLimits
 	Rest       []string // Claude's arguments
+	// SessionID is passed to Claude as --session-id (unless Rest picks a
+	// conversation); a replaced sandbox keeps it. Empty: a new one.
+	SessionID string
+	// TurnHook installs Claude's Stop hook, which reports the end of each
+	// turn to the relay handler (agent.OpTurnEnd).
+	TurnHook bool
 }
 
 // gitReadOnlyMounts makes .git/hooks and .git/config read-only for the agent
@@ -277,10 +283,6 @@ func claudeSession(ctx context.Context, proj *project.Project, args []string) (i
 	if err != nil {
 		return 0, err
 	}
-	gitMounts, err := gitReadOnlyMounts(src.HostPath, src.ContainerPath)
-	if err != nil {
-		return 0, err
-	}
 
 	// The project runs, and the agent's mount syncs .zdev and .git.
 	if _, err := project.SetAgentSyncService(name, service); err != nil {
@@ -310,66 +312,209 @@ func claudeSession(ctx context.Context, proj *project.Project, args []string) (i
 	if strings.HasPrefix(owner, "0:") && proj.IsMutagenEnabled() {
 		fmt.Println(ui.Color(fmt.Sprintf("Note: the agent runs as root (with no capabilities), because the files in the sync volume belong to root. Setting services.%s.mutagen.user to the app's user is the cleaner setup.", service), "yellow", plain))
 	}
-	base, err := proj.AgentBaseConfig(ctx, service)
+	url := proj.URL(schemeFor(gcfg))
+	interactive := !hasPrintFlag(rest)
+
+	// A session can outlive its container: when the agent's own service
+	// changed (config, image, secrets), the sandbox is replaced at the end of
+	// Claude's turn (its Stop hook) and the conversation resumes.
+	var (
+		mu       sync.Mutex // relay requests run concurrently
+		current  string     // the service as the running sandbox was built from it
+		notified string     // the version the agent was last told about
+		respawn  bool
+	)
+	stale := func(ctx context.Context) bool {
+		now := serviceSnapshot(ctx, d, proj.ContainerName(service))
+		return now != "" && now != current
+	}
+	spec := func(ctx context.Context) (sandboxSpec, error) {
+		cur, err := project.LoadFromDir(proj.Dir)
+		if err != nil {
+			return sandboxSpec{}, err
+		}
+		if cur.Config.Name != name {
+			return sandboxSpec{}, fmt.Errorf(".zdev/config.yaml now names project %q; start `zdev claude` again", cur.Config.Name)
+		}
+		base, err := cur.AgentBaseConfig(ctx, service)
+		if err != nil {
+			return sandboxSpec{}, err
+		}
+		if base.WorkingDir == "" {
+			base.WorkingDir = src.ContainerPath
+		}
+		gitMounts, err := gitReadOnlyMounts(src.HostPath, src.ContainerPath)
+		if err != nil {
+			return sandboxSpec{}, err
+		}
+		// Without a sync volume the service config already has the git
+		// guards (project.gitGuardMounts); Docker refuses a second mount.
+		gitMounts = withoutTargets(gitMounts, base.Volumes)
+		image := cur.ServiceImage(service)
+		var promptServices []agent.PromptService
+		for sname, svc := range cur.Config.Services {
+			ps := agent.PromptService{Name: sname}
+			if svc.Routing != nil {
+				ps.Port = svc.Routing.Port
+			}
+			promptServices = append(promptServices, ps)
+		}
+		mu.Lock()
+		current = serviceSnapshot(ctx, d, proj.ContainerName(service))
+		notified = current
+		mu.Unlock()
+		return sandboxSpec{
+			Name: name, Service: service, Image: image, Base: base,
+			Workdir: src.ContainerPath, HostDir: proj.Dir, Owner: owner, GitMounts: gitMounts,
+			Env: map[string]string{
+				"ZDEV_PROJECT":         name,
+				"ZDEV_RELAY":           agent.RelaySocket,
+				"ZDEV_HOST_PROJECTDIR": filepath.Base(proj.Dir),
+				"ZDEV_DOMAIN":          gcfg.Domain,
+			},
+			Fence: agentFence(ctx, d, proj, acfg.HostAccess, socketServices),
+			Handler: func(container string) agent.Handler {
+				// After a lifecycle command: socket services may have new
+				// addresses, and the agent's own service may have changed.
+				after := func(ctx context.Context, stderr io.Writer) {
+					mu.Lock()
+					defer mu.Unlock()
+					if err := agentFence(ctx, d, proj, acfg.HostAccess, socketServices).Apply(ctx, d, container); err != nil {
+						fmt.Fprintf(stderr, "zdev: refreshing the sandbox's network fence failed: %v\n", err)
+					}
+					if now := serviceSnapshot(ctx, d, proj.ContainerName(service)); now != notified && now != "" {
+						notified = now
+						if interactive {
+							fmt.Fprintf(stderr, "zdev: service %s changed (config, image or secrets). When your turn ends, zdev replaces this sandbox with its new version and resumes this conversation; until then use `zdev exec %s` for anything that needs the new one.\n", service, service)
+						} else {
+							fmt.Fprintf(stderr, "zdev: service %s changed (config, image or secrets); this sandbox still runs its previous version. Use `zdev exec %s` for anything that needs the new one.\n", service, service)
+						}
+					}
+				}
+				// At the end of a turn: replace a stale sandbox. Removing the
+				// container ends Claude's exec; runSandbox then returns and
+				// the loop below starts the next one.
+				turnEnd := func(ctx context.Context) {
+					if !interactive {
+						return
+					}
+					mu.Lock()
+					defer mu.Unlock()
+					if respawn || !stale(ctx) {
+						return
+					}
+					respawn = true
+					go func() {
+						time.Sleep(time.Second) // let Claude finish writing the turn
+						_, _ = d.Output(context.Background(), "rm", "-f", container)
+					}()
+				}
+				return relayHandler(proj, socketServices, after, turnEnd)
+			},
+			Prompt: func(info *agent.ImageInfo) string {
+				return agent.SystemPrompt(agent.PromptData{
+					Project: name, Service: service, Image: image, Workdir: src.ContainerPath,
+					URL: url, Services: promptServices, Info: info,
+					Root: strings.HasPrefix(owner, "0:"), Fenced: true, HostAccess: acfg.HostAccess, Refused: socketServices,
+				})
+			},
+			Connectors: acfg.ConnectorsEnabled(), Limits: acfg.Limits, Rest: rest, TurnHook: interactive,
+		}, nil
+	}
+
+	s, err := spec(ctx)
 	if err != nil {
 		return 0, err
 	}
-	if base.WorkingDir == "" {
-		base.WorkingDir = src.ContainerPath
-	}
-	// Without a sync volume the service config already has the git guards
-	// (project.gitGuardMounts); Docker refuses a second mount on the same path.
-	gitMounts = withoutTargets(gitMounts, base.Volumes)
-
-	fence := agentFence(ctx, d, proj, acfg.HostAccess, socketServices)
-	before := serviceSnapshot(ctx, d, proj.ContainerName(service))
-	var promptServices []agent.PromptService
-	for sname, svc := range proj.Config.Services {
-		ps := agent.PromptService{Name: sname}
-		if svc.Routing != nil {
-			ps.Port = svc.Routing.Port
+	s.SessionID = newSessionID()
+	for {
+		code, err := runSandbox(ctx, gcfg, s)
+		mu.Lock()
+		again := respawn
+		respawn = false
+		mu.Unlock()
+		if err != nil || !again {
+			return code, err
 		}
-		promptServices = append(promptServices, ps)
+		ui.StatusStep(fmt.Sprintf("Service %s changed: replacing the sandbox with its new version and resuming the conversation", service), plain)
+		sessionID := s.SessionID
+		next, err := spec(ctx)
+		if err != nil {
+			return 0, err
+		}
+		next.SessionID = sessionID
+		next.Rest = resumeArgs(rest, sessionID, proj.Dir, service)
+		s = next
 	}
-	url := proj.URL(schemeFor(gcfg))
-	return runSandbox(ctx, gcfg, sandboxSpec{
-		Name: name, Service: service, Image: image, Base: base,
-		Workdir: src.ContainerPath, HostDir: proj.Dir, Owner: owner, GitMounts: gitMounts,
-		Env: map[string]string{
-			"ZDEV_PROJECT":         name,
-			"ZDEV_RELAY":           agent.RelaySocket,
-			"ZDEV_HOST_PROJECTDIR": filepath.Base(proj.Dir),
-			"ZDEV_DOMAIN":          gcfg.Domain,
-		},
-		Fence: fence,
-		Handler: func(container string) agent.Handler {
-			// After a lifecycle command: socket services may have new
-			// addresses, and the agent's own service may have changed.
-			var mu sync.Mutex // requests run concurrently
-			last := before
-			after := func(ctx context.Context, stderr io.Writer) {
-				mu.Lock()
-				defer mu.Unlock()
-				if err := agentFence(ctx, d, proj, acfg.HostAccess, socketServices).Apply(ctx, d, container); err != nil {
-					fmt.Fprintf(stderr, "zdev: refreshing the sandbox's network fence failed: %v\n", err)
-				}
-				if now := serviceSnapshot(ctx, d, proj.ContainerName(service)); now != last && now != "" {
-					last = now
-					fmt.Fprintf(stderr, "zdev: service %s changed (config, image or secrets); this sandbox still runs its previous version. "+
-						"Use `zdev exec %s` for anything that needs the new one; the developer can restart the session with `zdev claude --continue`.\n", service, service)
-				}
+}
+
+// hasPrintFlag reports whether Claude runs non-interactively (-p/--print).
+func hasPrintFlag(args []string) bool {
+	for _, a := range args {
+		if a == "-p" || a == "--print" {
+			return true
+		}
+	}
+	return false
+}
+
+// resumeArgs are Claude's arguments for continuing a session in a replaced
+// sandbox: the conversation (the session zdev started, else the one the
+// arguments named, else the newest in this project's transcripts), the model
+// and agent the session started with, and a first message saying why.
+func resumeArgs(rest []string, sessionID, hostDir, service string) []string {
+	id := sessionID
+	var keep []string
+	for i := 0; i < len(rest); i++ {
+		switch a := rest[i]; {
+		case a == "--session-id" || a == "-r" || a == "--resume":
+			if i+1 < len(rest) && !strings.HasPrefix(rest[i+1], "-") {
+				id = rest[i+1]
+				i++
+			} else if a != "--session-id" {
+				id = ""
 			}
-			return relayHandler(proj, socketServices, after)
-		},
-		Prompt: func(info *agent.ImageInfo) string {
-			return agent.SystemPrompt(agent.PromptData{
-				Project: name, Service: service, Image: image, Workdir: src.ContainerPath,
-				URL: url, Services: promptServices, Info: info,
-				Root: strings.HasPrefix(owner, "0:"), Fenced: true, HostAccess: acfg.HostAccess, Refused: socketServices,
-			})
-		},
-		Connectors: acfg.ConnectorsEnabled(), Limits: acfg.Limits, Rest: rest,
-	})
+		case a == "-c" || a == "--continue":
+			id = ""
+		case strings.HasPrefix(a, "--session-id=") || strings.HasPrefix(a, "--resume="):
+			id = a[strings.Index(a, "=")+1:]
+		case a == "--model" || a == "--agent":
+			if i+1 < len(rest) {
+				keep = append(keep, a, rest[i+1])
+				i++
+			}
+		case strings.HasPrefix(a, "--model=") || strings.HasPrefix(a, "--agent="):
+			keep = append(keep, a)
+		}
+	}
+	if id == "" {
+		id = newestTranscript(hostDir)
+	}
+	msg := fmt.Sprintf("zdev replaced this sandbox because service %s changed (config, image or secrets); it now runs the new version. Continue where you left off.", service)
+	out := append([]string{}, keep...)
+	if id != "" {
+		out = append(out, "--resume", id)
+	} else {
+		out = append(out, "--continue")
+	}
+	return append(out, msg)
+}
+
+// newestTranscript is the most recently written conversation of a project
+// (Claude keeps them in ~/.claude/projects/<key>/<session-id>.jsonl).
+func newestTranscript(hostDir string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	files, _ := filepath.Glob(filepath.Join(home, ".claude", "projects", agent.ProjectKey(hostDir), "*.jsonl"))
+	newest, best := "", time.Time{}
+	for _, f := range files {
+		if fi, err := os.Stat(f); err == nil && fi.ModTime().After(best) {
+			newest, best = strings.TrimSuffix(filepath.Base(f), ".jsonl"), fi.ModTime()
+		}
+	}
+	return newest
 }
 
 // withoutTargets drops the --mount specs whose destination one of vols
@@ -658,7 +803,10 @@ func runSandbox(ctx context.Context, gcfg *config.GlobalConfig, s sandboxSpec) (
 	}
 
 	// The session's generated files.
-	sessionID := newSessionID()
+	sessionID := s.SessionID
+	if sessionID == "" {
+		sessionID = newSessionID()
+	}
 	sessionDir := filepath.Join(agentDir, "sessions", sessionID)
 	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
 		return 0, err
@@ -667,7 +815,7 @@ func runSandbox(ctx context.Context, gcfg *config.GlobalConfig, s sandboxSpec) (
 	if err := os.WriteFile(filepath.Join(sessionDir, "zdev-system-prompt.md"), []byte(s.Prompt(info)), 0o644); err != nil {
 		return 0, err
 	}
-	if err := os.WriteFile(filepath.Join(sessionDir, "managed-settings.json"), agent.ManagedSettings(s.Connectors, gcfg.Agent.DisablePlugins), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(sessionDir, "managed-settings.json"), agent.ManagedSettings(s.Connectors, gcfg.Agent.DisablePlugins, s.TurnHook), 0o644); err != nil {
 		return 0, err
 	}
 
@@ -837,8 +985,9 @@ var lifecycleCommands = map[string]bool{"start": true, "stop": true, "restart": 
 
 // relayHandler checks and runs the sandbox's requests on the host. Every
 // check is here: the container side is untrusted. after runs once a
-// lifecycle command finished (nil: nothing to do).
-func relayHandler(proj *project.Project, offLimits []string, after func(ctx context.Context, stderr io.Writer)) agent.Handler {
+// lifecycle command finished, turnEnd when Claude finished a turn (nil:
+// nothing to do).
+func relayHandler(proj *project.Project, offLimits []string, after func(ctx context.Context, stderr io.Writer), turnEnd func(ctx context.Context)) agent.Handler {
 	self, _ := os.Executable()
 	// live is the project as its config reads now (the agent may have added
 	// a service), under the session's name: a renamed config never names
@@ -862,6 +1011,12 @@ func relayHandler(proj *project.Project, offLimits []string, after func(ctx cont
 		return 126
 	}
 	return func(ctx context.Context, req agent.Request, stdin io.Reader, stdout, stderr io.Writer, sigs <-chan string) int {
+		if req.Op == agent.OpTurnEnd {
+			if turnEnd != nil {
+				turnEnd(ctx)
+			}
+			return 0
+		}
 		cur, offLimits := live()
 		switch req.Op {
 		case agent.OpRunning, agent.OpExecStream:

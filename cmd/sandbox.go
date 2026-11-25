@@ -10,8 +10,10 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/0ploy/zdev/internal/agent"
@@ -72,7 +74,20 @@ var sandboxRelayCmd = &cobra.Command{
 	},
 }
 
+// sandboxTurnEndCmd is Claude's Stop hook (managed settings): it tells the
+// host a turn ended, the moment a sandbox can be replaced without cutting
+// into Claude's work. Always quiet and exit 0: a hook error shows in Claude.
+var sandboxTurnEndCmd = &cobra.Command{
+	Use:   "turn-end",
+	Short: "Tell the host that Claude finished a turn",
+	Args:  cobra.ArbitraryArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		_, _ = agent.Call(os.Getenv("ZDEV_RELAY"), agent.Request{Op: agent.OpTurnEnd}, strings.NewReader(""), io.Discard, io.Discard)
+		return nil
+	},
+}
+
 func init() {
-	sandboxCmd.AddCommand(sandboxIdleCmd, sandboxRelayCmd)
+	sandboxCmd.AddCommand(sandboxIdleCmd, sandboxRelayCmd, sandboxTurnEndCmd)
 	rootCmd.AddCommand(sandboxCmd)
 }

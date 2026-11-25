@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -139,7 +140,7 @@ func TestParseProbe(t *testing.T) {
 
 func TestManagedSettings(t *testing.T) {
 	var s map[string]any
-	if err := json.Unmarshal(ManagedSettings(false, nil), &s); err != nil {
+	if err := json.Unmarshal(ManagedSettings(false, nil, false), &s); err != nil {
 		t.Fatal(err)
 	}
 	if s["disableClaudeAiConnectors"] != true {
@@ -148,7 +149,14 @@ func TestManagedSettings(t *testing.T) {
 	if p, _ := s["permissions"].(map[string]any); p["defaultMode"] != "bypassPermissions" {
 		t.Errorf("permissions = %v", s["permissions"])
 	}
-	_ = json.Unmarshal(ManagedSettings(true, []string{"codex@openai-codex"}), &s)
+	if s["hooks"] != nil {
+		t.Errorf("no turn hook unless asked: %v", s["hooks"])
+	}
+	s = nil
+	_ = json.Unmarshal(ManagedSettings(true, []string{"codex@openai-codex"}, true), &s)
+	if !strings.Contains(fmt.Sprint(s["hooks"]), TurnEndHook) {
+		t.Errorf("hooks = %v, want the Stop hook %s", s["hooks"], TurnEndHook)
+	}
 	if s["disableClaudeAiConnectors"] != false {
 		t.Error("connectors on when the project allows them")
 	}

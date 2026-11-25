@@ -56,6 +56,7 @@ type Request struct {
 
 const (
 	OpRunning    = "running"     // exit 0 when the container runs, 1 when not
+	OpTurnEnd    = "turn-end"    // Claude finished a turn (its Stop hook)
 	OpExecStream = "exec-stream" // run Argv in Container with the caller's streams
 )
 

@@ -41,7 +41,7 @@ zdev checks every request from the sandbox on your machine, where the container 
 
 zdev records what your own `zdev start`, `update` and `restart` applied (in `~/.zdev/agent/approved/`), and refuses the rest from the sandbox; Claude then asks you to review `.zdev/` and run `zdev update`. That run approves it, and it lists what it applies that the sandbox couldn't. `zdev claude` asks the same before it starts a project whose config changed since. `zdev down` and `zdev rename` drop the recorded approvals.
 
-When an update changes the agent's own service, the sandbox keeps running the previous version of it (zdev tells Claude, which uses `zdev exec app` meanwhile); `zdev claude --continue` picks the new one up.
+When the agent's own service changes (an update from Claude or from you: config, image or secrets), zdev replaces the sandbox at the end of Claude's turn and resumes the conversation in the new one, with a first message saying why. Claude uses `zdev exec app` for the new version until its turn ends. Sessions with `-p` aren't replaced.
 
 **Your Claude setup comes along:** skills, agents, commands, plugins, `CLAUDE.md`, settings and status line from `~/.claude` (read-only, so a session can't change them for every project), plus this project's memory and conversations (read-write, in `~/.claude/projects/`). Plugins that only work on the host can be switched off for sandboxes with `agent.disable_plugins` ([Configuration](configuration.md#agent-sandboxes-agent)).
 

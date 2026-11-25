@@ -120,7 +120,7 @@ func SystemPrompt(d PromptData) string {
 	w("You may edit `.zdev/` and apply it with `zdev update` (`zdev restart` keeps the old containers). ")
 	w("Applying is refused when the config reaches outside the project beyond what the developer applied before: bind mounts outside the project or of `.git`, other 1Password Environments, router labels, host ports, hostnames of other projects or outside the zdev domain. ")
 	w("Then the developer reviews `.zdev/` and runs `zdev update` on their machine. ")
-	w("When `zdev update` changes `%s`, this container keeps running the previous version of it (zdev says so): use `zdev exec %s` for anything that needs the new one.\n", d.Service, d.Service)
+	w("When `%s` changes (your `zdev update` or the developer's), zdev replaces this container with its new version when your turn ends and resumes this conversation; until then use `zdev exec %s` for anything that needs the new one. If you need the new version in here, finish your turn: the conversation continues by itself.\n", d.Service, d.Service)
 	if len(d.Refused) > 0 {
 		w("- These services hold the Docker socket and are off limits (no `zdev exec`, no network access): %s.\n", strings.Join(d.Refused, ", "))
 	}

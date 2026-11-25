@@ -37,3 +37,27 @@ func TestClaudeSessionArgs(t *testing.T) {
 		}
 	}
 }
+
+// A replaced sandbox resumes the same conversation with the session's model.
+func TestResumeArgs(t *testing.T) {
+	cases := []struct {
+		rest []string
+		want string // the arguments before the message
+	}{
+		{nil, "--resume sid"},
+		{[]string{"fix the bug"}, "--resume sid"},
+		{[]string{"--model", "opus", "fix it"}, "--model opus --resume sid"},
+		{[]string{"--resume", "abc"}, "--resume abc"},
+		{[]string{"--session-id=xyz"}, "--resume xyz"},
+	}
+	for _, c := range cases {
+		got := resumeArgs(c.rest, "sid", t.TempDir(), "app")
+		if strings.Join(got[:len(got)-1], " ") != c.want || !strings.Contains(got[len(got)-1], "service app changed") {
+			t.Errorf("resumeArgs(%v) = %q, want %q + message", c.rest, got, c.want)
+		}
+	}
+	// --continue names no session: the newest transcript, else --continue.
+	if got := resumeArgs([]string{"--continue"}, "sid", "/no/such/project", "app"); got[0] != "--continue" {
+		t.Errorf("--continue without transcripts: %q", got)
+	}
+}
