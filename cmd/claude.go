@@ -217,6 +217,10 @@ type sandboxSpec struct {
 	Egress    agent.Egress
 	EgressLog *egressLog
 	NoProxy   []string
+	// Credentials are swapped in by the proxy (their placeholders are in
+	// Env); GitConfig is added to the sandbox's git configuration.
+	Credentials []agent.Credential
+	GitConfig   [][2]string
 }
 
 // gitReadOnlyMounts makes .git/hooks and .git/config read-only for the agent
@@ -328,7 +332,8 @@ func claudeSession(ctx context.Context, proj *project.Project, args []string) (i
 		current  string     // the service as the running sandbox was built from it
 		notified string     // the version the agent was last told about
 		respawn  bool
-		elog     *egressLog // spans replaced sandboxes
+		elog     *egressLog         // spans replaced sandboxes
+		creds    []agent.Credential // resolved once, kept across replaced sandboxes
 	)
 	stale := func(ctx context.Context) bool {
 		now := serviceSnapshot(ctx, d, proj.ContainerName(service))
@@ -377,16 +382,18 @@ func claudeSession(ctx context.Context, proj *project.Project, args []string) (i
 		return sandboxSpec{
 			Name: name, Service: service, Image: image, Base: base,
 			Workdir: src.ContainerPath, HostDir: proj.Dir, Owner: owner, GitMounts: gitMounts,
-			Env: map[string]string{
+			Env: mergeEnv(map[string]string{
 				"ZDEV_PROJECT":         name,
 				"ZDEV_RELAY":           agent.RelaySocket,
 				"ZDEV_HOST_PROJECTDIR": filepath.Base(proj.Dir),
 				"ZDEV_DOMAIN":          gcfg.Domain,
-			},
-			Fence:     fence,
-			Egress:    agent.Egress{Domain: gcfg.Domain, Mode: acfg.Egress, Allow: acfg.AllowHosts},
-			EgressLog: elog,
-			NoProxy:   noProxy,
+			}, credentialEnv(gcfg, creds)),
+			Credentials: creds,
+			GitConfig:   sandboxGitConfig(creds),
+			Fence:       fence,
+			Egress:      agent.Egress{Domain: gcfg.Domain, Mode: acfg.Egress, Allow: acfg.AllowHosts},
+			EgressLog:   elog,
+			NoProxy:     noProxy,
 			Handler: func(container string) agent.Handler {
 				// After a lifecycle command: socket services may have new
 				// addresses, and the agent's own service may have changed.
@@ -431,12 +438,14 @@ func claudeSession(ctx context.Context, proj *project.Project, args []string) (i
 					URL: url, Services: promptServices, Info: info,
 					Root: strings.HasPrefix(owner, "0:"), Fenced: true, HostAccess: acfg.HostAccess, Refused: socketServices,
 					EgressEnforce: acfg.Egress == agent.EgressEnforce, AllowHosts: acfg.AllowHosts,
+					Credentials: describeCredentials(gcfg, creds),
 				})
 			},
 			Connectors: acfg.ConnectorsEnabled(), Limits: acfg.Limits, Rest: rest, TurnHook: interactive,
 		}, nil
 	}
 
+	creds = resolveCredentials(ctx, gcfg, acfg.Credentials)
 	sessionID := newSessionID()
 	elog = newEgressLog(name, sessionID)
 	defer func() {
@@ -469,6 +478,13 @@ func claudeSession(ctx context.Context, proj *project.Project, args []string) (i
 		next.Rest = resumeArgs(rest, sessionID, proj.Dir, service)
 		s = next
 	}
+}
+
+func mergeEnv(a, b map[string]string) map[string]string {
+	for k, v := range b {
+		a[k] = v
+	}
+	return a
 }
 
 // agentNoProxy is what the agent reaches without the proxy: container names
@@ -687,8 +703,9 @@ func bootstrapSession(ctx context.Context, args []string) (int, error) {
 			Mounts: []string{"type=bind,src=" + dir + ",dst=" + dir},
 		},
 		Workdir: dir, HostDir: dir, Owner: fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()), GitMounts: gitMounts,
-		Env:   map[string]string{"ZDEV_RELAY": agent.RelaySocket, "ZDEV_DOMAIN": gcfg.Domain},
-		Fence: agent.Fence{HostPorts: acfg.HostAccess, ProxyOnly: true},
+		Env:       map[string]string{"ZDEV_RELAY": agent.RelaySocket, "ZDEV_DOMAIN": gcfg.Domain},
+		GitConfig: sandboxGitConfig(nil),
+		Fence:     agent.Fence{HostPorts: acfg.HostAccess, ProxyOnly: true},
 		Handler: func(string) agent.Handler {
 			return func(_ context.Context, _ agent.Request, _ io.Reader, _, stderr io.Writer, _ <-chan string) int {
 				fmt.Fprintln(stderr, refusal.Error())
@@ -874,6 +891,23 @@ func runSandbox(ctx context.Context, gcfg *config.GlobalConfig, s sandboxSpec) (
 	container := agent.FreeSandboxName(existing, s.Name)
 	hostname, _ := os.Hostname()
 	cfg := s.Base
+	cfg.Volumes = append([]runtime.VolumeMount(nil), cfg.Volumes...)
+	// Credentials: the proxy presents certificates from a CA of this
+	// session for their hosts, so the sandbox has to trust it.
+	var ca *agent.SessionCA
+	if len(s.Credentials) > 0 {
+		if ca, err = agent.NewSessionCA(); err != nil {
+			return 0, err
+		}
+		ok, err := trustSessionCA(&cfg, ca, sessionDir, agent.SessionMount)
+		if err != nil {
+			return 0, err
+		}
+		if !ok {
+			fmt.Fprintln(os.Stderr, "Warning: credentials need zdev's CA bundle in the containers (ssl enabled, `zdev systemcheck`); the sandbox runs without them")
+			ca, s.Credentials = nil, nil
+		}
+	}
 	cfg.Name = container
 	cfg.Image = s.Image
 	cfg.User = s.Owner
@@ -895,14 +929,15 @@ func runSandbox(ctx context.Context, gcfg *config.GlobalConfig, s sandboxSpec) (
 		"DISABLE_AUTOUPDATER":             "1",
 		"CLAUDE_SECURESTORAGE_CONFIG_DIR": agent.AuthMount,
 		"ZDEV_SANDBOX":                    container,
-		"GIT_CONFIG_COUNT":                "1",
-		"GIT_CONFIG_KEY_0":                "safe.directory",
-		"GIT_CONFIG_VALUE_0":              "*",
 	}
+	gitConfig := [][2]string{{"safe.directory", "*"}}
 	if gitName, gitEmail := hostGitIdentity(); gitName != "" || gitEmail != "" {
-		env["GIT_CONFIG_COUNT"] = "3"
-		env["GIT_CONFIG_KEY_1"], env["GIT_CONFIG_VALUE_1"] = "user.name", gitName
-		env["GIT_CONFIG_KEY_2"], env["GIT_CONFIG_VALUE_2"] = "user.email", gitEmail
+		gitConfig = append(gitConfig, [2]string{"user.name", gitName}, [2]string{"user.email", gitEmail})
+	}
+	gitConfig = append(gitConfig, s.GitConfig...)
+	env["GIT_CONFIG_COUNT"] = strconv.Itoa(len(gitConfig))
+	for i, kv := range gitConfig {
+		env[fmt.Sprintf("GIT_CONFIG_KEY_%d", i)], env[fmt.Sprintf("GIT_CONFIG_VALUE_%d", i)] = kv[0], kv[1]
 	}
 	if tz := hostTimeZone(); tz != "" {
 		env["TZ"] = tz
@@ -958,6 +993,7 @@ func runSandbox(ctx context.Context, gcfg *config.GlobalConfig, s sandboxSpec) (
 	relayCtx, stopRelay := context.WithCancel(ctx)
 	defer stopRelay()
 	egress := s.Egress
+	egress.Credentials, egress.CA = s.Credentials, ca
 	if s.EgressLog != nil {
 		egress.Log = s.EgressLog.record
 	}

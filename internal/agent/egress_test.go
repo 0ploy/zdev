@@ -3,13 +3,19 @@ package agent
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/base64"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/netip"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // The proxy runs on the host: every address of the host's own networks must
@@ -121,7 +127,7 @@ func TestEgressRefusals(t *testing.T) {
 	}{
 		{"name resolving to loopback", "127.0.0.1", "CONNECT evil.example:443 HTTP/1.1\r\n\r\n", "private-address", nil},
 		{"name resolving to the Docker VM", "192.168.65.254", "CONNECT x.example:80 HTTP/1.1\r\n\r\n", "private-address", nil},
-		{"IP literal", "1.1.1.1", "CONNECT 10.0.0.5:22 HTTP/1.1\r\n\r\n", "private-address", nil},
+		{"IP literal", "1.1.1.1", "CONNECT 10.0.0.5:5432 HTTP/1.1\r\n\r\n", "private-address", nil},
 		{"IPv6 literal", "1.1.1.1", "CONNECT [::1]:5432 HTTP/1.1\r\n\r\n", "private-address", nil},
 		{"metadata service", "1.1.1.1", "GET http://169.254.169.254/latest HTTP/1.1\r\nHost: 169.254.169.254\r\n\r\n", "private-address", nil},
 		{"project domain", "127.0.0.1", "CONNECT shop.0ploy.dev:443 HTTP/1.1\r\n\r\n", "project-domain", nil},
@@ -190,5 +196,71 @@ func TestFenceProxyOnly(t *testing.T) {
 	}
 	if strings.Contains(Fence{}.Script(), "r -j REJECT\n") {
 		t.Error("without ProxyOnly the internet stays open")
+	}
+}
+
+// A credential host: the proxy terminates TLS with the session CA, swaps the
+// placeholder for the token (Bearer and Basic) and forwards; the agent side
+// never sees the token.
+func TestEgressInterceptSwapsCredential(t *testing.T) {
+	up := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, r.Method+" "+r.Host+r.URL.Path+" auth="+r.Header.Get("Authorization"))
+	}))
+	defer up.Close()
+	ca, err := NewSessionCA()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cred := Credential{Name: "github", Hosts: []string{"*.github.com", "github.com"}, Placeholder: NewPlaceholder("github"), Value: "ghp_REAL"}
+	e, entries, _ := testEgress(t, "140.82.121.4", up.Listener.Addr().String())
+	e.Credentials, e.CA = []Credential{cred}, ca
+	e.upstreamTLS = &tls.Config{InsecureSkipVerify: true}
+
+	client, server := net.Pipe()
+	go e.Serve(context.Background(), server)
+	go io.WriteString(client, "CONNECT api.github.com:443 HTTP/1.1\r\nHost: api.github.com:443\r\n\r\n")
+	br := bufio.NewReader(client)
+	if res, err := http.ReadResponse(br, nil); err != nil || res.StatusCode != 200 {
+		t.Fatalf("CONNECT: %v %v", res, err)
+	}
+	pool := x509.NewCertPool()
+	pool.AppendCertsFromPEM(ca.PEM())
+	tc := tls.Client(bufConn{client, br}, &tls.Config{RootCAs: pool, ServerName: "api.github.com"})
+	tbr := bufio.NewReader(tc)
+	get := func(auth string) string {
+		req, _ := http.NewRequest("GET", "https://api.github.com/user", nil)
+		req.Header.Set("Authorization", auth)
+		if err := req.Write(tc); err != nil {
+			t.Fatal(err)
+		}
+		res, err := http.ReadResponse(tbr, req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(res.Body)
+		return string(b)
+	}
+	if got := get("Bearer " + cred.Placeholder); got != "GET api.github.com/user auth=Bearer ghp_REAL" {
+		t.Errorf("bearer: %q", got)
+	}
+	basic := "Basic " + base64.StdEncoding.EncodeToString([]byte("x-access-token:"+cred.Placeholder))
+	want := "Basic " + base64.StdEncoding.EncodeToString([]byte("x-access-token:ghp_REAL"))
+	if got := get(basic); got != "GET api.github.com/user auth="+want {
+		t.Errorf("basic: %q", got)
+	}
+	tc.Close()
+	time.Sleep(50 * time.Millisecond)
+	for _, en := range *entries {
+		if strings.Contains(fmt.Sprint(en), "ghp_REAL") {
+			t.Errorf("the token reached the log: %+v", en)
+		}
+	}
+}
+
+func TestEgressRefusesSSH(t *testing.T) {
+	e, _, dialed := testEgress(t, "140.82.121.4", upstream(t, "x"))
+	res, _ := roundTrip(t, e, "CONNECT github.com:22 HTTP/1.1\r\n\r\n")
+	if res.Header.Get("X-Zdev-Refused") != "ssh" || *dialed != "" {
+		t.Errorf("status %d reason %q dialed %q", res.StatusCode, res.Header.Get("X-Zdev-Refused"), *dialed)
 	}
 }

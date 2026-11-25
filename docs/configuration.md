@@ -213,15 +213,23 @@ agent:
     connectors: false          # claude.ai connectors (Drive, Slack, ...) of your login; off by default
     host_access: []            # ports on this machine the agent may reach (e.g. 11434 for Ollama)
     limits: {cpus: "4", memory: 8g, pids: 4096}
-    egress: log                # log (every public host, logged) | enforce (only allow_hosts and Claude's own hosts)
+    egress: log                # log (every public host, logged) | enforce (only allow_hosts, credential hosts and Claude's own hosts)
     allow_hosts: []            # under enforce: "registry.npmjs.org", "*.github.com"
+    credentials: []            # names from agent.credentials below
   projects:
     shop:                      # per project, over defaults
       service: web             # image the agent runs in when `zdev claude` names none (default: app)
       connectors: true
     ci-runner:
       docker_socket: accept    # a service mounts the Docker socket: run anyway, the sandbox is no boundary
+  credentials:                 # tokens the egress proxy swaps in; the sandbox only sees placeholders
+    github:
+      hosts: [github.com, api.github.com]
+      env: [GH_TOKEN, GITHUB_TOKEN]
+      command: gh auth token   # or: secret: op-env://<environment-id>/GITHUB_TOKEN
 ```
+
+A project uses a credential when it lists it (`projects.<name>.credentials: [github]`, or in `defaults`). Prefer a token scoped to the project's repository over your own `gh` login: the agent can use whatever the token allows while the session runs. Credentials need zdev's CA bundle in the containers (HTTPS set up, `zdev systemcheck`).
 
 What your own `zdev start`, `update` and `restart` applied is recorded in `~/.zdev/agent/approved/<project>.json`; config changes from a sandbox that reach beyond it are refused ([Agents](agents.md)). `zdev down` and `zdev rename` remove the file.
 

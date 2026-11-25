@@ -165,12 +165,43 @@ func validateAgentConfig(a *AgentConfig) error {
 				return fmt.Errorf("%s.allow_hosts: %q is not a host name (use example.com or *.example.com)", where, h)
 			}
 		}
+		for _, c := range p.Credentials {
+			if _, ok := a.Credentials[c]; !ok {
+				return fmt.Errorf("%s.credentials: %q is not defined under agent.credentials", where, c)
+			}
+		}
 		for _, port := range p.HostAccess {
 			if port < 1 || port > 65535 {
 				return fmt.Errorf("%s.host_access: %d is not a port", where, port)
 			}
 		}
 		return nil
+	}
+	envName := regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	for name, c := range a.Credentials {
+		where := "agent.credentials." + name
+		if !regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`).MatchString(name) {
+			return fmt.Errorf("%s: use lowercase letters, digits and -", where)
+		}
+		if len(c.Hosts) == 0 {
+			return fmt.Errorf("%s.hosts: name the hosts the token is for", where)
+		}
+		for _, h := range c.Hosts {
+			if h == "" || strings.ContainsAny(h, "/: ") || (strings.Contains(h, "*") && (!strings.HasPrefix(h, "*.") || strings.Count(h, "*") > 1)) {
+				return fmt.Errorf("%s.hosts: %q is not a host name", where, h)
+			}
+		}
+		for _, e := range c.Env {
+			if !envName.MatchString(e) {
+				return fmt.Errorf("%s.env: %q is not a variable name", where, e)
+			}
+		}
+		if (c.Command == "") == (c.Secret == "") {
+			return fmt.Errorf("%s: set exactly one of command and secret", where)
+		}
+		if c.Secret != "" && !strings.HasPrefix(c.Secret, "op-env://") {
+			return fmt.Errorf("%s.secret must be op-env://<environment-id>/<VARIABLE>", where)
+		}
 	}
 	if err := check("agent.defaults", a.Defaults); err != nil {
 		return err

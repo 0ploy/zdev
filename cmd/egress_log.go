@@ -40,15 +40,24 @@ func newEgressLog(project, sessionID string) *egressLog {
 func (l *egressLog) record(e agent.EgressEntry) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if e.Refused != "" {
+	switch {
+	case e.Request != "":
+		// one request on an intercepted connection; the connection is counted below
+	case e.Refused != "":
 		l.refused[e.Host] = e.Refused
-	} else {
+	default:
 		l.hosts[e.Host]++
 	}
 	if l.f != nil {
 		status := fmt.Sprintf("ok up=%d down=%d", e.Up, e.Down)
-		if e.Refused != "" {
+		switch {
+		case e.Request != "":
+			status = "request " + e.Request
+		case e.Refused != "":
 			status = "refused " + e.Refused + ": " + e.Detail
+		}
+		if e.Credential != "" {
+			status += " [credential " + e.Credential + "]"
 		}
 		fmt.Fprintf(l.f, "%s %s:%d %s\n", e.Time.Format(time.RFC3339), e.Host, e.Port, status)
 	}

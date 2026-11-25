@@ -29,6 +29,19 @@ type AgentConfig struct {
 	DisablePlugins []string                      `yaml:"disable_plugins"`
 	Defaults       AgentProjectConfig            `yaml:"defaults"`
 	Projects       map[string]AgentProjectConfig `yaml:"projects"`
+	// Credentials are tokens the egress proxy swaps in for their hosts; a
+	// project uses the ones it lists (projects.<p>.credentials).
+	Credentials map[string]AgentCredential `yaml:"credentials"`
+}
+
+// AgentCredential is a token bound to hosts. The sandbox only ever sees a
+// placeholder in Env; the value is read on the host when a session starts,
+// from Command's output or a 1Password Environment (Secret).
+type AgentCredential struct {
+	Hosts   []string `yaml:"hosts"`   // exact, or *.example.com
+	Env     []string `yaml:"env"`     // variables holding the placeholder (e.g. GH_TOKEN)
+	Command string   `yaml:"command"` // e.g. "gh auth token"
+	Secret  string   `yaml:"secret"`  // op-env://<environment-id>/<VARIABLE>
 }
 
 // AgentClaudeConfig selects which Claude Code release sandboxes run.
@@ -56,6 +69,8 @@ type AgentProjectConfig struct {
 	// AllowHosts are the hosts the agent may reach under egress: enforce,
 	// exact or as *.example.com.
 	AllowHosts []string `yaml:"allow_hosts"`
+	// Credentials names the agent.credentials this project's sandboxes get.
+	Credentials []string `yaml:"credentials"`
 }
 
 // AgentLimits bounds the agent container (--cpus, --memory, --pids-limit).
@@ -96,6 +111,9 @@ func (g *GlobalConfig) AgentProject(name string) AgentProjectConfig {
 		}
 		if src.AllowHosts != nil {
 			out.AllowHosts = src.AllowHosts
+		}
+		if src.Credentials != nil {
+			out.Credentials = src.Credentials
 		}
 	}
 	if out.Egress == "" {

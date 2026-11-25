@@ -10,6 +10,7 @@ package agent
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"net"
@@ -41,6 +42,10 @@ type EgressEntry struct {
 	Down    int64  // bytes to the agent
 	Refused string // reason code, empty when allowed
 	Detail  string
+	// Credential names the token swapped in on this connection; Request is
+	// one request on an intercepted connection ("GET /path 200").
+	Credential string
+	Request    string
 }
 
 // Egress is the host side of the proxy for one session.
@@ -49,10 +54,15 @@ type Egress struct {
 	Mode   string   // EgressLog (default) or EgressEnforce
 	Allow  []string // allowed hosts under enforce: exact, or *.example.com
 	Log    func(EgressEntry)
+	// Credentials are swapped in for their hosts, with certificates from CA.
+	Credentials []Credential
+	CA          *SessionCA
 
 	// resolve and dial, replaceable in tests.
 	resolve func(ctx context.Context, host string) ([]netip.Addr, error)
 	dial    func(ctx context.Context, addr string) (net.Conn, error)
+	// upstreamTLS is the client TLS config towards credential hosts in tests.
+	upstreamTLS *tls.Config
 }
 
 // refusal is why a destination is refused.
@@ -93,17 +103,7 @@ var ClaudeHosts = []string{"*.anthropic.com", "claude.ai", "*.claude.ai", "claud
 
 // allowed reports whether host matches the enforce list.
 func (e *Egress) allowed(host string) bool {
-	for _, a := range append(append([]string(nil), ClaudeHosts...), e.Allow...) {
-		a = strings.ToLower(strings.TrimSuffix(a, "."))
-		if suffix, ok := strings.CutPrefix(a, "*."); ok {
-			if host == suffix || strings.HasSuffix(host, "."+suffix) {
-				return true
-			}
-		} else if host == a {
-			return true
-		}
-	}
-	return false
+	return hostMatches(host, ClaudeHosts) || hostMatches(host, e.Allow) || e.credentialFor(host) != nil
 }
 
 // destination checks host and resolves it to the address to connect to. The
@@ -113,6 +113,9 @@ func (e *Egress) destination(ctx context.Context, host string, port int) (string
 	host = strings.ToLower(strings.TrimSuffix(host, "."))
 	if host == "" || port <= 0 || port > 65535 {
 		return "", &refusal{"bad-request", "no host or port"}
+	}
+	if port == 22 {
+		return "", &refusal{"ssh", "SSH is off in agent sandboxes: use HTTPS (git remotes on git@ and ssh:// URLs are rewritten to https:// already)"}
 	}
 	if d := strings.ToLower(e.Domain); d != "" && (host == d || strings.HasSuffix(host, "."+d)) {
 		return "", &refusal{"project-domain", host + " is a zdev project domain: reach it directly (it is in NO_PROXY), not through the proxy"}
@@ -194,6 +197,11 @@ func (e *Egress) Serve(ctx context.Context, client net.Conn) {
 
 	if req.Method == http.MethodConnect {
 		if _, err := io.WriteString(client, "HTTP/1.1 200 Connection Established\r\n\r\n"); err != nil {
+			return
+		}
+		if cred := e.credentialFor(entry.Host); cred != nil && e.CA != nil {
+			upstream.Close() // intercept dials per request, to the checked address
+			e.intercept(ctx, bufConn{client, br}, entry.Host, addr, cred, &entry)
 			return
 		}
 	} else {

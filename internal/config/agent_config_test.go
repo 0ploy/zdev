@@ -24,6 +24,9 @@ func TestValidateAgentConfig(t *testing.T) {
 		{Claude: AgentClaudeConfig{Channel: "2.1.325"}},
 		{Projects: map[string]AgentProjectConfig{"x": {DockerSocket: "accept", HostAccess: []int{9003}}}},
 		{Projects: map[string]AgentProjectConfig{"x": {Egress: "enforce", AllowHosts: []string{"*.github.com", "registry.npmjs.org"}}}},
+		{Credentials: map[string]AgentCredential{"github": {Hosts: []string{"github.com", "*.github.com"}, Env: []string{"GH_TOKEN"}, Command: "gh auth token"}},
+			Projects: map[string]AgentProjectConfig{"x": {Credentials: []string{"github"}}}},
+		{Credentials: map[string]AgentCredential{"npm": {Hosts: []string{"registry.npmjs.org"}, Secret: "op-env://abc/NPM_TOKEN"}}},
 	}
 	for _, a := range ok {
 		if err := validateAgentConfig(&a); err != nil {
@@ -37,6 +40,12 @@ func TestValidateAgentConfig(t *testing.T) {
 		{Defaults: AgentProjectConfig{Egress: "block"}},
 		{Projects: map[string]AgentProjectConfig{"x": {AllowHosts: []string{"https://github.com"}}}},
 		{Projects: map[string]AgentProjectConfig{"x": {AllowHosts: []string{"git*.com"}}}},
+		{Projects: map[string]AgentProjectConfig{"x": {Credentials: []string{"undefined"}}}},
+		{Credentials: map[string]AgentCredential{"github": {Command: "gh auth token"}}},                                            // no hosts
+		{Credentials: map[string]AgentCredential{"github": {Hosts: []string{"github.com"}}}},                                       // no source
+		{Credentials: map[string]AgentCredential{"github": {Hosts: []string{"github.com"}, Command: "x", Secret: "op-env://a/B"}}}, // both
+		{Credentials: map[string]AgentCredential{"github": {Hosts: []string{"github.com"}, Secret: "op://vault/item"}}},
+		{Credentials: map[string]AgentCredential{"github": {Hosts: []string{"github.com"}, Command: "x", Env: []string{"GH-TOKEN"}}}},
 	}
 	for _, a := range bad {
 		if err := validateAgentConfig(&a); err == nil {

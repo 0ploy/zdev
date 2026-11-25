@@ -35,6 +35,9 @@ type PromptData struct {
 	// EgressEnforce: only AllowHosts (plus Claude's own) through the proxy.
 	EgressEnforce bool
 	AllowHosts    []string
+	// Credentials describe the tokens the proxy swaps in ("GH_TOKEN for
+	// github.com, api.github.com").
+	Credentials []string
 }
 
 // SystemPrompt renders the prompt.
@@ -143,7 +146,7 @@ func SystemPrompt(d PromptData) string {
 		}
 		w(".\n\n")
 		w("The internet is reachable only through an HTTP proxy on the developer's machine (`HTTPS_PROXY`, already set; tools that honor it work: Claude, git over HTTPS, curl, npm, pip, composer, cargo, go, Node with `NODE_USE_ENV_PROXY=1`). Every connection is logged for the developer. ")
-		w("Raw TCP, UDP and SSH to the internet don't work: clone and fetch over HTTPS. Project services and project URLs are reached directly (`NO_PROXY`). ")
+		w("SSH, raw TCP and UDP to the internet don't work. git remotes on `git@` and `ssh://` URLs of GitHub, GitLab and Bitbucket are rewritten to HTTPS for you. Project services and project URLs are reached directly (`NO_PROXY`). ")
 		w("A refusal by the proxy is an HTTP 403 with the header `X-Zdev-Refused` and a `zdev: refused (<reason>)` body; for HTTPS tools report it as a failed CONNECT (curl: \"CONNECT tunnel failed, response 403\", Node: \"fetch failed\"). Don't treat that as a network outage.")
 		if d.EgressEnforce {
 			hosts := "none"
@@ -153,6 +156,9 @@ func SystemPrompt(d PromptData) string {
 			w(" Only these hosts are allowed for this project (besides Claude's own): %s. For another one, ask the developer to add it to `allow_hosts`.", hosts)
 		}
 		w("\n")
+		if len(d.Credentials) > 0 {
+			w("\nTokens: %s. These variables hold placeholders; the proxy puts the real token into requests to those hosts (git's credential helper is set up), so use git, `gh` and the APIs normally. The real token is not in this container: don't look for it, and don't send the placeholder elsewhere.\n", strings.Join(d.Credentials, "; "))
+		}
 	} else {
 		w("The project's services and the internet are reachable.\n")
 	}
