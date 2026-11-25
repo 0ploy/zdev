@@ -55,6 +55,7 @@ func withProject(timeout time.Duration, fn func(ctx context.Context, proj *proje
 
 	proj, err := project.Load()
 	if err != nil {
+		exitOnRefusal(err)
 		return err
 	}
 

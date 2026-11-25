@@ -312,6 +312,26 @@ func (m *MockRuntime) GetContainerLabels(_ context.Context, name string) (map[st
 	return map[string]string{}, nil
 }
 
+// ContainerBinds returns the bind mounts (absolute sources) of a mock
+// container's config.
+func (m *MockRuntime) ContainerBinds(_ context.Context, name string) ([]Bind, error) {
+	m.record("ContainerBinds", name)
+	if err := m.err("ContainerBinds"); err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var binds []Bind
+	if cfg, ok := m.Containers[name]; ok {
+		for _, v := range cfg.Volumes {
+			if strings.HasPrefix(v.Source, "/") {
+				binds = append(binds, Bind{Source: v.Source, Target: v.Target, ReadOnly: v.ReadOnly})
+			}
+		}
+	}
+	return binds, nil
+}
+
 // Exec records the call and returns any configured error
 func (m *MockRuntime) Exec(_ context.Context, container string, cmd []string, interactive bool, opts ExecOptions) error {
 	m.record("Exec", container, cmd, interactive, opts)

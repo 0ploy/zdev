@@ -103,7 +103,10 @@ func Execute() error {
 	// Non-blocking: prints a banner if a prior background install landed
 	// a newer binary, and kicks off a new background refresh + install
 	// when the cache is stale.
-	updatecheck.MaybeAutoUpdate(Version)
+	// Not for a request an agent sandbox sent through the relay.
+	if _, ok := project.AgentRequest(); !ok {
+		updatecheck.MaybeAutoUpdate(Version)
+	}
 
 	// Parse --config flag early so it applies to justfile commands too
 	parseConfigFlag()

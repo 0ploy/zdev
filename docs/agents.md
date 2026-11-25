@@ -21,17 +21,29 @@ zdev claude -- app               # pass "app" to Claude (a prompt that equals a 
 | | |
 |---|---|
 | Build, test, run the project's tools | directly in the sandbox (the service's image) |
-| See and manage the running app | through zdev: `zdev exec app ps aux`, `zdev logs app`, `zdev restart app` (one service at a time), `zdev exec app <cmd>`; an interrupted `zdev exec` stops in the container too |
+| See and manage the running app | through zdev: `zdev exec app ps aux`, `zdev logs app`, `zdev restart app`, `zdev exec app <cmd>`; an interrupted `zdev exec` stops in the container too |
 | `zdev status`, `zdev info`, `zdev run` | yes; `zdev run` jobs without a service run in the sandbox, never on your machine |
-| `zdev start`, `stop`, `update`, `down`, `link`, `cleanup`, other projects | refused for now, with a reason Claude passes on to you |
+| Edit `.zdev/` and apply it: `zdev start`, `stop`, `restart`, `update` (`--build`, `--refresh-secrets`) | yes, unless the config reaches outside the project beyond what you applied yourself (see below) |
+| `zdev down`, `link`, `cleanup`, `rename`, other projects | refused, with a reason Claude passes on to you |
 | Git | commit, branch, merge in the synced repository; `.git/hooks` and `.git/config` are read-only, so pushes, remotes and git config stay with you |
 | Network | the project's services and the internet; not your machine (`host.docker.internal`) or private networks |
 
 zdev checks every request from the sandbox on your machine, where the container can't reach it. Claude gets a short system prompt that tells it all this, so it doesn't spend turns finding out.
 
+**Config changes from the sandbox.** Everything that stays inside containers applies directly: images, Dockerfiles, environment, commands, new services, routes under your zdev domain. What reaches outside a container needs you, unless you applied it before:
+
+- bind mounts outside the project, of `.git`, or a native (unsynced) writable bind of the project root
+- 1Password Environments (`op-env`, `op-env://`) the service doesn't use yet
+- router labels (`traefik.*`), host ports (`routing.host_port`, published on every interface), hostnames outside the zdev domain or of another project
+- a Dockerfile outside the project, and the project's `name:` (never from the sandbox)
+
+zdev records what your own `zdev start`, `update` and `restart` applied (in `~/.zdev/agent/approved/`), and refuses the rest from the sandbox; Claude then asks you to review `.zdev/` and run `zdev update`. That run approves it, and it lists what it applies that the sandbox couldn't. `zdev claude` asks the same before it starts a project whose config changed since. `zdev down` and `zdev rename` drop the recorded approvals.
+
+When an update changes the agent's own service, the sandbox keeps running the previous version of it (zdev tells Claude, which uses `zdev exec app` meanwhile); `zdev claude --continue` picks the new one up.
+
 **Your Claude setup comes along:** skills, agents, commands, plugins, `CLAUDE.md`, settings and status line from `~/.claude` (read-only, so a session can't change them for every project), plus this project's memory and conversations (read-write, in `~/.claude/projects/`). Plugins that only work on the host can be switched off for sandboxes with `agent.disable_plugins` ([Configuration](configuration.md#agent-sandboxes-agent)).
 
-**Git sync (macOS):** zdev syncs `.git` and `.zdev/` into the agent's service for the sandbox. When git writes the same file on your machine and in the sandbox at the same moment (your editor's background `git status` while Claude commits), Mutagen stops syncing it; `zdev status` says so, and `zdev mutagen repair-git` fixes it.
+**Git sync (macOS):** zdev syncs `.git` and `.zdev/` into the agent's service for the sandbox, except `.git/hooks` and `.git/config`: no container can change those on your machine (the sandbox sees your copies, read-only). When git writes the same file on your machine and in the sandbox at the same moment (your editor's background `git status` while Claude commits), Mutagen stops syncing it; `zdev status` says so, and `zdev mutagen repair-git` fixes it.
 
 **Requirements:** Docker Engine 26 or newer (`zdev systemcheck` shows "Agent mode"), and `bash` and `git` in the service's image (`zdev claude` names what is missing). Run as the owner of the synced files: set `services.<name>.mutagen.user` to the app's user; without it the agent runs as root with no capabilities. A project where a service mounts the Docker socket is refused, since whoever reaches that service is root on your machine; you can accept that per project in host config.
 

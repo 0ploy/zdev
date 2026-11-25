@@ -43,10 +43,16 @@ type Fence struct {
 }
 
 // Script is the helper's shell script (iptables v4 and v6, REJECT so tools
-// fail fast instead of timing out).
+// fail fast instead of timing out). The rules go into a new chain that
+// replaces the previous one in a single jump swap, so applying again (after
+// a lifecycle command gave a socket service a new address) never leaves the
+// container unfenced in between.
 func (f Fence) Script() string {
 	var b strings.Builder
-	b.WriteString("set -eu\nr() { iptables -A OUTPUT \"$@\"; }\n")
+	b.WriteString("set -eu\n")
+	b.WriteString("swap() { t=$1\n  $t -N zdev-new 2>/dev/null || $t -F zdev-new\n}\n")
+	b.WriteString("commit() { t=$1\n  $t -I OUTPUT 1 -j zdev-new\n  while $t -D OUTPUT -j zdev 2>/dev/null; do :; done\n  $t -F zdev 2>/dev/null || true\n  $t -X zdev 2>/dev/null || true\n  $t -E zdev-new zdev\n}\n")
+	b.WriteString("swap iptables\nr() { iptables -A zdev-new \"$@\"; }\n")
 	for _, ip := range f.BlockIPs {
 		fmt.Fprintf(&b, "r -d %s -j REJECT\n", ip)
 	}
@@ -62,7 +68,8 @@ func (f Fence) Script() string {
 	for _, s := range []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "169.254.0.0/16"} {
 		fmt.Fprintf(&b, "r -d %s -j REJECT\n", s)
 	}
-	b.WriteString("for s in fc00::/7 fe80::/10; do ip6tables -A OUTPUT -d $s -j REJECT 2>/dev/null || true; done\n")
+	b.WriteString("commit iptables\n")
+	b.WriteString("if swap ip6tables 2>/dev/null; then\n  for s in fc00::/7 fe80::/10; do ip6tables -A zdev-new -d $s -j REJECT; done\n  commit ip6tables\nfi\n")
 	return b.String()
 }
 

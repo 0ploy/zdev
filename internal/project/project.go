@@ -85,6 +85,9 @@ func LoadFromDir(dir string) (*Project, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := checkAgentProject(cfg); err != nil {
+		return nil, err
+	}
 
 	return &Project{
 		Dir:     dir,

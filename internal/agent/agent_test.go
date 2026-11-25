@@ -19,6 +19,10 @@ func TestCheckRequest(t *testing.T) {
 		{"info"},
 		{"restart", "app"},
 		{"restart", "docker1"}, // a bounce, no exec
+		{"restart"},
+		{"start", "--build"},
+		{"stop"},
+		{"update", "--refresh-secrets"},
 	}
 	for _, args := range allowed {
 		if err := CheckRequest(args, off); err != nil {
@@ -30,8 +34,8 @@ func TestCheckRequest(t *testing.T) {
 		args []string
 	}{
 		{"not-allowed", []string{"down"}},
-		{"not-allowed", []string{"restart"}},
-		{"not-allowed", []string{"restart", "app", "node1"}},
+		{"not-allowed", []string{"cleanup"}},
+		{"not-allowed", []string{"link", "create", "x"}},
 		{"other-project", []string{"exec", "--config", "/elsewhere", "app", "ls"}},
 		{"run-here", []string{"run", "test"}},
 		{"docker-socket", []string{"exec", "-u", "root", "docker1", "docker", "ps"}},

@@ -19,6 +19,8 @@ type Runtime interface {
 	ListContainers(ctx context.Context, filter string) ([]string, error)
 	GetContainer(ctx context.Context, name string) (*Container, error)
 	GetContainerLabels(ctx context.Context, name string) (map[string]string, error)
+	// ContainerBinds returns a container's bind mounts as Docker reports them.
+	ContainerBinds(ctx context.Context, name string) ([]Bind, error)
 	// GetContainerNetworks returns the networks a container is attached to,
 	// mapped to the user-defined aliases on each endpoint. Used to restore a
 	// container's network topology across a recreate.

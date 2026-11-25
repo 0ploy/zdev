@@ -21,6 +21,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -208,17 +209,18 @@ func runClaude(cmd *cobra.Command, args []string) error {
 // sandboxSpec is what differs between a project session and a bootstrap
 // session; runSandbox does the rest.
 type sandboxSpec struct {
-	Name       string // project name (labels, home volume)
-	Service    string // service whose image it runs, "" for bootstrap
-	Image      string
-	Base       runtime.ContainerConfig // starting point: env, mounts, network, working dir
-	Workdir    string                  // the source's path in the container
-	HostDir    string                  // the source's path on this machine (memory key)
-	Owner      string                  // uid:gid the agent runs as
-	GitMounts  []string                // read-only .git/hooks and .git/config
-	Env        map[string]string       // added to the container's environment
-	Fence      agent.Fence
-	Handler    agent.Handler
+	Name      string // project name (labels, home volume)
+	Service   string // service whose image it runs, "" for bootstrap
+	Image     string
+	Base      runtime.ContainerConfig // starting point: env, mounts, network, working dir
+	Workdir   string                  // the source's path in the container
+	HostDir   string                  // the source's path on this machine (memory key)
+	Owner     string                  // uid:gid the agent runs as
+	GitMounts []string                // read-only .git/hooks and .git/config
+	Env       map[string]string       // added to the container's environment
+	Fence     agent.Fence
+	// Handler serves the relay; it gets the sandbox container's name.
+	Handler    func(container string) agent.Handler
 	Prompt     func(info *agent.ImageInfo) string
 	Connectors bool
 	Limits     config.AgentLimits
@@ -226,10 +228,12 @@ type sandboxSpec struct {
 }
 
 // gitReadOnlyMounts makes .git/hooks and .git/config read-only for the agent
-// (PLAN_2 section 6): from the sync volume with volume-subpath, or nested
-// binds of the host paths. .git/hooks is created first: otherwise the agent
-// could create it, and the sync would carry its hooks to this machine.
-func gitReadOnlyMounts(hostDir, workdir, syncVolume string) ([]string, error) {
+// (PLAN_2 section 6): binds of the Mac's own copies, which the sync never
+// carries in agent mode (project.AgentGitGuards), so nothing a container
+// writes there reaches the Mac. .git/hooks is created first, so the bind
+// has a source. .git/config is a single-file bind: a change on the Mac that
+// replaces the file (git writes a new one) shows in the next session.
+func gitReadOnlyMounts(hostDir, workdir string) ([]string, error) {
 	gitDir := filepath.Join(hostDir, ".git")
 	if fi, err := os.Stat(gitDir); err != nil || !fi.IsDir() {
 		return nil, nil
@@ -238,13 +242,15 @@ func gitReadOnlyMounts(hostDir, workdir, syncVolume string) ([]string, error) {
 		return nil, err
 	}
 	var mounts []string
-	for _, p := range []string{".git/hooks", ".git/config"} {
-		dst := workdir + "/" + p
-		if syncVolume != "" {
-			mounts = append(mounts, "type=volume,src="+syncVolume+",dst="+dst+",volume-subpath="+p+",readonly")
-		} else {
-			mounts = append(mounts, "type=bind,src="+filepath.Join(hostDir, p)+",dst="+dst+",readonly")
+	for _, p := range project.AgentGitGuards() {
+		src := filepath.Join(hostDir, p)
+		if _, err := os.Stat(src); err != nil {
+			continue
 		}
+		if strings.ContainsAny(src, ",\"") {
+			return nil, fmt.Errorf("path %q can't be mounted (contains a comma or quote)", src)
+		}
+		mounts = append(mounts, "type=bind,src="+src+",dst="+workdir+"/"+p+",readonly")
 	}
 	return mounts, nil
 }
@@ -290,7 +296,7 @@ func claudeSession(ctx context.Context, proj *project.Project, args []string) (i
 	if err != nil {
 		return 0, err
 	}
-	gitMounts, err := gitReadOnlyMounts(src.HostPath, src.ContainerPath, src.SyncVolume)
+	gitMounts, err := gitReadOnlyMounts(src.HostPath, src.ContainerPath)
 	if err != nil {
 		return 0, err
 	}
@@ -299,9 +305,15 @@ func claudeSession(ctx context.Context, proj *project.Project, args []string) (i
 	if _, err := project.SetAgentSyncService(name, service); err != nil {
 		return 0, err
 	}
+	if err := approveAgentChanges(proj, gcfg.Domain); err != nil {
+		return 0, err
+	}
 	ui.StatusStep("Starting "+name, plain)
 	if err := proj.Start(ctx); err != nil {
 		return 0, err
+	}
+	if err := proj.RecordAgentBaseline(ctx); err != nil {
+		return 0, fmt.Errorf("recording what the project applies: %w", err)
 	}
 	printGitConflicts(ctx, proj, plain)
 
@@ -322,15 +334,8 @@ func claudeSession(ctx context.Context, proj *project.Project, args []string) (i
 		base.WorkingDir = src.ContainerPath
 	}
 
-	fence := agent.Fence{HostPorts: acfg.HostAccess}
-	if subnets, err := d.Output(ctx, "network", "inspect", "--format", "{{range .IPAM.Config}}{{.Subnet}} {{end}}", proj.NetworkName()); err == nil {
-		fence.AllowSubnets = strings.Fields(subnets)
-	}
-	for _, s := range socketServices {
-		if ip, err := d.Output(ctx, "inspect", "--format", "{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}", proj.ContainerName(s)); err == nil {
-			fence.BlockIPs = append(fence.BlockIPs, strings.Fields(ip)...)
-		}
-	}
+	fence := agentFence(ctx, d, proj, acfg.HostAccess, socketServices)
+	before := serviceSnapshot(ctx, d, proj.ContainerName(service))
 	var promptServices []agent.PromptService
 	for sname, svc := range proj.Config.Services {
 		ps := agent.PromptService{Name: sname}
@@ -349,8 +354,26 @@ func claudeSession(ctx context.Context, proj *project.Project, args []string) (i
 			"ZDEV_HOST_PROJECTDIR": filepath.Base(proj.Dir),
 			"ZDEV_DOMAIN":          gcfg.Domain,
 		},
-		Fence:   fence,
-		Handler: relayHandler(proj, socketServices),
+		Fence: fence,
+		Handler: func(container string) agent.Handler {
+			// After a lifecycle command: socket services may have new
+			// addresses, and the agent's own service may have changed.
+			var mu sync.Mutex // requests run concurrently
+			last := before
+			after := func(ctx context.Context, stderr io.Writer) {
+				mu.Lock()
+				defer mu.Unlock()
+				if err := agentFence(ctx, d, proj, acfg.HostAccess, socketServices).Apply(ctx, d, container); err != nil {
+					fmt.Fprintf(stderr, "zdev: refreshing the sandbox's network fence failed: %v\n", err)
+				}
+				if now := serviceSnapshot(ctx, d, proj.ContainerName(service)); now != last && now != "" {
+					last = now
+					fmt.Fprintf(stderr, "zdev: service %s changed (config, image or secrets); this sandbox still runs its previous version. "+
+						"Use `zdev exec %s` for anything that needs the new one; the developer can restart the session with `zdev claude --continue`.\n", service, service)
+				}
+			}
+			return relayHandler(proj, socketServices, after)
+		},
 		Prompt: func(info *agent.ImageInfo) string {
 			return agent.SystemPrompt(agent.PromptData{
 				Project: name, Service: service, Image: image, Workdir: src.ContainerPath,
@@ -360,6 +383,60 @@ func claudeSession(ctx context.Context, proj *project.Project, args []string) (i
 		},
 		Connectors: acfg.ConnectorsEnabled(), Limits: acfg.Limits, Rest: rest,
 	})
+}
+
+// agentFence builds the network fence of a project's sandbox from what runs
+// now: the project's subnets, and the addresses of services holding the
+// Docker socket.
+func agentFence(ctx context.Context, d agent.Docker, proj *project.Project, hostAccess []int, socketServices []string) agent.Fence {
+	fence := agent.Fence{HostPorts: hostAccess}
+	if subnets, err := d.Output(ctx, "network", "inspect", "--format", "{{range .IPAM.Config}}{{.Subnet}} {{end}}", proj.NetworkName()); err == nil {
+		fence.AllowSubnets = strings.Fields(subnets)
+	}
+	for _, s := range socketServices {
+		if ip, err := d.Output(ctx, "inspect", "--format", "{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}", proj.ContainerName(s)); err == nil {
+			fence.BlockIPs = append(fence.BlockIPs, strings.Fields(ip)...)
+		}
+	}
+	return fence
+}
+
+// serviceSnapshot identifies what a service container was created from: its
+// config hash, secrets hash and image. Empty when it doesn't exist.
+func serviceSnapshot(ctx context.Context, d agent.Docker, container string) string {
+	out, err := d.Output(ctx, "inspect", "--format",
+		`{{index .Config.Labels "`+runtime.ConfigHashLabel+`"}} {{index .Config.Labels "`+runtime.SecretsHashLabel+`"}} {{.Image}}`, container)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(out)
+}
+
+// approveAgentChanges shows the developer what starting the project would
+// apply beyond what was applied before (changes an agent may have written to
+// .zdev/ in an earlier session) and asks before `zdev claude` applies them.
+func approveAgentChanges(proj *project.Project, domain string) error {
+	if !proj.HasAgentBaseline() {
+		return nil
+	}
+	v := proj.CheckAgentPolicy(domain)
+	if len(v) == 0 {
+		return nil
+	}
+	fmt.Println("The project's config reaches further than what it applied so far:")
+	for _, x := range v {
+		fmt.Println("  - " + x.String())
+	}
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return errors.New("review the config, then apply it with `zdev update` before starting a session")
+	}
+	fmt.Print("Apply it? [y/N] ")
+	var answer string
+	_, _ = fmt.Scanln(&answer)
+	if a := strings.ToLower(strings.TrimSpace(answer)); a != "y" && a != "yes" {
+		return errors.New("not applied; review .zdev/ (an agent may have changed it), then run `zdev update`")
+	}
+	return nil
 }
 
 // bootstrapSession is `zdev claude` in a repository without .zdev/: the
@@ -390,7 +467,7 @@ func bootstrapSession(ctx context.Context, args []string) (int, error) {
 	if err := agent.EnsureBootstrapImage(ctx, d); err != nil {
 		return 0, err
 	}
-	gitMounts, err := gitReadOnlyMounts(dir, dir, "")
+	gitMounts, err := gitReadOnlyMounts(dir, dir)
 	if err != nil {
 		return 0, err
 	}
@@ -411,9 +488,11 @@ func bootstrapSession(ctx context.Context, args []string) (int, error) {
 		Workdir: dir, HostDir: dir, Owner: fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()), GitMounts: gitMounts,
 		Env:   map[string]string{"ZDEV_RELAY": agent.RelaySocket, "ZDEV_DOMAIN": gcfg.Domain},
 		Fence: agent.Fence{HostPorts: acfg.HostAccess},
-		Handler: func(_ context.Context, _ agent.Request, _ io.Reader, _, stderr io.Writer, _ <-chan string) int {
-			fmt.Fprintln(stderr, refusal.Error())
-			return 126
+		Handler: func(string) agent.Handler {
+			return func(_ context.Context, _ agent.Request, _ io.Reader, _, stderr io.Writer, _ <-chan string) int {
+				fmt.Fprintln(stderr, refusal.Error())
+				return 126
+			}
 		},
 		Prompt:     func(info *agent.ImageInfo) string { return agent.BootstrapPrompt(dir, info) },
 		Connectors: acfg.ConnectorsEnabled(), Limits: acfg.Limits, Rest: rest,
@@ -605,7 +684,7 @@ func runSandbox(ctx context.Context, gcfg *config.GlobalConfig, s sandboxSpec) (
 	// The relay: SSH over the stdio of a docker exec; this process is the server.
 	relayCtx, stopRelay := context.WithCancel(ctx)
 	defer stopRelay()
-	if err := startRelay(relayCtx, container, s.Handler); err != nil {
+	if err := startRelay(relayCtx, container, s.Handler(container)); err != nil {
 		return 0, err
 	}
 
@@ -682,26 +761,46 @@ func startRelay(ctx context.Context, container string, handler agent.Handler) er
 	return errors.New("the relay in the sandbox didn't come up")
 }
 
+// lifecycleCommands change what runs; after them the relay refreshes the
+// fence and checks whether the agent's own service changed.
+var lifecycleCommands = map[string]bool{"start": true, "stop": true, "restart": true, "update": true}
+
 // relayHandler checks and runs the sandbox's requests on the host. Every
-// check is here: the container side is untrusted.
-func relayHandler(proj *project.Project, offLimits []string) agent.Handler {
+// check is here: the container side is untrusted. after runs once a
+// lifecycle command finished (nil: nothing to do).
+func relayHandler(proj *project.Project, offLimits []string, after func(ctx context.Context, stderr io.Writer)) agent.Handler {
 	self, _ := os.Executable()
-	projectContainer := func(name string) (string, bool) {
-		for svc := range proj.Config.Services {
-			if proj.ContainerName(svc) == name {
-				return svc, true
+	// live is the project as its config reads now (the agent may have added
+	// a service), under the session's name: a renamed config never names
+	// another project's containers here. Services holding the Docker socket
+	// stay off limits whichever config they come from.
+	live := func() (*project.Project, []string) {
+		p, err := project.LoadFromDir(proj.Dir)
+		if err != nil || p.Config.Name != proj.Config.Name {
+			return proj, offLimits
+		}
+		off := append([]string(nil), offLimits...)
+		for _, s := range p.DockerSocketServices() {
+			if !slices.Contains(off, s) {
+				off = append(off, s)
 			}
 		}
-		return "", false
+		return p, off
 	}
 	refuse := func(stderr io.Writer, r *agent.Refusal) int {
 		fmt.Fprintln(stderr, r.Error())
 		return 126
 	}
 	return func(ctx context.Context, req agent.Request, stdin io.Reader, stdout, stderr io.Writer, sigs <-chan string) int {
+		cur, offLimits := live()
 		switch req.Op {
 		case agent.OpRunning, agent.OpExecStream:
-			svc, ok := projectContainer(req.Container)
+			svc, ok := "", false
+			for name := range cur.Config.Services {
+				if cur.ContainerName(name) == req.Container {
+					svc, ok = name, true
+				}
+			}
 			if !ok {
 				return refuse(stderr, &agent.Refusal{Code: "other-project", Message: req.Container + " is not a container of this project"})
 			}
@@ -754,11 +853,23 @@ func relayHandler(proj *project.Project, offLimits []string) agent.Handler {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
+		// These read .zdev/ on the host: let what the agent just wrote there
+		// arrive first. (exec doesn't need it: the app container mounts the
+		// same sync volume.)
+		if lifecycleCommands[req.Args[0]] || req.Args[0] == "status" || req.Args[0] == "info" {
+			if err := cur.FlushAgentSync(ctx); err != nil && lifecycleCommands[req.Args[0]] && req.Args[0] != "stop" {
+				if strings.Contains(err.Error(), "paused") {
+					fmt.Fprintln(stderr, "zdev: the file sync is paused while the project is stopped, so the host applies .zdev/ as it was at the stop; after the start, run `zdev update` for changes made since")
+				} else {
+					fmt.Fprintf(stderr, "zdev: waiting for the file sync failed (%v); the host may not see your latest .zdev/ changes yet\n", err)
+				}
+			}
+		}
 		mark := agent.NewExecMark()
 		c := exec.Command(self, req.Args...)
 		c.Dir = proj.Dir
 		c.Stdin, c.Stdout, c.Stderr = stdin, stdout, stderr
-		c.Env = append(os.Environ(), agent.ExecMarkEnv+"="+mark)
+		c.Env = append(os.Environ(), agent.ExecMarkEnv+"="+mark, project.AgentRequestEnv+"="+proj.Config.Name)
 		c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		c.WaitDelay = 2 * time.Second
 		if err := c.Start(); err != nil {
@@ -785,10 +896,15 @@ func relayHandler(proj *project.Project, offLimits []string) agent.Handler {
 			case err := <-done:
 				code := exitCodeOf(err)
 				if interrupted {
-					killMarked(proj, runningServices(proj, offLimits), mark)
+					killMarked(cur, runningServices(cur, offLimits), mark)
 					if code == 0 {
 						code = 130 // the docker CLI exits 0 on SIGINT
 					}
+				}
+				if after != nil && lifecycleCommands[req.Args[0]] && code != 126 {
+					actx, cancel := context.WithTimeout(context.Background(), time.Minute)
+					after(actx, stderr)
+					cancel()
 				}
 				return code
 			}

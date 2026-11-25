@@ -35,7 +35,11 @@ func runStop(cmd *cobra.Command, args []string) error {
 
 		fmt.Printf("Stopping project %s...\n", proj.Config.Name)
 
-		removeSandboxes(ctx, proj)
+		// A sandbox stopping its own project keeps running (and its
+		// session with it); the developer's stop ends the sessions.
+		if _, ok := project.AgentRequest(); !ok {
+			removeSandboxes(ctx, proj)
+		}
 		if err := proj.Stop(ctx); err != nil {
 			return err
 		}

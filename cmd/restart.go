@@ -34,11 +34,13 @@ func runRestart(cmd *cobra.Command, args []string) error {
 			return proj.RestartService(ctx, service)
 		}
 
+		agentGate(proj)
 		fmt.Printf("Restarting project %s...\n", proj.Config.Name)
 
 		if err := proj.Restart(ctx); err != nil {
 			return err
 		}
+		recordAgentBaseline(ctx, proj)
 
 		updateDocsWithProjects(ctx)
 

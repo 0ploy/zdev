@@ -115,9 +115,12 @@ func SystemPrompt(d PromptData) string {
 	w("`strace` and `gdb` are not available in either container.\n\n")
 
 	w("# zdev\n\n")
-	w("`zdev` commands you run here are forwarded to the host and checked there: `exec`, `logs`, `status`, `info`, `restart <service>` and `run` are allowed for this project. ")
-	w("A refusal says why and what to do: relay it to the developer instead of retrying variations. `zdev run` jobs without a service run here, in this container. ")
-	w("Changes that reach outside the project (host mounts, new secret references, links) need the developer: ask them to run `zdev update` on their machine.\n")
+	w("`zdev` commands you run here are forwarded to the host and checked there: `exec`, `logs`, `status`, `info`, `start`, `stop`, `restart`, `update` and `run` are allowed for this project. ")
+	w("A refusal says why and what to do: relay it to the developer instead of retrying variations. `zdev run` jobs without a service run here, in this container.\n\n")
+	w("You may edit `.zdev/` and apply it with `zdev update` (`zdev restart` keeps the old containers). ")
+	w("Applying is refused when the config reaches outside the project beyond what the developer applied before: bind mounts outside the project or of `.git`, other 1Password Environments, router labels, host ports, hostnames of other projects or outside the zdev domain. ")
+	w("Then the developer reviews `.zdev/` and runs `zdev update` on their machine. ")
+	w("When `zdev update` changes `%s`, this container keeps running the previous version of it (zdev says so): use `zdev exec %s` for anything that needs the new one.\n", d.Service, d.Service)
 	if len(d.Refused) > 0 {
 		w("- These services hold the Docker socket and are off limits (no `zdev exec`, no network access): %s.\n", strings.Join(d.Refused, ", "))
 	}

@@ -97,6 +97,8 @@ func runRenameImpl(ctx context.Context, proj *project.Project, newName string) e
 	if err := proj.Rename(ctx, newName); err != nil {
 		return err
 	}
+	// Agent sandboxes start over under the new name (approvals included).
+	_ = project.ForgetAgentState(oldName)
 
 	// Update docs page
 	updateDocsWithProjects(ctx)

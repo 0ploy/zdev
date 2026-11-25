@@ -63,12 +63,14 @@ func runStartImpl(ctx context.Context, proj *project.Project, args []string) err
 		return fmt.Errorf("DNS verification failed: %w", err)
 	}
 
+	agentGate(proj)
 	if len(args) == 1 {
 		service := args[0]
 		ui.StatusStep(fmt.Sprintf("Starting service %s", service), plainMode)
 		if err := proj.StartService(ctx, service); err != nil {
 			return err
 		}
+		recordAgentBaseline(ctx, proj)
 		return nil
 	}
 
@@ -77,6 +79,7 @@ func runStartImpl(ctx context.Context, proj *project.Project, args []string) err
 	if err := proj.Start(ctx); err != nil {
 		return err
 	}
+	recordAgentBaseline(ctx, proj)
 
 	updateDocsWithProjects(ctx)
 
@@ -91,7 +94,7 @@ func runStartImpl(ctx context.Context, proj *project.Project, args []string) err
 		return err
 	}
 
-	if proj.Config.AutoOpenAtStart {
+	if _, agentRequest := project.AgentRequest(); proj.Config.AutoOpenAtStart && !agentRequest {
 		if globalCfg, err := config.LoadGlobalConfig(); err == nil {
 			url := fmt.Sprintf("%s://%s", schemeFor(globalCfg), proj.Config.Domain)
 			fmt.Printf("\nOpening %s\n", url)

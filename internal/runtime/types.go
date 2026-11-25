@@ -102,6 +102,13 @@ type RunConfig struct {
 	Interactive bool
 }
 
+// Bind is a bind mount of an existing container.
+type Bind struct {
+	Source   string
+	Target   string
+	ReadOnly bool
+}
+
 // Container represents a running or stopped container
 type Container struct {
 	ID      string

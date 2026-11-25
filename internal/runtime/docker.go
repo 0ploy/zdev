@@ -566,6 +566,43 @@ func (d *DockerCLI) GetContainerLabels(ctx context.Context, name string) (map[st
 	return labels, nil
 }
 
+// ContainerBinds returns the container's bind mounts.
+func (d *DockerCLI) ContainerBinds(ctx context.Context, name string) ([]Bind, error) {
+	out, err := d.run(ctx, "inspect", "--type=container", "--format={{json .Mounts}}", name)
+	if err != nil {
+		return nil, err
+	}
+	var mounts []struct {
+		Type        string
+		Source      string
+		Destination string
+		RW          bool
+	}
+	if err := json.Unmarshal([]byte(out), &mounts); err != nil {
+		return nil, fmt.Errorf("failed to parse container mounts: %w", err)
+	}
+	var binds []Bind
+	for _, m := range mounts {
+		if m.Type == "bind" {
+			binds = append(binds, Bind{Source: hostBindSource(m.Source), Target: m.Destination, ReadOnly: !m.RW})
+		}
+	}
+	return binds, nil
+}
+
+// hostBindSource maps a bind source as the engine reports it back to the
+// host path. Docker Desktop reports some binds under its VM's view of the
+// host's file sharing (/host_mnt/Users/...), others as given (seen on the
+// same daemon for two containers of one project).
+func hostBindSource(src string) string {
+	if rest, ok := strings.CutPrefix(src, "/host_mnt/"); ok {
+		if _, err := os.Stat("/" + rest); err == nil {
+			return "/" + rest
+		}
+	}
+	return src
+}
+
 // GetContainerNetworks returns the networks a container is attached to,
 // mapped to the user-defined aliases on each endpoint.
 //

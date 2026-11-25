@@ -221,6 +221,8 @@ agent:
       docker_socket: accept    # a service mounts the Docker socket: run anyway, the sandbox is no boundary
 ```
 
+What your own `zdev start`, `update` and `restart` applied is recorded in `~/.zdev/agent/approved/<project>.json`; config changes from a sandbox that reach beyond it are refused ([Agents](agents.md)). `zdev down` and `zdev rename` remove the file.
+
 Claude Code releases are downloaded into Docker volumes (`zdev-claude-<version>-<libc>-<arch>`), checked against Anthropic's release manifest; a superseded version is removed a day after a newer one is first used. Each project keeps the agent's home in a volume (`zdev-agent-home-<project>`, removed by `zdev down -v`).
 
 Environment variables zdev itself honors: `ZDEV_HOME` relocates the zdev home directory (config, state, certs, downloaded tools; default `~/.zdev`), `ZDEV_PLAIN=1` forces plain output (no colors, hyperlinks, or step markers - overrides the `terminal.plain` config setting), `ZDEV_NO_UPDATE_CHECK=1` disables the background self-update check, `OP_SERVICE_ACCOUNT_TOKEN` authenticates 1Password secret resolution in CI, and `ZDEV_AGENT_LINUX_BINARY` points `zdev claude` at a Linux build of zdev for the sandbox (development builds; releases download their own).

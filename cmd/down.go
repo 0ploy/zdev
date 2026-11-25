@@ -46,6 +46,9 @@ func runDown(cmd *cobra.Command, args []string) error {
 		if downRemoveVolumes {
 			_, _ = agent.NewDocker().Output(ctx, "volume", "rm", agent.HomeVolumeName(proj.Config.Name))
 		}
+		// What the developer applied ends with the project: a project created
+		// again under this name starts without approvals for its sandboxes.
+		_ = project.ForgetAgentState(proj.Config.Name)
 
 		updateDocsWithProjects(ctx)
 

@@ -250,16 +250,66 @@ func SetAgentSyncService(projectName, service string) (bool, error) {
 // .git and a project's own .zdev entry (spikes 7 and 8).
 var agentSyncNegations = []string{"!.zdev", "!.git"}
 
+// agentGitGuards come last in every sync session of a project in agent mode:
+// the Mac runs hooks and what .git/config names (core.fsmonitor, hooksPath)
+// without anyone deciding to, and every container that mounts the sync
+// volume can write them (the app container through `zdev exec`). Ignored,
+// nothing written there in a container reaches the Mac; the agent sees the
+// Mac's own copies through read-only binds. Last, so no negation in the
+// project's mutagen.ignore can lift them.
+var agentGitGuards = []string{".git/hooks", ".git/config"}
+
+// AgentGitGuards are the .git paths the sync never carries in agent mode.
+func AgentGitGuards() []string { return append([]string(nil), agentGitGuards...) }
+
 // sessionIgnores is the ignore list of one sync session.
 func (p *Project) sessionIgnores(mount MutagenSyncMount, base []string) []string {
-	if mount.ServiceName != AgentSyncService(p.Config.Name) {
+	agentService := AgentSyncService(p.Config.Name)
+	if agentService == "" {
 		return base
 	}
-	src, err := p.AgentSource(mount.ServiceName)
-	if err != nil || src.ContainerPath != mount.ContainerPath {
-		return base
+	out := append([]string(nil), base...)
+	if mount.ServiceName == agentService {
+		if src, err := p.AgentSource(mount.ServiceName); err == nil && src.ContainerPath == mount.ContainerPath {
+			out = append(out, agentSyncNegations...)
+		}
 	}
-	return append(append([]string(nil), base...), agentSyncNegations...)
+	return append(out, agentGitGuards...)
+}
+
+// agentSyncMount is the sync session of the agent's mount of the project
+// directory, nil without Mutagen or agent mode.
+func (p *Project) agentSyncMount() *MutagenSyncMount {
+	service := AgentSyncService(p.Config.Name)
+	if service == "" || !p.IsMutagenEnabled() {
+		return nil
+	}
+	src, err := p.AgentSource(service)
+	if err != nil {
+		return nil
+	}
+	for _, m := range p.serviceSyncMounts(service, p.Config.Services[service]) {
+		if m.ContainerPath == src.ContainerPath {
+			m := m
+			return &m
+		}
+	}
+	return nil
+}
+
+// FlushAgentSync waits until what the agent wrote reached this machine: a
+// command the relay runs on the host reads .zdev/ here, right after the agent
+// edited it in its container. A no-op without Mutagen.
+func (p *Project) FlushAgentSync(ctx context.Context) error {
+	mount := p.agentSyncMount()
+	if mount == nil {
+		return nil
+	}
+	m, err := p.EnsureMutagen(ctx)
+	if err != nil {
+		return err
+	}
+	return m.FlushSession(ctx, mount.SessionName)
 }
 
 // AgentGitConflicts lists the agent mount's sync conflicts below .git: both
@@ -267,21 +317,7 @@ func (p *Project) sessionIgnores(mount MutagenSyncMount, base []string) []string
 // developer's machine writes it while the agent commits), and Mutagen's
 // two-way-safe mode stops syncing it without an error (spike 7).
 func (p *Project) AgentGitConflicts(ctx context.Context) (session string, paths []string, err error) {
-	service := AgentSyncService(p.Config.Name)
-	if service == "" || !p.IsMutagenEnabled() {
-		return "", nil, nil
-	}
-	src, err := p.AgentSource(service)
-	if err != nil {
-		return "", nil, nil
-	}
-	var mount *MutagenSyncMount
-	for _, m := range p.serviceSyncMounts(service, p.Config.Services[service]) {
-		if m.ContainerPath == src.ContainerPath {
-			m := m
-			mount = &m
-		}
-	}
+	mount := p.agentSyncMount()
 	if mount == nil {
 		return "", nil, nil
 	}

@@ -177,7 +177,9 @@ Docker bind mounts on macOS are slow - `pnpm install` takes 5x longer than nativ
 
 ### Why does `zdev claude` run the agent in its own container?
 
-The agent needs the project's toolchain, so the container is built from a service's image (through `buildContainerConfig`, so it never drifts from the service), but it is not the service's container: `zdev update` or `restart` would kill Claude mid-turn, and hardening (no capabilities, the host fence) would hit the app. The host side is the `zdev claude` process itself, no daemon: it serves the relay (the SSH protocol over a `docker exec` pipe) and checks every request. `PLAN_2_AGENT_SANDBOX.md` has the design and the alternatives that were rejected. The pure parts (request policy, fence rules, system prompt, volume cleanup) have unit tests; the Docker parts are tested by hand against a project.
+The agent needs the project's toolchain, so the container is built from a service's image (through `buildContainerConfig`, so it never drifts from the service), but it is not the service's container: `zdev update` or `restart` would kill Claude mid-turn, and hardening (no capabilities, the host fence) would hit the app. The host side is the `zdev claude` process itself, no daemon: it serves the relay (the SSH protocol over a `docker exec` pipe) and checks every request. `PLAN_2_AGENT_SANDBOX.md` has the design and the alternatives that were rejected. The pure parts (request policy, fence rules, system prompt, volume cleanup, the config policy) have unit tests; the Docker parts are tested by hand against a project.
+
+The agent may change `.zdev/` and apply it, so applying is checked (`internal/project/agentpolicy.go`): what stays inside containers is free, what reaches outside them must already be in effect, as recorded after the developer's own start or update. When you add a project config field, `TestAgentPolicyClassifiesFields` fails until you classify it in `agentFieldClass`; a field that gives a container access to the host (a mount, a port, a capability, a route) needs a rule in `CheckAgentPolicy` first.
 
 ### Why the Runtime interface uses a mock for tests?
 

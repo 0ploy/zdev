@@ -54,12 +54,14 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	return withProject(5*time.Minute, func(ctx context.Context, proj *project.Project) error {
 		proj.BuildMode = project.BuildModeFromFlags(updateBuild, updateNoBuild)
 		proj.RefreshSecrets = updateRefreshSecrets
+		agentGate(proj)
 		fmt.Printf("Updating project %s...\n", proj.Config.Name)
 
 		updated, err := proj.Update(ctx)
 		if err != nil {
 			return err
 		}
+		recordAgentBaseline(ctx, proj)
 
 		if updated {
 			fmt.Printf("Project %s updated\n", proj.Config.Name)

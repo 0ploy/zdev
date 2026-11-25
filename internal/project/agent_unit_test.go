@@ -39,8 +39,9 @@ func TestDockerSocketServices(t *testing.T) {
 }
 
 // The agent's mount of the project directory syncs .zdev and .git: the
-// negations come LAST, after the built-in .git and the project's own .zdev
-// ignore, and only for the agent's service and only for that mount.
+// negations come after the built-in .git and the project's own .zdev ignore,
+// and only for the agent's service and only for that mount. The .git guards
+// come last in every session of the project, so no negation lifts them.
 func TestSessionIgnoresAgentNegations(t *testing.T) {
 	t.Setenv("ZDEV_HOME", t.TempDir())
 	p := newSyncTestProject(t, runtime.NewMockRuntime(), []string{"logs"}, []string{".:/app", "./logs:/var/log/app"})
@@ -54,13 +55,13 @@ func TestSessionIgnoresAgentNegations(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, m := range mounts {
-		got := p.sessionIgnores(m, base)
+		got := strings.Join(p.sessionIgnores(m, base), ",")
+		want := strings.Join(base, ",") + ",.git/hooks,.git/config"
 		if m.ContainerPath == "/app" {
-			if strings.Join(got[len(got)-2:], ",") != "!.zdev,!.git" {
-				t.Errorf("agent mount ignores = %v", got)
-			}
-		} else if len(got) != len(base) {
-			t.Errorf("other mount %s got negations: %v", m.ContainerPath, got)
+			want = strings.Join(base, ",") + ",!.zdev,!.git,.git/hooks,.git/config"
+		}
+		if got != want {
+			t.Errorf("%s: ignores = %s, want %s", m.ContainerPath, got, want)
 		}
 	}
 	if b, _ := os.ReadFile(filepath.Join(os.Getenv("ZDEV_HOME"), "agent", "sync", "shop")); strings.TrimSpace(string(b)) != "app" {
