@@ -45,7 +45,7 @@ type ContainerConfig struct {
 	Memory    string
 	CPUs      string
 	// Mounts are raw --mount specs, for what -v can't express
-	// (volume-subpath, tmpfs options). Applied after Volumes.
+	// (type=bind with options, tmpfs). Applied after Volumes.
 	Mounts []string
 }
 

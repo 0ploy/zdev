@@ -32,7 +32,7 @@ zdev checks every request from the sandbox on your machine, where the container 
 
 **Config changes from the sandbox.** Everything that stays inside containers applies directly: images, Dockerfiles, environment, commands, new services, routes under your zdev domain. What reaches outside a container needs you, unless you applied it before:
 
-- bind mounts outside the project, of `.git`, or a native (unsynced) writable bind of the project root
+- bind mounts outside the project, or writable ones of `.git/hooks` or `.git/config`
 - 1Password Environments (`op-env`, `op-env://`) the service doesn't use yet
 - router labels (`traefik.*`), host ports (`routing.host_port`, published on every interface), hostnames outside the zdev domain or of another project
 - a Dockerfile outside the project, and the project's `name:` (never from the sandbox)
@@ -43,9 +43,11 @@ When an update changes the agent's own service, the sandbox keeps running the pr
 
 **Your Claude setup comes along:** skills, agents, commands, plugins, `CLAUDE.md`, settings and status line from `~/.claude` (read-only, so a session can't change them for every project), plus this project's memory and conversations (read-write, in `~/.claude/projects/`). Plugins that only work on the host can be switched off for sandboxes with `agent.disable_plugins` ([Configuration](configuration.md#agent-sandboxes-agent)).
 
-**Git sync (macOS):** zdev syncs `.git` and `.zdev/` into the agent's service for the sandbox, except `.git/hooks` and `.git/config`: no container can change those on your machine (the sandbox sees your copies, read-only). When git writes the same file on your machine and in the sandbox at the same moment (your editor's background `git status` while Claude commits), Mutagen stops syncing it; `zdev status` says so, and `zdev mutagen repair-git` fixes it.
+**Git hooks and config stay yours:** your machine runs `.git/hooks` and what `.git/config` names without asking, so in a project you use `zdev claude` with, no container can change them: the sync leaves them out (macOS), and services that mount the project directly (Linux, `mutagen.no_sync`) get them read-only. The first `zdev claude` recreates those services once for that.
 
-**Requirements:** Docker Engine 26 or newer (`zdev systemcheck` shows "Agent mode"), and `bash` and `git` in the service's image (`zdev claude` names what is missing). Run as the owner of the synced files: set `services.<name>.mutagen.user` to the app's user; without it the agent runs as root with no capabilities. A project where a service mounts the Docker socket is refused, since whoever reaches that service is root on your machine; you can accept that per project in host config.
+**Git sync (macOS):** zdev syncs `.git` and `.zdev/` into the agent's service for the sandbox. When git writes the same file on your machine and in the sandbox at the same moment (your editor's background `git status` while Claude commits), Mutagen stops syncing it; `zdev status` says so, and `zdev mutagen repair-git` fixes it.
+
+**Requirements:** `bash` and `git` in the service's image (`zdev claude` names what is missing). Run as the owner of the synced files: set `services.<name>.mutagen.user` to the app's user; without it the agent runs as root with no capabilities. A project where a service mounts the Docker socket is refused, since whoever reaches that service is root on your machine; you can accept that per project in host config.
 
 **A repository without `.zdev/`:** `zdev claude` starts a bootstrap session in a small image of zdev's own (bash, git, GNU tools) to set the project up. Afterwards run `zdev start` and continue with `zdev claude --continue` in the project's own image.
 

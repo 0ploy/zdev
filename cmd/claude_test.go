@@ -37,15 +37,3 @@ func TestClaudeSessionArgs(t *testing.T) {
 		}
 	}
 }
-
-func TestAPIAtLeast(t *testing.T) {
-	cases := map[[2]string]bool{
-		{"1.45", "1.45"}: true, {"1.56", "1.45"}: true, {"1.44", "1.45"}: false,
-		{"1.9", "1.45"}: false, {"2.0", "1.45"}: true, {"1.45.1", "1.45"}: true,
-	}
-	for in, want := range cases {
-		if got := apiAtLeast(in[0], in[1]); got != want {
-			t.Errorf("apiAtLeast(%s, %s) = %v, want %v", in[0], in[1], got, want)
-		}
-	}
-}

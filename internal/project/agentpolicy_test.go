@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -52,9 +53,8 @@ func setApp(p *Project, f func(*config.ServiceConfig)) {
 	p.Config.Services["app"] = svc
 }
 
-// Inside the project anything goes, except what exposes .git to a
-// container: a bind of .git itself, or a native (unsynced) writable bind of
-// the project root. The Dockerfile stays inside the project.
+// Inside the project anything goes, except a writable bind rooted at the
+// host's git hooks or config. The Dockerfile stays inside the project.
 func TestAgentPolicyStaticRules(t *testing.T) {
 	p, mock := policyTestProject(t)
 	runCurrent(p, mock, "app")
@@ -68,7 +68,9 @@ func TestAgentPolicyStaticRules(t *testing.T) {
 	allowed := [][]string{
 		{".:/app", "./src:/src"},
 		{".:/app", "./src:/srv:ro"},
-		{".:/app", ".:/ro:ro"}, // read-only native bind of the root: .git readable, not writable
+		{".:/app", ".:/ro:ro"},         // read-only native bind of the root
+		{".:/app", "./.git:/repo.git"}, // contains the hooks: guard mounts go over them
+		{".:/app", "./.git/hooks:/hooks:ro"},
 	}
 	for _, vols := range allowed {
 		setApp(p, func(s *config.ServiceConfig) { s.Volumes = vols })
@@ -79,12 +81,9 @@ func TestAgentPolicyStaticRules(t *testing.T) {
 
 	refused := map[string]func(*config.ServiceConfig){
 		"outside the project": func(s *config.ServiceConfig) { s.Volumes = []string{".:/app", "/etc:/host-etc:ro"} },
-		"repository's .git":   func(s *config.ServiceConfig) { s.Volumes = []string{".:/app", "./.git/hooks:/hooks"} },
-		"exposes .git": func(s *config.ServiceConfig) {
-			s.Volumes = []string{".:/app"}
-			s.Mutagen.NoSync = []string{"/app"}
-		},
-		"dockerfile": func(s *config.ServiceConfig) { s.Volumes = []string{".:/app"}; s.Dockerfile = "../evil/Dockerfile" },
+		"git hooks or config": func(s *config.ServiceConfig) { s.Volumes = []string{".:/app", "./.git/hooks:/hooks"} },
+		"/.git/config":        func(s *config.ServiceConfig) { s.Volumes = []string{".:/app", "./.git/config:/gitconfig"} },
+		"dockerfile":          func(s *config.ServiceConfig) { s.Volumes = []string{".:/app"}; s.Dockerfile = "../evil/Dockerfile" },
 		"1Password Environment": func(s *config.ServiceConfig) {
 			s.Dockerfile = ""
 			s.Environment = map[string]string{"DB": "op-env://prod123/DB_PASSWORD"}
@@ -244,5 +243,97 @@ func TestAgentBaselineNotFromSandbox(t *testing.T) {
 	}
 	if p.HasAgentBaseline() {
 		t.Error("a sandbox request recorded a baseline")
+	}
+}
+
+// guardTestProject is policyTestProject with Mutagen on or off and the
+// project in agent mode, with a .git/config.
+func guardTestProject(t *testing.T, mutagenOn bool) (*Project, *runtime.MockRuntime) {
+	t.Helper()
+	p, mock := policyTestProject(t)
+	enabled := "false"
+	if mutagenOn {
+		enabled = "true"
+	}
+	if err := os.WriteFile(filepath.Join(os.Getenv("ZDEV_HOME"), "global-config.yaml"), []byte("version: 1\ndomain: test.dev\nmutagen:\n  enabled: \""+enabled+"\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(p.Dir, ".git", "config"), []byte("[core]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SetAgentSyncService("shop", "app"); err != nil {
+		t.Fatal(err)
+	}
+	return p, mock
+}
+
+func guardTargets(cfg runtime.ContainerConfig) []string {
+	var out []string
+	for _, v := range cfg.Volumes {
+		if strings.HasSuffix(v.Target, "/hooks") || strings.HasSuffix(v.Target, "/config") {
+			out = append(out, v.Target+map[bool]string{true: ":ro", false: ":rw"}[v.ReadOnly])
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Without Mutagen a writable bind containing the hooks is the host directory
+// itself: every such bind gets read-only guards over the hooks and config.
+func TestGitGuardMountsNativeBinds(t *testing.T) {
+	p, _ := guardTestProject(t, false)
+	setApp(p, func(s *config.ServiceConfig) {
+		s.Volumes = []string{".:/app", "./.git:/repo.git", "./src:/src", ".:/ro:ro"}
+	})
+	cfg := p.buildContainerConfig("app", p.Config.Services["app"], false, nil)
+	got := strings.Join(guardTargets(cfg), " ")
+	want := "/app/.git/config:ro /app/.git/hooks:ro /repo.git/config:ro /repo.git/hooks:ro"
+	if got != want {
+		t.Errorf("guards = %q, want %q", got, want)
+	}
+
+	if err := ForgetAgentState("shop"); err != nil {
+		t.Fatal(err)
+	}
+	if got := guardTargets(p.buildContainerConfig("app", p.Config.Services["app"], false, nil)); len(got) != 0 {
+		t.Errorf("without agent mode: %v", got)
+	}
+}
+
+// A synced mount needs no guard mounts: the sync ignores the paths.
+func TestGitGuardMountsSkipSynced(t *testing.T) {
+	p, _ := guardTestProject(t, true)
+	cfg := p.buildContainerConfig("app", p.Config.Services["app"], true, NewMutagenMounts(p.GetMutagenSyncMounts()))
+	if got := guardTargets(cfg); len(got) != 0 {
+		t.Errorf("synced mount got guards: %v", got)
+	}
+}
+
+// Entering agent mode recreates a container that lacks only the guards,
+// and leaves one with other drift for the developer's update.
+func TestApplyAgentGitGuards(t *testing.T) {
+	p, mock := guardTestProject(t, false)
+	p.Config.Services["worker"] = config.ServiceConfig{Image: "alpine", Command: "sleep 1", Volumes: []string{".:/w"}}
+	for _, name := range []string{"app", "worker"} {
+		p.skipGitGuards = true
+		cfg := p.buildContainerConfig(name, p.Config.Services[name], false, nil)
+		p.skipGitGuards = false
+		mock.Containers[p.ContainerName(name)] = cfg
+		mock.ContainersExist[p.ContainerName(name)] = true
+		mock.ContainersRunning[p.ContainerName(name)] = true
+	}
+	// worker drifted otherwise too: not this function's business.
+	w := p.Config.Services["worker"]
+	w.Environment = map[string]string{"NEW": "1"}
+	p.Config.Services["worker"] = w
+
+	if err := p.ApplyAgentGitGuards(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(guardTargets(mock.Containers[p.ContainerName("app")]), " "); got != "/app/.git/config:ro /app/.git/hooks:ro" {
+		t.Errorf("app not recreated with guards: %q", got)
+	}
+	if got := guardTargets(mock.Containers[p.ContainerName("worker")]); len(got) != 0 {
+		t.Errorf("worker with other drift was recreated: %v", got)
 	}
 }

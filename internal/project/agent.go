@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -261,6 +262,102 @@ var agentGitGuards = []string{".git/hooks", ".git/config"}
 
 // AgentGitGuards are the .git paths the sync never carries in agent mode.
 func AgentGitGuards() []string { return append([]string(nil), agentGitGuards...) }
+
+// gitGuardMounts are read-only binds of the host's .git/hooks and .git/config
+// over every writable host bind of a service that contains them, in a project
+// in agent mode. Without Mutagen (Linux, or mutagen.no_sync) such a bind is
+// the host directory itself, so any container could write a hook the host
+// runs; the sync guards (agentGitGuards) only cover synced mounts. Part of
+// buildContainerConfig, so the config hash sees them.
+func (p *Project) gitGuardMounts(vols []runtime.VolumeMount) []runtime.VolumeMount {
+	if p.skipGitGuards || AgentSyncService(p.Config.Name) == "" {
+		return nil
+	}
+	gitDir := filepath.Join(p.Dir, ".git")
+	if fi, err := os.Stat(gitDir); err != nil || !fi.IsDir() {
+		return nil
+	}
+	_ = os.MkdirAll(filepath.Join(gitDir, "hooks"), 0o755)
+	root := resolveHostPath(p.Dir, ".")
+	have := map[string]bool{}
+	for _, v := range vols {
+		have[v.Target] = true
+	}
+	var out []runtime.VolumeMount
+	for _, v := range vols {
+		if v.ReadOnly || !(filepath.IsAbs(v.Source) || strings.HasPrefix(v.Source, ".")) {
+			continue // read-only, or a named (sync) volume
+		}
+		src := resolveHostPath(p.Dir, v.Source)
+		for _, g := range agentGitGuards {
+			guard := filepath.Join(root, g)
+			if _, err := os.Stat(guard); err != nil || !within(guard, src) || guard == src {
+				continue
+			}
+			rel, err := filepath.Rel(src, guard)
+			if err != nil {
+				continue
+			}
+			dst := path.Join(v.Target, filepath.ToSlash(rel))
+			if have[dst] {
+				continue
+			}
+			have[dst] = true
+			out = append(out, runtime.VolumeMount{Source: guard, Target: dst, ReadOnly: true})
+		}
+	}
+	return out
+}
+
+// ApplyAgentGitGuards recreates the running services whose container lacks
+// only the git guard mounts (a project entering agent mode), and nothing
+// else: other drift stays for the developer's `zdev update`.
+func (p *Project) ApplyAgentGitGuards(ctx context.Context) error {
+	var names []string
+	for name, svc := range p.Config.Services {
+		labels, err := p.Runtime.GetContainerLabels(ctx, p.ContainerName(name))
+		if err != nil {
+			continue
+		}
+		enabled := p.IsMutagenEnabled()
+		var mm MutagenMounts
+		if enabled {
+			mm = NewMutagenMounts(p.GetMutagenSyncMounts())
+		}
+		with := p.buildContainerConfig(name, svc, enabled, mm).Labels[runtime.ConfigHashLabel]
+		p.skipGitGuards = true
+		without := p.buildContainerConfig(name, svc, enabled, mm).Labels[runtime.ConfigHashLabel]
+		p.skipGitGuards = false
+		if with != without && labels[runtime.ConfigHashLabel] == without {
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	sort.Strings(names)
+	daemon, mounts, mountMap, err := p.prepareMutagen(ctx)
+	if err != nil {
+		return err
+	}
+	for _, name := range names {
+		fmt.Printf("Recreating service %s (read-only .git/hooks and .git/config for agent mode)...\n", name)
+		svc := p.Config.Services[name]
+		if err := p.prefetchSecrets(ctx, name, svc); err != nil {
+			return err
+		}
+		if err := p.removeServiceContainer(ctx, name); err != nil {
+			return err
+		}
+		if err := p.startServiceWithMutagen(ctx, name, svc, daemon != nil, mountMap); err != nil {
+			return fmt.Errorf("failed to start service %s: %w", name, err)
+		}
+	}
+	if daemon != nil {
+		return p.finalizeMutagen(ctx, daemon, mounts)
+	}
+	return nil
+}
 
 // sessionIgnores is the ignore list of one sync session.
 func (p *Project) sessionIgnores(mount MutagenSyncMount, base []string) []string {

@@ -137,9 +137,26 @@ func within(path, root string) bool {
 	return path == root || strings.HasPrefix(path, root+string(os.PathSeparator))
 }
 
+// writesGitGuard reports whether a bind makes .git/hooks or .git/config
+// writable from inside: a writable bind at or below .git/hooks, or of
+// .git/config itself. A bind that merely contains them (the project root,
+// .git) gets read-only guard mounts over them (gitGuardMounts), and a synced
+// one has them ignored; neither helps a bind rooted at those paths.
+func writesGitGuard(g BindGrant, root string) bool {
+	if g.ReadOnly {
+		return false
+	}
+	for _, guard := range agentGitGuards {
+		if within(g.Source, filepath.Join(root, guard)) {
+			return true
+		}
+	}
+	return false
+}
+
 // footprint computes what a service's config reaches outside containers.
-// Binds inside the project are left out (always allowed) unless they expose
-// .git: a native bind of the project root or anything at or below .git.
+// Binds inside the project are left out (always allowed) unless they make
+// the host's git hooks or config writable (writesGitGuard).
 func (p *Project) footprint(name string, svc config.ServiceConfig) serviceFootprint {
 	var fp serviceFootprint
 	root := resolveHostPath(p.Dir, ".")
@@ -160,9 +177,7 @@ func (p *Project) footprint(name string, svc config.ServiceConfig) serviceFootpr
 		}
 		readOnly, _ := volumeMountOptions(vol)
 		g := BindGrant{Source: resolveHostPath(p.Dir, source), ReadOnly: readOnly, Raw: !synced[abs+"\x00"+target]}
-		gitDir := filepath.Join(root, ".git")
-		exposesGit := within(g.Source, gitDir) || (g.Raw && !g.ReadOnly && within(gitDir, g.Source))
-		if within(g.Source, root) && !exposesGit {
+		if within(g.Source, root) && !(writesGitGuard(g, root)) {
 			continue
 		}
 		fp.Binds = append(fp.Binds, g)
@@ -319,10 +334,8 @@ func (p *Project) CheckAgentPolicy(domain string) []PolicyViolation {
 			if !ok {
 				what := "bind mount of " + g.Source
 				switch {
-				case within(g.Source, filepath.Join(root, ".git")):
-					what += " (the repository's .git)"
 				case within(g.Source, root):
-					what += " as a native bind (exposes .git)"
+					what += " (the repository's git hooks or config)"
 				default:
 					what += " (outside the project)"
 				}

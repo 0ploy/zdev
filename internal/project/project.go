@@ -40,6 +40,11 @@ type Project struct {
 	// Set from the --refresh-secrets flag.
 	RefreshSecrets bool
 
+	// skipGitGuards leaves the agent-mode git guard mounts out of
+	// buildContainerConfig, to tell a container that lacks only those apart
+	// (ApplyAgentGitGuards).
+	skipGitGuards bool
+
 	// startedContainers records containers this Project started, so the
 	// sync gate only waits for wrappers that can still be on their way to
 	// the gate (see awaitSyncGate). Lazily initialized by startContainer.
@@ -1272,6 +1277,10 @@ func (p *Project) buildContainerConfig(name string, svc config.ServiceConfig, mu
 			cfg.Volumes = append(cfg.Volumes, volumeMount(vol, source, target))
 		}
 	}
+
+	// Agent mode: no container may write the hooks and git config the
+	// host runs (native binds only; synced ones are guarded by the sync).
+	cfg.Volumes = append(cfg.Volumes, p.gitGuardMounts(cfg.Volumes)...)
 
 	// Trust the zdev CA, so HTTPS calls to other projects' URLs verify.
 	// After the config volumes, so a user mount on the same path errors

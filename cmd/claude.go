@@ -124,37 +124,6 @@ func zdevLinuxBinary(arch string) (agent.ZdevBinary, error) {
 	return agent.ZdevBinary{}, fmt.Errorf("this zdev (%s) is not a release, so there is no Linux build to download for the agent container; build one and point to it:\n\n  make build-linux-%s && export ZDEV_AGENT_LINUX_BINARY=$PWD/zdev-linux-%s", Version, arch, arch)
 }
 
-// minAgentAPI is the Docker API version that added --mount volume-subpath
-// (Docker Engine 26.0), used for the read-only .git/hooks and .git/config.
-const minAgentAPI = "1.45"
-
-func checkAgentDockerAPI(ctx context.Context, d agent.Docker) error {
-	api, err := d.Output(ctx, "version", "--format", "{{.Server.APIVersion}}")
-	if err != nil {
-		return err
-	}
-	if !apiAtLeast(api, minAgentAPI) {
-		engine, _ := d.Output(ctx, "version", "--format", "{{.Server.Version}}")
-		return fmt.Errorf("agent mode needs Docker Engine 26 or newer (API %s); this engine is %s (API %s): update Docker Desktop, OrbStack or Colima", minAgentAPI, engine, api)
-	}
-	return nil
-}
-
-func apiAtLeast(have, want string) bool {
-	hp, wp := strings.Split(have, "."), strings.Split(want, ".")
-	for i := 0; i < len(wp); i++ {
-		var h, w int
-		if i < len(hp) {
-			h, _ = strconv.Atoi(hp[i])
-		}
-		w, _ = strconv.Atoi(wp[i])
-		if h != w {
-			return h > w
-		}
-	}
-	return true
-}
-
 // hostGitIdentity is the developer's git name and email, for commits made in
 // the sandbox.
 func hostGitIdentity() (name, email string) {
@@ -312,6 +281,9 @@ func claudeSession(ctx context.Context, proj *project.Project, args []string) (i
 	if err := proj.Start(ctx); err != nil {
 		return 0, err
 	}
+	if err := proj.ApplyAgentGitGuards(ctx); err != nil {
+		return 0, err
+	}
 	if err := proj.RecordAgentBaseline(ctx); err != nil {
 		return 0, fmt.Errorf("recording what the project applies: %w", err)
 	}
@@ -333,6 +305,9 @@ func claudeSession(ctx context.Context, proj *project.Project, args []string) (i
 	if base.WorkingDir == "" {
 		base.WorkingDir = src.ContainerPath
 	}
+	// Without a sync volume the service config already has the git guards
+	// (project.gitGuardMounts); Docker refuses a second mount on the same path.
+	gitMounts = withoutTargets(gitMounts, base.Volumes)
 
 	fence := agentFence(ctx, d, proj, acfg.HostAccess, socketServices)
 	before := serviceSnapshot(ctx, d, proj.ContainerName(service))
@@ -383,6 +358,28 @@ func claudeSession(ctx context.Context, proj *project.Project, args []string) (i
 		},
 		Connectors: acfg.ConnectorsEnabled(), Limits: acfg.Limits, Rest: rest,
 	})
+}
+
+// withoutTargets drops the --mount specs whose destination one of vols
+// already mounts.
+func withoutTargets(mounts []string, vols []runtime.VolumeMount) []string {
+	taken := map[string]bool{}
+	for _, v := range vols {
+		taken[v.Target] = true
+	}
+	var out []string
+	for _, m := range mounts {
+		dst := ""
+		for _, part := range strings.Split(m, ",") {
+			if v, ok := strings.CutPrefix(part, "dst="); ok {
+				dst = v
+			}
+		}
+		if !taken[dst] {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 // agentFence builds the network fence of a project's sandbox from what runs
@@ -503,9 +500,6 @@ var nonName = regexp.MustCompile(`[^A-Za-z0-9-]+`)
 
 // checkAgentPreconditions refuses agent mode where it can't be safe.
 func checkAgentPreconditions(ctx context.Context, d agent.Docker, gcfg *config.GlobalConfig) error {
-	if err := checkAgentDockerAPI(ctx, d); err != nil {
-		return err
-	}
 	if gcfg.Shared.Logs.Shell {
 		return errors.New("agent mode is off while the log viewer's shell is on (shared.logs.shell in ~/.zdev/global-config.yaml): it opens a shell in any container, including the router, which holds the Docker socket")
 	}

@@ -217,7 +217,7 @@ agent:
     shop:                      # per project, over defaults
       service: web             # image the agent runs in when `zdev claude` names none (default: app)
       connectors: true
-    cronyard:
+    ci-runner:
       docker_socket: accept    # a service mounts the Docker socket: run anyway, the sandbox is no boundary
 ```
 

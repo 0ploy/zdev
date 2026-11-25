@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"github.com/0ploy/zdev/internal/agent"
 	"os"
 	"path/filepath"
 	"strings"
@@ -192,9 +191,6 @@ func runSystemcheck(cmd *cobra.Command, args []string) error {
 
 	// Check 1Password CLI (user-installed, only needed for op-env secrets)
 	issues += check1Password(ctx)
-
-	// Check what agent mode (zdev claude) needs from the Docker engine
-	issues += checkAgentMode(ctx)
 
 	// Handle --install-ca flag
 	if installCAFlag && mkcertPath != "" {
@@ -640,24 +636,4 @@ func checkDNS(ctx context.Context, cfg *config.GlobalConfig) int {
 
 	fmt.Printf("%s (*.%s does not resolve to 127.0.0.1)\n", statusText("MISSING"), cfg.Domain)
 	return 1
-}
-
-// checkAgentMode reports whether the Docker engine can run agent sandboxes
-// (zdev claude): Docker Engine 26+ for --mount volume-subpath, which keeps
-// .git/hooks and .git/config read-only for the agent. Counted as an issue:
-// with no Claude on the host, agent mode is the normal way to work.
-func checkAgentMode(ctx context.Context) int {
-	fmt.Print("Agent mode:    ")
-	d := agent.NewDocker()
-	if err := checkAgentDockerAPI(ctx, d); err != nil {
-		if _, verr := d.Output(ctx, "version", "--format", "{{.Server.APIVersion}}"); verr != nil {
-			fmt.Printf("%s (Docker not running)\n", statusText("SKIP"))
-			return 0
-		}
-		fmt.Printf("%s (%v)\n", statusText("MISSING"), err)
-		return 1
-	}
-	api, _ := d.Output(ctx, "version", "--format", "{{.Server.APIVersion}}")
-	fmt.Printf("%s (Docker API %s)\n", statusText("OK"), api)
-	return 0
 }
