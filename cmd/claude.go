@@ -212,6 +212,11 @@ type sandboxSpec struct {
 	// TurnHook installs Claude's Stop hook, which reports the end of each
 	// turn to the relay handler (agent.OpTurnEnd).
 	TurnHook bool
+	// Egress is the session's proxy (its Log is set from EgressLog), NoProxy
+	// what the agent reaches directly (project services and domains).
+	Egress    agent.Egress
+	EgressLog *egressLog
+	NoProxy   []string
 }
 
 // gitReadOnlyMounts makes .git/hooks and .git/config read-only for the agent
@@ -323,6 +328,7 @@ func claudeSession(ctx context.Context, proj *project.Project, args []string) (i
 		current  string     // the service as the running sandbox was built from it
 		notified string     // the version the agent was last told about
 		respawn  bool
+		elog     *egressLog // spans replaced sandboxes
 	)
 	stale := func(ctx context.Context) bool {
 		now := serviceSnapshot(ctx, d, proj.ContainerName(service))
@@ -359,6 +365,11 @@ func claudeSession(ctx context.Context, proj *project.Project, args []string) (i
 			}
 			promptServices = append(promptServices, ps)
 		}
+		fence := agentFence(ctx, d, proj, acfg.HostAccess, socketServices)
+		noProxy := agentNoProxy(gcfg.Domain, fence.AllowSubnets)
+		for sname := range cur.Config.Services {
+			noProxy = append(noProxy, sname)
+		}
 		mu.Lock()
 		current = serviceSnapshot(ctx, d, proj.ContainerName(service))
 		notified = current
@@ -372,7 +383,10 @@ func claudeSession(ctx context.Context, proj *project.Project, args []string) (i
 				"ZDEV_HOST_PROJECTDIR": filepath.Base(proj.Dir),
 				"ZDEV_DOMAIN":          gcfg.Domain,
 			},
-			Fence: agentFence(ctx, d, proj, acfg.HostAccess, socketServices),
+			Fence:     fence,
+			Egress:    agent.Egress{Domain: gcfg.Domain, Mode: acfg.Egress, Allow: acfg.AllowHosts},
+			EgressLog: elog,
+			NoProxy:   noProxy,
 			Handler: func(container string) agent.Handler {
 				// After a lifecycle command: socket services may have new
 				// addresses, and the agent's own service may have changed.
@@ -416,17 +430,26 @@ func claudeSession(ctx context.Context, proj *project.Project, args []string) (i
 					Project: name, Service: service, Image: image, Workdir: src.ContainerPath,
 					URL: url, Services: promptServices, Info: info,
 					Root: strings.HasPrefix(owner, "0:"), Fenced: true, HostAccess: acfg.HostAccess, Refused: socketServices,
+					EgressEnforce: acfg.Egress == agent.EgressEnforce, AllowHosts: acfg.AllowHosts,
 				})
 			},
 			Connectors: acfg.ConnectorsEnabled(), Limits: acfg.Limits, Rest: rest, TurnHook: interactive,
 		}, nil
 	}
 
+	sessionID := newSessionID()
+	elog = newEgressLog(name, sessionID)
+	defer func() {
+		elog.close()
+		if sum := elog.summary(); sum != "" {
+			fmt.Println(sum)
+		}
+	}()
 	s, err := spec(ctx)
 	if err != nil {
 		return 0, err
 	}
-	s.SessionID = newSessionID()
+	s.SessionID = sessionID
 	for {
 		code, err := runSandbox(ctx, gcfg, s)
 		mu.Lock()
@@ -446,6 +469,18 @@ func claudeSession(ctx context.Context, proj *project.Project, args []string) (i
 		next.Rest = resumeArgs(rest, sessionID, proj.Dir, service)
 		s = next
 	}
+}
+
+// agentNoProxy is what the agent reaches without the proxy: container names
+// (*.zdev), the zdev domain (project and shared-service URLs resolve to the
+// router alias on the project network), the Docker host names the fence
+// handles (agent.host_access), and the project's subnets.
+func agentNoProxy(domain string, subnets []string) []string {
+	out := []string{".zdev", "host.docker.internal", "gateway.docker.internal", "host.orb.internal", "host.lima.internal"}
+	if domain != "" {
+		out = append(out, domain, "."+domain)
+	}
+	return append(out, subnets...)
 }
 
 // hasPrintFlag reports whether Claude runs non-interactively (-p/--print).
@@ -543,7 +578,7 @@ func withoutTargets(mounts []string, vols []runtime.VolumeMount) []string {
 // now: the project's subnets, and the addresses of services holding the
 // Docker socket.
 func agentFence(ctx context.Context, d agent.Docker, proj *project.Project, hostAccess []int, socketServices []string) agent.Fence {
-	fence := agent.Fence{HostPorts: hostAccess}
+	fence := agent.Fence{HostPorts: hostAccess, ProxyOnly: true}
 	if subnets, err := d.Output(ctx, "network", "inspect", "--format", "{{range .IPAM.Config}}{{.Subnet}} {{end}}", proj.NetworkName()); err == nil {
 		fence.AllowSubnets = strings.Fields(subnets)
 	}
@@ -633,15 +668,27 @@ func bootstrapSession(ctx context.Context, args []string) (int, error) {
 	_, rest := splitClaudeArgs(args, func(string) bool { return false })
 	refusal := &agent.Refusal{Code: "bootstrap", Message: "this repository has no zdev project yet",
 		Next: "write .zdev/config.yaml, then ask the developer to run `zdev start` and `zdev claude --continue`"}
+	sessionID := newSessionID()
+	elog := newEgressLog(name, sessionID)
+	defer func() {
+		elog.close()
+		if sum := elog.summary(); sum != "" {
+			fmt.Println(sum)
+		}
+	}()
 	return runSandbox(ctx, gcfg, sandboxSpec{
-		Name: name, Image: agent.BootstrapImage(),
+		SessionID: sessionID,
+		Egress:    agent.Egress{Domain: gcfg.Domain, Mode: acfg.Egress, Allow: acfg.AllowHosts},
+		EgressLog: elog,
+		NoProxy:   agentNoProxy(gcfg.Domain, nil),
+		Name:      name, Image: agent.BootstrapImage(),
 		Base: runtime.ContainerConfig{
 			WorkingDir: dir, Env: map[string]string{}, NetworkName: bootstrapNetwork,
 			Mounts: []string{"type=bind,src=" + dir + ",dst=" + dir},
 		},
 		Workdir: dir, HostDir: dir, Owner: fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()), GitMounts: gitMounts,
 		Env:   map[string]string{"ZDEV_RELAY": agent.RelaySocket, "ZDEV_DOMAIN": gcfg.Domain},
-		Fence: agent.Fence{HostPorts: acfg.HostAccess},
+		Fence: agent.Fence{HostPorts: acfg.HostAccess, ProxyOnly: true},
 		Handler: func(string) agent.Handler {
 			return func(_ context.Context, _ agent.Request, _ io.Reader, _, stderr io.Writer, _ <-chan string) int {
 				fmt.Fprintln(stderr, refusal.Error())
@@ -863,6 +910,14 @@ func runSandbox(ctx context.Context, gcfg *config.GlobalConfig, s sandboxSpec) (
 	if strings.HasPrefix(s.Owner, "0:") {
 		env["IS_SANDBOX"] = "1" // Claude Code accepts skipping permission prompts as root only with it
 	}
+	// The internet only through the egress proxy in the relay (the fence
+	// rejects the rest); project services and domains directly.
+	noProxy := strings.Join(append([]string{"localhost", "127.0.0.1", "::1"}, s.NoProxy...), ",")
+	for _, k := range []string{"HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"} {
+		env[k] = agent.ProxyURL
+	}
+	env["NO_PROXY"], env["no_proxy"] = noProxy, noProxy
+	env["NODE_USE_ENV_PROXY"] = "1" // Node's own fetch ignores the variables above otherwise
 	for k, v := range s.Env {
 		env[k] = v
 	}
@@ -902,7 +957,11 @@ func runSandbox(ctx context.Context, gcfg *config.GlobalConfig, s sandboxSpec) (
 	// The relay: SSH over the stdio of a docker exec; this process is the server.
 	relayCtx, stopRelay := context.WithCancel(ctx)
 	defer stopRelay()
-	if err := startRelay(relayCtx, container, s.Handler(container)); err != nil {
+	egress := s.Egress
+	if s.EgressLog != nil {
+		egress.Log = s.EgressLog.record
+	}
+	if err := startRelay(relayCtx, container, s.Handler(container), &egress); err != nil {
 		return 0, err
 	}
 
@@ -950,7 +1009,7 @@ func runSandbox(ctx context.Context, gcfg *config.GlobalConfig, s sandboxSpec) (
 
 // startRelay runs `zdev sandbox relay` in the container and serves it until
 // ctx ends; it returns once the relay's socket is up.
-func startRelay(ctx context.Context, container string, handler agent.Handler) error {
+func startRelay(ctx context.Context, container string, handler agent.Handler, egress *agent.Egress) error {
 	relay := exec.CommandContext(ctx, "docker", "exec", "-i", container, "/opt/zdev/bin/zdev", "sandbox", "relay")
 	stdin, err := relay.StdinPipe()
 	if err != nil {
@@ -965,7 +1024,7 @@ func startRelay(ctx context.Context, container string, handler agent.Handler) er
 		return fmt.Errorf("starting the relay: %w", err)
 	}
 	go func() { _ = relay.Wait() }()
-	go func() { _ = agent.Serve(ctx, agent.PipeConn(stdout, stdin), handler) }()
+	go func() { _ = agent.Serve(ctx, agent.PipeConn(stdout, stdin), handler, egress) }()
 	for i := 0; i < 50; i++ {
 		if err := exec.CommandContext(ctx, "docker", "exec", container, "test", "-S", agent.RelaySocket).Run(); err == nil {
 			return nil

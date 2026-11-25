@@ -12,7 +12,7 @@
 - **`zdev run` runs here.** Jobs without `service` run in the sandbox, never on the developer's machine; jobs with `service = "x"` go to that container through the host. Jobs that need host tools (`open`, `op`, ssh keys) fail here.
 - **Git only here, never through `zdev exec`.** `.git/hooks` and `.git/config` are read-only: commit and branch, but ask the developer for pushes, remotes and git config.
 - **No tool installs:** no root privileges. Add missing tools to the service's Dockerfile and ask the developer to rebuild.
-- **Network:** the project's services (by name or the project URL) and the internet; not the developer's machine or private networks.
+- **Network:** the project's services (by name or the project URL) directly; the internet only through the proxy in `HTTPS_PROXY` (logged; HTTPS, no raw TCP/SSH: git over HTTPS). A proxy refusal is a 403 with `X-Zdev-Refused` (curl: "CONNECT tunnel failed, response 403"): relay it, don't debug the network. Under `egress: enforce` only the project's `allow_hosts` work.
 
 ## Bootstrap (repository without `.zdev/`)
 

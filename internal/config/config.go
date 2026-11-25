@@ -50,6 +50,12 @@ type AgentProjectConfig struct {
 	// service mounts the Docker socket; the sandbox is then no boundary.
 	DockerSocket string      `yaml:"docker_socket"`
 	Limits       AgentLimits `yaml:"limits"`
+	// Egress is "log" (default: every public host, logged) or "enforce"
+	// (only AllowHosts). A guard against mistakes, not a boundary.
+	Egress string `yaml:"egress"`
+	// AllowHosts are the hosts the agent may reach under egress: enforce,
+	// exact or as *.example.com.
+	AllowHosts []string `yaml:"allow_hosts"`
 }
 
 // AgentLimits bounds the agent container (--cpus, --memory, --pids-limit).
@@ -85,6 +91,15 @@ func (g *GlobalConfig) AgentProject(name string) AgentProjectConfig {
 		if src.Limits.Pids > 0 {
 			out.Limits.Pids = src.Limits.Pids
 		}
+		if src.Egress != "" {
+			out.Egress = src.Egress
+		}
+		if src.AllowHosts != nil {
+			out.AllowHosts = src.AllowHosts
+		}
+	}
+	if out.Egress == "" {
+		out.Egress = "log"
 	}
 	return out
 }

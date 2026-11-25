@@ -36,7 +36,10 @@ import (
 // RelaySocket is the relay's socket in the container (ZDEV_RELAY).
 const RelaySocket = "/tmp/zdev-relay.sock"
 
-const clientChannel = "zdev-client"
+const (
+	clientChannel = "zdev-client"
+	proxyChannel  = "zdev-proxy" // one egress proxy connection (egress.go)
+)
 
 // Request is one call from the container: a zdev command (Op empty), or one
 // of the two operations `zdev run` needs from the runtime (OpRunning,
@@ -113,7 +116,8 @@ func clientConfig() *ssh.ClientConfig {
 type Handler func(ctx context.Context, req Request, stdin io.Reader, stdout, stderr io.Writer, sigs <-chan string) int
 
 // Serve runs the host side over conn (the relay's stdio) until it closes.
-func Serve(ctx context.Context, conn net.Conn, handle Handler) error {
+// Proxy connections go to proxy; without one they are refused.
+func Serve(ctx context.Context, conn net.Conn, handle Handler, proxy *Egress) error {
 	cfg, err := serverConfig()
 	if err != nil {
 		return err
@@ -125,16 +129,24 @@ func Serve(ctx context.Context, conn net.Conn, handle Handler) error {
 	defer sc.Close()
 	go ssh.DiscardRequests(reqs)
 	for nc := range chans {
-		if nc.ChannelType() != clientChannel {
+		switch {
+		case nc.ChannelType() == clientChannel:
+			ch, creqs, err := nc.Accept()
+			if err != nil {
+				continue
+			}
+			go ssh.DiscardRequests(creqs)
+			go serveClient(ctx, ch, cfg, handle)
+		case nc.ChannelType() == proxyChannel && proxy != nil:
+			ch, creqs, err := nc.Accept()
+			if err != nil {
+				continue
+			}
+			go ssh.DiscardRequests(creqs)
+			go proxy.Serve(ctx, channelConn{ch})
+		default:
 			_ = nc.Reject(ssh.UnknownChannelType, "unknown channel type")
-			continue
 		}
-		ch, creqs, err := nc.Accept()
-		if err != nil {
-			continue
-		}
-		go ssh.DiscardRequests(creqs)
-		go serveClient(ctx, ch, cfg, handle)
 	}
 	return nil
 }
@@ -221,6 +233,22 @@ func RunRelay(socket string) error {
 		return fmt.Errorf("relay handshake: %w", err)
 	}
 	client := ssh.NewClient(c, chans, reqs)
+	// The egress proxy first: the socket below tells the host the relay is
+	// up, and Claude starts right after that.
+	pl, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", ProxyPort))
+	if err != nil {
+		stopContainer()
+		return fmt.Errorf("egress proxy: %w", err)
+	}
+	go func() {
+		for {
+			lc, err := pl.Accept()
+			if err != nil {
+				return
+			}
+			go forward(client, lc, proxyChannel)
+		}
+	}()
 	_ = os.Remove(socket)
 	l, err := net.Listen("unix", socket)
 	if err != nil {
@@ -234,19 +262,20 @@ func RunRelay(socket string) error {
 			if err != nil {
 				return
 			}
-			go forward(client, lc)
+			go forward(client, lc, clientChannel)
 		}
 	}()
 	_ = client.Wait()
+	_ = pl.Close()
 	_ = l.Close()
 	_ = os.Remove(socket)
 	stopContainer()
 	return nil
 }
 
-func forward(client *ssh.Client, lc net.Conn) {
+func forward(client *ssh.Client, lc net.Conn, channelType string) {
 	defer lc.Close()
-	ch, reqs, err := client.OpenChannel(clientChannel, nil)
+	ch, reqs, err := client.OpenChannel(channelType, nil)
 	if err != nil {
 		return
 	}
@@ -260,6 +289,11 @@ func forward(client *ssh.Client, lc net.Conn) {
 		_ = ch.CloseWrite()
 	}()
 	_, _ = io.Copy(lc, ch)
+	// The host is done: pass the end on, so a client waiting for it closes
+	// its side too (and the copy above returns).
+	if cw, ok := lc.(interface{ CloseWrite() error }); ok {
+		_ = cw.CloseWrite()
+	}
 	wg.Wait()
 }
 

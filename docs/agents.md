@@ -28,7 +28,7 @@ zdev claude -- app               # pass "app" to Claude (a prompt that equals a 
 | Edit `.zdev/` and apply it: `zdev start`, `stop`, `restart`, `update` (`--build`, `--refresh-secrets`) | yes, unless the config reaches outside the project beyond what you applied yourself (see below) |
 | `zdev down`, `link`, `cleanup`, `rename`, other projects | refused, with a reason Claude passes on to you |
 | Git | commit, branch, merge in the synced repository; `.git/hooks` and `.git/config` are read-only, so pushes, remotes and git config stay with you |
-| Network | the project's services and the internet; not your machine (`host.docker.internal`) or private networks |
+| Network | the project's services directly; the internet only through a proxy in `zdev claude` on your machine, which logs every host; not your machine (`host.docker.internal`) or private networks |
 
 zdev checks every request from the sandbox on your machine, where the container can't reach it. Claude gets a short system prompt that tells it all this, so it doesn't spend turns finding out.
 
@@ -42,6 +42,8 @@ zdev checks every request from the sandbox on your machine, where the container 
 zdev records what your own `zdev start`, `update` and `restart` applied (in `~/.zdev/agent/approved/`), and refuses the rest from the sandbox; Claude then asks you to review `.zdev/` and run `zdev update`. That run approves it, and it lists what it applies that the sandbox couldn't. `zdev claude` asks the same before it starts a project whose config changed since. `zdev down` and `zdev rename` drop the recorded approvals.
 
 When the agent's own service changes (an update from Claude or from you: config, image or secrets), zdev replaces the sandbox at the end of Claude's turn and resumes the conversation in the new one, with a first message saying why. Claude uses `zdev exec app` for the new version until its turn ends. Sessions with `-p` aren't replaced.
+
+**Internet access** goes through an HTTP proxy that `zdev claude` runs on your machine (the sandbox has no other route out). It refuses your machine's own addresses and private networks, also when a public name resolves to them, and project domains (those are reached directly). Every connection is logged in `~/.zdev/agent/logs/<project>/`, and the session ends with a summary of hosts and refusals. `egress: enforce` limits a project to its `allow_hosts` (Claude's own hosts always work); that guards against mistakes, not against an attacker, who can still go through `zdev exec app`. Raw TCP and SSH to the internet don't work in the sandbox: git uses HTTPS.
 
 **Your Claude setup comes along:** skills, agents, commands, plugins, `CLAUDE.md`, settings and status line from `~/.claude` (read-only, so a session can't change them for every project), plus this project's memory and conversations (read-write, in `~/.claude/projects/`). Plugins that only work on the host can be switched off for sandboxes with `agent.disable_plugins` ([Configuration](configuration.md#agent-sandboxes-agent)).
 

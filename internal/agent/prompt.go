@@ -32,6 +32,9 @@ type PromptData struct {
 	HostAccess []int
 	// Refused services mount the Docker socket (accepted in host config).
 	Refused []string
+	// EgressEnforce: only AllowHosts (plus Claude's own) through the proxy.
+	EgressEnforce bool
+	AllowHosts    []string
 }
 
 // SystemPrompt renders the prompt.
@@ -138,7 +141,18 @@ func SystemPrompt(d PromptData) string {
 			}
 			w(", except ports %s on host.docker.internal", strings.Join(ports, ", "))
 		}
-		w(".\n")
+		w(".\n\n")
+		w("The internet is reachable only through an HTTP proxy on the developer's machine (`HTTPS_PROXY`, already set; tools that honor it work: Claude, git over HTTPS, curl, npm, pip, composer, cargo, go, Node with `NODE_USE_ENV_PROXY=1`). Every connection is logged for the developer. ")
+		w("Raw TCP, UDP and SSH to the internet don't work: clone and fetch over HTTPS. Project services and project URLs are reached directly (`NO_PROXY`). ")
+		w("A refusal by the proxy is an HTTP 403 with the header `X-Zdev-Refused` and a `zdev: refused (<reason>)` body; for HTTPS tools report it as a failed CONNECT (curl: \"CONNECT tunnel failed, response 403\", Node: \"fetch failed\"). Don't treat that as a network outage.")
+		if d.EgressEnforce {
+			hosts := "none"
+			if len(d.AllowHosts) > 0 {
+				hosts = strings.Join(d.AllowHosts, ", ")
+			}
+			w(" Only these hosts are allowed for this project (besides Claude's own): %s. For another one, ask the developer to add it to `allow_hosts`.", hosts)
+		}
+		w("\n")
 	} else {
 		w("The project's services and the internet are reachable.\n")
 	}

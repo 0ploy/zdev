@@ -213,6 +213,8 @@ agent:
     connectors: false          # claude.ai connectors (Drive, Slack, ...) of your login; off by default
     host_access: []            # ports on this machine the agent may reach (e.g. 11434 for Ollama)
     limits: {cpus: "4", memory: 8g, pids: 4096}
+    egress: log                # log (every public host, logged) | enforce (only allow_hosts and Claude's own hosts)
+    allow_hosts: []            # under enforce: "registry.npmjs.org", "*.github.com"
   projects:
     shop:                      # per project, over defaults
       service: web             # image the agent runs in when `zdev claude` names none (default: app)

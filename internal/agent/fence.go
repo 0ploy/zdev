@@ -40,6 +40,9 @@ type Fence struct {
 	AllowSubnets []string // the project's networks
 	HostPorts    []int    // host ports the agent may reach (agent.host_access)
 	BlockIPs     []string // services holding the Docker socket
+	// ProxyOnly rejects everything not allowed above: the internet only
+	// through the egress proxy (loopback stays open for it and Docker's DNS).
+	ProxyOnly bool
 }
 
 // Script is the helper's shell script (iptables v4 and v6, REJECT so tools
@@ -53,6 +56,9 @@ func (f Fence) Script() string {
 	b.WriteString("swap() { t=$1\n  $t -N zdev-new 2>/dev/null || $t -F zdev-new\n}\n")
 	b.WriteString("commit() { t=$1\n  $t -I OUTPUT 1 -j zdev-new\n  while $t -D OUTPUT -j zdev 2>/dev/null; do :; done\n  $t -F zdev 2>/dev/null || true\n  $t -X zdev 2>/dev/null || true\n  $t -E zdev-new zdev\n}\n")
 	b.WriteString("swap iptables\nr() { iptables -A zdev-new \"$@\"; }\n")
+	if f.ProxyOnly {
+		b.WriteString("r -o lo -j ACCEPT\n")
+	}
 	for _, ip := range f.BlockIPs {
 		fmt.Fprintf(&b, "r -d %s -j REJECT\n", ip)
 	}
@@ -68,8 +74,19 @@ func (f Fence) Script() string {
 	for _, s := range []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "169.254.0.0/16"} {
 		fmt.Fprintf(&b, "r -d %s -j REJECT\n", s)
 	}
+	if f.ProxyOnly {
+		b.WriteString("r -j REJECT\n")
+	}
 	b.WriteString("commit iptables\n")
-	b.WriteString("if swap ip6tables 2>/dev/null; then\n  for s in fc00::/7 fe80::/10; do ip6tables -A zdev-new -d $s -j REJECT; done\n  commit ip6tables\nfi\n")
+	b.WriteString("if swap ip6tables 2>/dev/null; then\n")
+	if f.ProxyOnly {
+		b.WriteString("  ip6tables -A zdev-new -o lo -j ACCEPT\n")
+	}
+	b.WriteString("  for s in fc00::/7 fe80::/10; do ip6tables -A zdev-new -d $s -j REJECT; done\n")
+	if f.ProxyOnly {
+		b.WriteString("  ip6tables -A zdev-new -j REJECT\n")
+	}
+	b.WriteString("  commit ip6tables\nfi\n")
 	return b.String()
 }
 

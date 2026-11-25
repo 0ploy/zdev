@@ -155,6 +155,16 @@ func validateAgentConfig(a *AgentConfig) error {
 		default:
 			return fmt.Errorf("%s.docker_socket must be \"accept\" or unset", where)
 		}
+		switch p.Egress {
+		case "", "log", "enforce":
+		default:
+			return fmt.Errorf("%s.egress must be \"log\" or \"enforce\", not %q", where, p.Egress)
+		}
+		for _, h := range p.AllowHosts {
+			if h == "" || strings.ContainsAny(h, "/: ") || strings.Count(h, "*") > 1 || (strings.Contains(h, "*") && !strings.HasPrefix(h, "*.")) {
+				return fmt.Errorf("%s.allow_hosts: %q is not a host name (use example.com or *.example.com)", where, h)
+			}
+		}
 		for _, port := range p.HostAccess {
 			if port < 1 || port > 65535 {
 				return fmt.Errorf("%s.host_access: %d is not a port", where, port)
