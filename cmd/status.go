@@ -62,6 +62,7 @@ func runStatusImpl(ctx context.Context, proj *project.Project) error {
 	}
 	fmt.Println()
 
+	printSandboxes(ctx, proj, plainMode)
 	printStaleFileMounts(ctx, proj, plainMode)
 	printShadowedJustfiles(os.Stdout, shadowedJustfiles(proj), plainMode)
 

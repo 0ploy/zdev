@@ -19,11 +19,18 @@ import (
 	"github.com/0ploy/zdev/internal/runtime"
 )
 
+// ContainerRuntime is what a Runner needs from the container runtime. Inside
+// an agent sandbox it is served by the relay to the host (internal/agent).
+type ContainerRuntime interface {
+	IsContainerRunning(ctx context.Context, name string) (bool, error)
+	ExecStream(ctx context.Context, container string, cmd []string, opts runtime.ExecStreamOptions) error
+}
+
 // Runner executes a Plan.
 type Runner struct {
 	ProjectDir  string
 	ProjectName string
-	Runtime     runtime.Runtime
+	Runtime     ContainerRuntime
 
 	// HostEnv is added to the process environment for host jobs
 	// (PROJECTNAME, PROJECTPATH, ZDEV_CALLER_DIR, ...).
@@ -444,6 +451,12 @@ func exitCode(err error) int {
 		if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
 			return 128 + int(ws.Signal())
 		}
+	}
+	// Runtimes that don't run a local process (an agent sandbox's relay)
+	// report the exit code themselves.
+	var coded interface{ ExitCode() int }
+	if errors.As(err, &coded) && coded.ExitCode() > 0 {
+		return coded.ExitCode()
 	}
 	return 1
 }

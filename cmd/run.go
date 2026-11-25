@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/0ploy/zdev/internal/agent"
 	"io"
 	"os"
 	"slices"
@@ -119,7 +120,12 @@ func runInProject(dir string, args []string) error {
 	}
 
 	ctx := context.Background()
-	if planUsesContainers(plan) {
+	// In an agent sandbox, container steps go through the relay to the host,
+	// and host steps run here, in the sandbox, never on the developer's machine.
+	var rt run.ContainerRuntime = proj.Runtime
+	if inSandbox() {
+		rt = agent.RelayRuntime{Socket: os.Getenv("ZDEV_RELAY")}
+	} else if planUsesContainers(plan) {
 		if err := requireDocker(ctx); err != nil {
 			return err
 		}
@@ -136,7 +142,7 @@ func runInProject(dir string, args []string) error {
 	runner := &run.Runner{
 		ProjectDir:  dir,
 		ProjectName: proj.Config.Name,
-		Runtime:     proj.Runtime,
+		Runtime:     rt,
 		HostEnv:     hostEnv,
 		ContainerEnv: map[string]string{
 			"PROJECTNAME": proj.Config.Name,

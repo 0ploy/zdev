@@ -200,4 +200,27 @@ shared:
 
 `mutagen.sync_mode` is passed to every Mutagen session as `--sync-mode`. Changing it recreates the sync sessions on the next `zdev start`. The one-way modes sync host to container only, so files a container writes (`vendor/` from `composer install`, generated code) never come back to the host.
 
-Environment variables zdev itself honors: `ZDEV_HOME` relocates the zdev home directory (config, state, certs, downloaded tools; default `~/.zdev`), `ZDEV_PLAIN=1` forces plain output (no colors, hyperlinks, or step markers - overrides the `terminal.plain` config setting), `ZDEV_NO_UPDATE_CHECK=1` disables the background self-update check, and `OP_SERVICE_ACCOUNT_TOKEN` authenticates 1Password secret resolution in CI.
+### Agent sandboxes (`agent:`)
+
+Settings for `zdev claude` ([Agents](agents.md)). They live only here, on your machine: the agent can edit `.zdev/config.yaml`, so nothing there may grant it more access.
+
+```yaml
+agent:
+  claude:
+    channel: stable            # stable (default, about weekly) | latest | a version like 2.1.325
+  disable_plugins: [codex@openai-codex]   # Claude plugins switched off in every sandbox (host-only ones)
+  defaults:                    # for every project
+    connectors: false          # claude.ai connectors (Drive, Slack, ...) of your login; off by default
+    host_access: []            # ports on this machine the agent may reach (e.g. 11434 for Ollama)
+    limits: {cpus: "4", memory: 8g, pids: 4096}
+  projects:
+    shop:                      # per project, over defaults
+      service: web             # image the agent runs in when `zdev claude` names none (default: app)
+      connectors: true
+    cronyard:
+      docker_socket: accept    # a service mounts the Docker socket: run anyway, the sandbox is no boundary
+```
+
+Claude Code releases are downloaded into Docker volumes (`zdev-claude-<version>-<libc>-<arch>`), checked against Anthropic's release manifest; a superseded version is removed a day after a newer one is first used. Each project keeps the agent's home in a volume (`zdev-agent-home-<project>`, removed by `zdev down -v`).
+
+Environment variables zdev itself honors: `ZDEV_HOME` relocates the zdev home directory (config, state, certs, downloaded tools; default `~/.zdev`), `ZDEV_PLAIN=1` forces plain output (no colors, hyperlinks, or step markers - overrides the `terminal.plain` config setting), `ZDEV_NO_UPDATE_CHECK=1` disables the background self-update check, `OP_SERVICE_ACCOUNT_TOKEN` authenticates 1Password secret resolution in CI, and `ZDEV_AGENT_LINUX_BINARY` points `zdev claude` at a Linux build of zdev for the sandbox (development builds; releases download their own).

@@ -317,7 +317,7 @@ func (p *Project) SessionConfigFor(mount MutagenSyncMount) mutagen.SessionConfig
 		Name:                     mount.SessionName,
 		Alpha:                    mount.HostPath,
 		Beta:                     fmt.Sprintf("docker://%s%s", containerName, mount.ContainerPath),
-		Ignores:                  mutagen.MergeIgnores(p.Config.Mutagen.Ignore),
+		Ignores:                  p.sessionIgnores(mount, mutagen.MergeIgnores(p.Config.Mutagen.Ignore)),
 		SyncMode:                 syncMode,
 		DefaultOwnerBeta:         mount.Owner,
 		DefaultGroupBeta:         mount.Group,

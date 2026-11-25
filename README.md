@@ -2,7 +2,7 @@
 
 **Ever seen a developer and an AI agent fall in love with a dev environment?** 🧑‍💻🤖❤️
 
-zdev is a local development tool that gets you from `git clone` to coding in seconds: run `zdev start` and your whole project is up at `https://my-project.0ploy.dev` - HTTPS, routing, shared services, and secrets management included. Simple for AI coding agents to operate, powerful enough for complex multi-service setups - see [Agents](docs/agents.md).
+zdev is a local development tool that gets you from `git clone` to coding in seconds: run `zdev start` and your whole project is up at `https://my-project.0ploy.dev` - HTTPS, routing, shared services, and secrets management included. Simple for AI coding agents to operate, and `zdev claude` runs Claude Code sandboxed in your project's own image - see [Agents](docs/agents.md). Powerful enough for complex multi-service setups.
 
 > `0ploy.dev` is a wildcard DNS pointing to `127.0.0.1` - everything runs locally on your machine. No cloud, no accounts. You can use your own domain too.
 

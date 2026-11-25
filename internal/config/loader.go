@@ -284,6 +284,14 @@ func buildVariables(projectDir string) map[string]string {
 	// PROJECTDIR = directory basename (always the directory name)
 	// PROJECTNAME = will be set later to the parsed 'name:' field value
 	vars["PROJECTDIR"] = filepath.Base(projectDir)
+	// In an agent sandbox the project directory is the service's mount (e.g.
+	// /app); `zdev claude` passes the host's directory name so the project
+	// resolves to the same name, and with it the same container names.
+	if os.Getenv("ZDEV_SANDBOX") != "" {
+		if d := os.Getenv("ZDEV_HOST_PROJECTDIR"); d != "" {
+			vars["PROJECTDIR"] = d
+		}
+	}
 	vars["PROJECTPATH"] = projectDir
 	vars["ZDEV_HOME"] = getZdevHome()
 	vars["ZDEV_DOMAIN"] = getZdevDomain()

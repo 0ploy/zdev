@@ -15,6 +15,83 @@ type GlobalConfig struct {
 	Terminal TerminalConfig      `yaml:"terminal"`
 	Mutagen  MutagenGlobalConfig `yaml:"mutagen"`
 	DNS      DNSFallbackConfig   `yaml:"dns"`
+	Agent    AgentConfig         `yaml:"agent"`
+}
+
+// AgentConfig holds the settings of the sandboxed coding agents (zdev claude).
+// They live only in the host's global config, never in .zdev/config.yaml: the
+// agent can edit project config, so anything there could grant it more access.
+type AgentConfig struct {
+	Claude AgentClaudeConfig `yaml:"claude"`
+	// DisablePlugins are Claude plugins switched off in every sandbox:
+	// host-only ones whose hooks or tools don't exist there (e.g.
+	// codex@openai-codex, whose hooks need node and the Codex CLI).
+	DisablePlugins []string                      `yaml:"disable_plugins"`
+	Defaults       AgentProjectConfig            `yaml:"defaults"`
+	Projects       map[string]AgentProjectConfig `yaml:"projects"`
+}
+
+// AgentClaudeConfig selects which Claude Code release sandboxes run.
+type AgentClaudeConfig struct {
+	// Channel is "stable" (default), "latest" or a version like "2.1.325".
+	Channel string `yaml:"channel"`
+}
+
+// AgentProjectConfig is per-project agent policy; Defaults supplies what a
+// project entry leaves unset (see GlobalConfig.AgentProject).
+type AgentProjectConfig struct {
+	// Service whose image the agent runs in when `zdev claude` names none.
+	Service string `yaml:"service"`
+	// Connectors enables claude.ai connectors (MCP servers of the login).
+	Connectors *bool `yaml:"connectors"`
+	// HostAccess lists host ports the agent may reach through the host fence.
+	HostAccess []int `yaml:"host_access"`
+	// DockerSocket "accept" allows agent mode for a project in which some
+	// service mounts the Docker socket; the sandbox is then no boundary.
+	DockerSocket string      `yaml:"docker_socket"`
+	Limits       AgentLimits `yaml:"limits"`
+}
+
+// AgentLimits bounds the agent container (--cpus, --memory, --pids-limit).
+type AgentLimits struct {
+	CPUs   string `yaml:"cpus"`
+	Memory string `yaml:"memory"`
+	Pids   int    `yaml:"pids"`
+}
+
+// AgentProject returns the agent settings for a project: its entry in
+// agent.projects over agent.defaults over built-in defaults.
+func (g *GlobalConfig) AgentProject(name string) AgentProjectConfig {
+	out := AgentProjectConfig{Limits: AgentLimits{CPUs: "4", Memory: "8g", Pids: 4096}}
+	for _, src := range []AgentProjectConfig{g.Agent.Defaults, g.Agent.Projects[name]} {
+		if src.Service != "" {
+			out.Service = src.Service
+		}
+		if src.Connectors != nil {
+			out.Connectors = src.Connectors
+		}
+		if src.HostAccess != nil {
+			out.HostAccess = src.HostAccess
+		}
+		if src.DockerSocket != "" {
+			out.DockerSocket = src.DockerSocket
+		}
+		if src.Limits.CPUs != "" {
+			out.Limits.CPUs = src.Limits.CPUs
+		}
+		if src.Limits.Memory != "" {
+			out.Limits.Memory = src.Limits.Memory
+		}
+		if src.Limits.Pids > 0 {
+			out.Limits.Pids = src.Limits.Pids
+		}
+	}
+	return out
+}
+
+// ConnectorsEnabled reports whether claude.ai connectors are on (default off).
+func (a AgentProjectConfig) ConnectorsEnabled() bool {
+	return a.Connectors != nil && *a.Connectors
 }
 
 // DNSFallbackConfig configures the optional local DNS fallback used when

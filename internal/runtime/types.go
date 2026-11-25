@@ -22,6 +22,31 @@ type ContainerConfig struct {
 	// creation and never a drift signal. Empty means no policy (Docker
 	// default "no").
 	RestartPolicy string
+
+	// The fields below exist for the agent sandbox container (zdev claude)
+	// and are, like RestartPolicy, invisible to ComputeConfigHash: project
+	// services never set them, so their hashes stay unchanged.
+
+	// User maps to --user (uid:gid).
+	User string
+	// Entrypoint maps to --entrypoint; empty keeps the image's.
+	Entrypoint string
+	// Init runs Docker's init (--init) as PID 1: reaps zombies, forwards signals.
+	Init bool
+	// AutoRemove removes the container when it stops (--rm).
+	AutoRemove bool
+	// CapDrop / CapAdd map to --cap-drop / --cap-add.
+	CapDrop []string
+	CapAdd  []string
+	// SecurityOpt maps to --security-opt (e.g. "no-new-privileges").
+	SecurityOpt []string
+	// PidsLimit, Memory and CPUs map to --pids-limit, --memory, --cpus.
+	PidsLimit int
+	Memory    string
+	CPUs      string
+	// Mounts are raw --mount specs, for what -v can't express
+	// (volume-subpath, tmpfs options). Applied after Volumes.
+	Mounts []string
 }
 
 // VolumeMount defines a volume or bind mount

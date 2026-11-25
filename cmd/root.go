@@ -94,6 +94,12 @@ func runRoot(cmd *cobra.Command, args []string) error {
 // Execute runs the root command
 // It intercepts unknown commands and tries to route them to justfiles
 func Execute() error {
+	// Inside an agent sandbox zdev is a client of the host (see sandbox.go):
+	// no auto-update, and most commands go through the relay.
+	if inSandbox() {
+		return sandboxExecute()
+	}
+
 	// Non-blocking: prints a banner if a prior background install landed
 	// a newer binary, and kicks off a new background refresh + install
 	// when the cache is stale.

@@ -29,6 +29,7 @@ internal/
   firstrun/              # First-time setup (certs, shared network)
   ssl/                   # Certificate management
   ui/                    # Terminal output (colors, hyperlinks, markdown)
+  agent/                 # zdev claude: Claude volumes, image probe, system prompt, fence, relay
 skills/zdev/            # AI agent skill (SKILL.md + references/)
 testdata/projects/       # Test fixtures (minimal, full, variables, mutagen)
 ```
@@ -173,6 +174,10 @@ Unlike Docker Compose, zdev does not require a top-level `volumes:` section. Nam
 ### Why Mutagen for file sync?
 
 Docker bind mounts on macOS are slow - `pnpm install` takes 5x longer than native. Mutagen syncs files bidirectionally at native speed. It's auto-enabled on macOS and disabled on Linux (where bind mounts are already fast). The `mutagen.ignore` list keeps dependency dirs (`node_modules`, `vendor`) inside the container.
+
+### Why does `zdev claude` run the agent in its own container?
+
+The agent needs the project's toolchain, so the container is built from a service's image (through `buildContainerConfig`, so it never drifts from the service), but it is not the service's container: `zdev update` or `restart` would kill Claude mid-turn, and hardening (no capabilities, the host fence) would hit the app. The host side is the `zdev claude` process itself, no daemon: it serves the relay (the SSH protocol over a `docker exec` pipe) and checks every request. `PLAN_2_AGENT_SANDBOX.md` has the design and the alternatives that were rejected. The pure parts (request policy, fence rules, system prompt, volume cleanup) have unit tests; the Docker parts are tested by hand against a project.
 
 ### Why the Runtime interface uses a mock for tests?
 

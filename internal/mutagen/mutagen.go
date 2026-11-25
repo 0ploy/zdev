@@ -329,3 +329,47 @@ func MergeIgnores(userIgnores []string) []string {
 
 	return result
 }
+
+// Conflicts returns the paths (relative to the session root) that the
+// session holds as conflicts: changed on both sides, so neither is synced.
+func (m *Mutagen) Conflicts(ctx context.Context, name string) ([]string, error) {
+	out, err := m.run(ctx, "sync", "list", name, "--template", "{{json .}}")
+	if err != nil {
+		return nil, err
+	}
+	return parseConflicts([]byte(out))
+}
+
+func parseConflicts(data []byte) ([]string, error) {
+	type change struct {
+		Path string `json:"path"`
+	}
+	var sessions []struct {
+		Conflicts []struct {
+			Root         string   `json:"root"`
+			AlphaChanges []change `json:"alphaChanges"`
+			BetaChanges  []change `json:"betaChanges"`
+		} `json:"conflicts"`
+	}
+	if err := json.Unmarshal(data, &sessions); err != nil {
+		return nil, fmt.Errorf("reading the session's conflicts: %w", err)
+	}
+	seen := map[string]bool{}
+	var paths []string
+	for _, s := range sessions {
+		for _, c := range s.Conflicts {
+			for _, ch := range append(c.AlphaChanges, c.BetaChanges...) {
+				p := ch.Path
+				if p == "" {
+					p = c.Root
+				}
+				if p != "" && !seen[p] {
+					seen[p] = true
+					paths = append(paths, p)
+				}
+			}
+		}
+	}
+	sort.Strings(paths)
+	return paths, nil
+}

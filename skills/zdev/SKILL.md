@@ -109,6 +109,7 @@ Read the one that matches the task; don't load them all.
 | Direct access to another project's internal port (link networks) | `references/linking.md` |
 | Build a template for `zdev create` (scaffold hook, setup command) | `references/templates.md` |
 | Stack runtime landmines (corepack, pnpm builds, PHP extensions, asset builds) | `references/stack-gotchas.md` |
+| You run inside a `zdev claude` sandbox (`ZDEV_SANDBOX` is set), or set up agent mode | `references/agent-sandbox.md` |
 
 Verify web changes in a browser, not only with curl: mixed content, CSP and JS errors are invisible
 to `curl`.

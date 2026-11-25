@@ -210,9 +210,45 @@ func (d *DockerCLI) CreateContainer(ctx context.Context, cfg ContainerConfig) (s
 		args = append(args, "-v", vol.Arg())
 	}
 
+	for _, m := range cfg.Mounts {
+		args = append(args, "--mount", m)
+	}
+
 	// Add port mappings
 	for _, port := range cfg.Ports {
 		args = append(args, "-p", port)
+	}
+
+	// Agent sandbox options (see ContainerConfig)
+	if cfg.User != "" {
+		args = append(args, "--user", cfg.User)
+	}
+	if cfg.Entrypoint != "" {
+		args = append(args, "--entrypoint", cfg.Entrypoint)
+	}
+	if cfg.Init {
+		args = append(args, "--init")
+	}
+	if cfg.AutoRemove {
+		args = append(args, "--rm")
+	}
+	for _, c := range cfg.CapDrop {
+		args = append(args, "--cap-drop", c)
+	}
+	for _, c := range cfg.CapAdd {
+		args = append(args, "--cap-add", c)
+	}
+	for _, o := range cfg.SecurityOpt {
+		args = append(args, "--security-opt", o)
+	}
+	if cfg.PidsLimit > 0 {
+		args = append(args, "--pids-limit", fmt.Sprintf("%d", cfg.PidsLimit))
+	}
+	if cfg.Memory != "" {
+		args = append(args, "--memory", cfg.Memory)
+	}
+	if cfg.CPUs != "" {
+		args = append(args, "--cpus", cfg.CPUs)
 	}
 
 	// Add restart policy

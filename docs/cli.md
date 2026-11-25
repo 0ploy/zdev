@@ -29,6 +29,7 @@ zdev run                        # List project commands (.zdev/run/)
 zdev run <cmd> [job] [args]     # Run a project command
 zdev logs                       # View logs
 zdev logs -f app                # Follow logs for a service
+zdev claude [service] [args]    # Claude Code in a sandbox container of the project (see docs/agents.md)
 ```
 
 ## Information
@@ -41,6 +42,8 @@ zdev status      # Quick status check
 zdev open        # Open the current project's URL in the browser
 zdev open my-app # Open another registered project's URL
 ```
+
+`zdev status` also lists running **agent sandboxes** (`zdev claude`) and warns when the sandbox's git sync stopped on a conflict (fix: `zdev mutagen repair-git`). `zdev stop` and `zdev down` end the project's sandboxes.
 
 `zdev status` also flags **stale file mounts**. A bind mount of a single file is resolved to an inode, not a name, so when an editor (or any tool that writes a temp file and renames it into place) replaces the file, the container keeps the old, deleted one - the host copy looks perfectly fine while the container reads stale content or nothing at all. zdev reports which service and which path, and restarting that service reattaches the mount.
 
@@ -72,6 +75,7 @@ Details: [linking.md](linking.md).
 zdev mutagen status  # Check sync status
 zdev mutagen flush   # Wait for sync to complete
 zdev mutagen reset   # Recreate sync sessions (if stuck)
+zdev mutagen repair-git  # Resolve .git sync conflicts with an agent sandbox
 ```
 
 `zdev mutagen status` reports one line per synced directory, with the state of that mount's own sync session.

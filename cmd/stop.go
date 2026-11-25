@@ -35,6 +35,7 @@ func runStop(cmd *cobra.Command, args []string) error {
 
 		fmt.Printf("Stopping project %s...\n", proj.Config.Name)
 
+		removeSandboxes(ctx, proj)
 		if err := proj.Stop(ctx); err != nil {
 			return err
 		}

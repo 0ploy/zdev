@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"github.com/0ploy/zdev/internal/agent"
 	"time"
 
 	"github.com/0ploy/zdev/internal/project"
@@ -38,8 +39,12 @@ func runDown(cmd *cobra.Command, args []string) error {
 
 		fmt.Printf("Removing project %s...\n", proj.Config.Name)
 
+		removeSandboxes(ctx, proj)
 		if err := proj.Down(ctx, downRemoveVolumes); err != nil {
 			return err
+		}
+		if downRemoveVolumes {
+			_, _ = agent.NewDocker().Output(ctx, "volume", "rm", agent.HomeVolumeName(proj.Config.Name))
 		}
 
 		updateDocsWithProjects(ctx)

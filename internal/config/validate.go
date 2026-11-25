@@ -138,6 +138,38 @@ func validateGlobalConfig(cfg *GlobalConfig) error {
 	if err := validateHostname("domain", cfg.Domain, true); err != nil {
 		return err
 	}
+	return validateAgentConfig(&cfg.Agent)
+}
+
+var claudeChannelVersion = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$`)
+
+func validateAgentConfig(a *AgentConfig) error {
+	switch ch := a.Claude.Channel; {
+	case ch == "", ch == "stable", ch == "latest", claudeChannelVersion.MatchString(ch):
+	default:
+		return fmt.Errorf("agent.claude.channel must be stable, latest or a version, not %q", ch)
+	}
+	check := func(where string, p AgentProjectConfig) error {
+		switch p.DockerSocket {
+		case "", "accept":
+		default:
+			return fmt.Errorf("%s.docker_socket must be \"accept\" or unset", where)
+		}
+		for _, port := range p.HostAccess {
+			if port < 1 || port > 65535 {
+				return fmt.Errorf("%s.host_access: %d is not a port", where, port)
+			}
+		}
+		return nil
+	}
+	if err := check("agent.defaults", a.Defaults); err != nil {
+		return err
+	}
+	for name, p := range a.Projects {
+		if err := check("agent.projects."+name, p); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
