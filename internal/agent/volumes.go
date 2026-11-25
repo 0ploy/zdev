@@ -54,33 +54,114 @@ fi
 echo "$SHA256  $t" | sha256sum -c - >/dev/null || { echo "$URL: wrong checksum" >&2; exit 1; }
 chmod 755 "$t" && mv "$t" claude && echo "$VERSION" > .ok`
 
-// EnsureClaude makes sure the volume for this release, libc and architecture
-// is filled and returns its name. progress is called before a download.
-func EnsureClaude(ctx context.Context, d Docker, rel *ClaudeRelease, libc, arch string, progress func(string)) (string, error) {
+// claudeFill returns the volume for this release, libc and architecture and
+// the `docker run` arguments (after "run") of the container that fills it.
+func claudeFill(rel *ClaudeRelease, libc, arch string) (vol string, args []string, err error) {
 	platform := ClaudePlatform(arch, libc)
 	build, ok := rel.Platforms[platform]
 	if !ok {
-		return "", fmt.Errorf("Claude Code %s has no build for %s", rel.Version, platform)
+		return "", nil, fmt.Errorf("Claude Code %s has no build for %s", rel.Version, platform)
 	}
-	vol := ClaudeVolumeName(rel.Version, libc, arch)
+	vol = ClaudeVolumeName(rel.Version, libc, arch)
+	return vol, []string{"--rm", "--user", "0", "--workdir", "/v", "--mount", "type=volume,src=" + vol + ",dst=/v",
+		"-e", "VERSION=" + rel.Version, "-e", "SHA256=" + build.SHA256, "-e", "ZST_SHA256=" + build.ZstSHA256,
+		"-e", "URL=" + ClaudeReleaseURL + "/" + rel.Version + "/" + platform + "/claude",
+		"--entrypoint", "sh", FillImage, "-c", fillClaude}, nil
+}
+
+// EnsureClaude makes sure the volume for this release, libc and architecture
+// is filled and returns its name. progress is called before a download.
+func EnsureClaude(ctx context.Context, d Docker, rel *ClaudeRelease, libc, arch string, progress func(string)) (string, error) {
+	vol, args, err := claudeFill(rel, libc, arch)
+	if err != nil {
+		return "", err
+	}
 	if complete(ctx, d, vol) {
 		return vol, nil
 	}
 	if progress != nil {
-		progress(fmt.Sprintf("Downloading Claude Code %s (%s)", rel.Version, platform))
+		progress(fmt.Sprintf("Downloading Claude Code %s (%s)", rel.Version, ClaudePlatform(arch, libc)))
 	}
 	if err := d.CreateVolume(ctx, vol, map[string]string{volumeLabel: "claude", "zdev.agent.claude": rel.Version}); err != nil {
 		return "", err
 	}
-	err := d.Stream(ctx, strings.NewReader(fillClaude), nil, os.Stderr, "run", "--rm", "-i",
-		"--user", "0", "--workdir", "/v", "--mount", "type=volume,src="+vol+",dst=/v",
-		"-e", "VERSION="+rel.Version, "-e", "SHA256="+build.SHA256, "-e", "ZST_SHA256="+build.ZstSHA256,
-		"-e", "URL="+ClaudeReleaseURL+"/"+rel.Version+"/"+platform+"/claude",
-		"--entrypoint", "sh", FillImage, "-s")
-	if err != nil {
-		return "", fmt.Errorf("getting Claude Code %s (%s) failed: %w", rel.Version, platform, err)
+	if err := d.Stream(ctx, nil, nil, os.Stderr, append([]string{"run"}, args...)...); err != nil {
+		return "", fmt.Errorf("getting Claude Code %s (%s) failed: %w", rel.Version, ClaudePlatform(arch, libc), err)
 	}
 	return vol, nil
+}
+
+// StartClaudeDownload fills the release's volume in a detached container, so
+// a session doesn't wait for it and the download finishes even after zdev
+// exits; the next session finds the volume complete. Reports whether a
+// download started (false: already there, or already being downloaded).
+func StartClaudeDownload(ctx context.Context, d Docker, rel *ClaudeRelease, libc, arch string) (bool, error) {
+	vol, args, err := claudeFill(rel, libc, arch)
+	if err != nil {
+		return false, err
+	}
+	if complete(ctx, d, vol) {
+		return false, nil
+	}
+	if err := d.CreateVolume(ctx, vol, map[string]string{volumeLabel: "claude", "zdev.agent.claude": rel.Version}); err != nil {
+		return false, err
+	}
+	// One fill per volume: a second `docker run --name` fails while one runs.
+	if _, err := d.Output(ctx, append([]string{"run", "-d", "--name", "zdev-fill-" + vol, "--label", volumeLabel + "=fill"}, args...)...); err != nil {
+		if strings.Contains(err.Error(), "already in use") {
+			return false, nil
+		}
+		return false, fmt.Errorf("starting the download of Claude Code %s: %w", rel.Version, err)
+	}
+	return true, nil
+}
+
+// InstalledClaude returns the newest complete Claude build for libc and
+// architecture on this engine ("" when there is none).
+func InstalledClaude(ctx context.Context, d Docker, libc, arch string) (version, vol string) {
+	out, err := d.Output(ctx, "volume", "ls", "--filter", "label="+volumeLabel+"=claude", "--format", "{{.Name}}")
+	if err != nil {
+		return "", ""
+	}
+	suffix := "-" + libc + "-" + arch
+	var versions []string
+	for _, name := range strings.Fields(out) {
+		v, ok := strings.CutPrefix(name, claudeVolumePrefix)
+		if v, ok2 := strings.CutSuffix(v, suffix); ok && ok2 && claudeVersionRE.MatchString(v) {
+			versions = append(versions, v)
+		}
+	}
+	sort.Slice(versions, func(i, j int) bool { return CompareClaudeVersions(versions[i], versions[j]) > 0 })
+	for _, v := range versions {
+		if name := ClaudeVolumeName(v, libc, arch); complete(ctx, d, name) {
+			return v, name
+		}
+	}
+	return "", ""
+}
+
+// InstalledClaudePlatforms lists the libc/architecture pairs that have a
+// Claude build on this engine, as "libc arch".
+func InstalledClaudePlatforms(ctx context.Context, d Docker) []string {
+	out, err := d.Output(ctx, "volume", "ls", "--filter", "label="+volumeLabel+"=claude", "--format", "{{.Name}}")
+	if err != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var pairs []string
+	for _, name := range strings.Fields(out) {
+		parts := strings.Split(strings.TrimPrefix(name, claudeVolumePrefix), "-")
+		if len(parts) < 3 {
+			continue
+		}
+		pair := parts[len(parts)-2] + " " + parts[len(parts)-1]
+		if !seen[pair] {
+			seen[pair] = true
+			pairs = append(pairs, pair)
+		}
+	}
+	sort.Strings(pairs)
+	return pairs
 }
 
 // complete reports whether a fill finished (its .ok marker exists).

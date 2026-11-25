@@ -16,6 +16,8 @@ zdev claude -- app               # pass "app" to Claude (a prompt that equals a 
 
 **Log in once** with `/login` inside Claude. Every sandbox shares that login (stored in `~/.zdev/agent/claude-auth/`); you log in again only when Claude asks.
 
+**Claude Code updates:** zdev looks for a new release once a day and downloads it in the background; the session after the download uses it (Claude's own updater is off in the sandbox). `zdev claude update` gets it right away. Pick the release line with `agent.claude.channel` ([Configuration](configuration.md#agent-sandboxes-agent)).
+
 **What Claude can do there:**
 
 | | |

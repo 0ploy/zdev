@@ -30,6 +30,7 @@ zdev run <cmd> [job] [args]     # Run a project command
 zdev logs                       # View logs
 zdev logs -f app                # Follow logs for a service
 zdev claude [service] [args]    # Claude Code in a sandbox container of the project (see docs/agents.md)
+zdev claude update              # download the newest Claude Code release for the sandboxes now
 ```
 
 ## Information

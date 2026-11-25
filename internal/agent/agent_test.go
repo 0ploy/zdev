@@ -1,8 +1,11 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -172,5 +175,43 @@ func TestSystemPrompt(t *testing.T) {
 	}
 	if strings.Contains(p, "\u2014") {
 		t.Error("no em dashes")
+	}
+}
+
+func TestCompareClaudeVersions(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want int
+	}{
+		{"2.1.326", "2.1.326", 0},
+		{"2.1.330", "2.1.326", 1},
+		{"2.1.9", "2.1.10", -1},
+		{"3.0.0", "2.9.99", 1},
+		{"2.1.0-beta.1", "2.1.0", -1},
+		{"2.1.0-beta.2", "2.1.0-beta.1", 1},
+	}
+	for _, c := range cases {
+		if got := CompareClaudeVersions(c.a, c.b); got != c.want {
+			t.Errorf("CompareClaudeVersions(%s, %s) = %d, want %d", c.a, c.b, got, c.want)
+		}
+	}
+	if !IsPinnedClaude("2.1.325") || IsPinnedClaude("stable") || IsPinnedClaude("latest") {
+		t.Error("IsPinnedClaude")
+	}
+}
+
+// A resolved release is reused until it is maxAge old: a session start asks
+// the release folder at most once a day.
+func TestResolveClaudeUsesCache(t *testing.T) {
+	dir := t.TempDir()
+	cached := ClaudeRelease{Channel: "stable", Version: "2.1.300", ResolvedAt: time.Now().Add(-20 * time.Hour),
+		Platforms: map[string]ClaudeBuild{"linux-arm64": {SHA256: strings.Repeat("a", 64)}}}
+	b, _ := json.Marshal(cached)
+	if err := os.WriteFile(filepath.Join(dir, "claude-release.json"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rel, err := ResolveClaude(context.Background(), dir, "stable", ClaudeCheckEvery)
+	if err != nil || rel.Version != "2.1.300" {
+		t.Fatalf("got %v, %v; want the cached 2.1.300", rel, err)
 	}
 }

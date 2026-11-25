@@ -51,8 +51,14 @@ goes to Claude unchanged:
   zdev claude node --continue    in the node service's image, continue the last conversation
   zdev claude "fix the login"    start with a prompt
   zdev claude -- app             pass "app" to Claude (a prompt that equals a service name)
+  zdev claude update             download the newest Claude Code release now
 
-Log in once with /login inside Claude; every sandbox shares that login.`,
+Log in once with /login inside Claude; every sandbox shares that login.
+
+zdev checks for a new Claude Code release once a day (agent.claude.channel in
+~/.zdev/global-config.yaml). A session never waits for it: it starts with the
+newest build already here, and the new one downloads in the background for the
+next session.`,
 	DisableFlagParsing: true,
 	RunE:               runClaude,
 }
@@ -152,6 +158,12 @@ func hostTimeZone() string {
 }
 
 func runClaude(cmd *cobra.Command, args []string) error {
+	if len(args) > 0 && args[0] == "update" {
+		if len(args) > 1 {
+			return errors.New("zdev claude update takes no arguments (zdev claude -- update ... passes them to Claude)")
+		}
+		return withDocker(noTimeout, runClaudeUpdate)
+	}
 	var exitCode int
 	run := func(ctx context.Context, proj *project.Project) error {
 		code, err := claudeSession(ctx, proj, args)
@@ -506,6 +518,74 @@ func checkAgentPreconditions(ctx context.Context, d agent.Docker, gcfg *config.G
 	return nil
 }
 
+// runClaudeUpdate is `zdev claude update`: asks for the channel's release now
+// and downloads it for every libc that already has a build on this engine,
+// so the next session doesn't wait and doesn't start with an older version.
+func runClaudeUpdate(ctx context.Context) error {
+	gcfg, err := config.LoadGlobalConfig()
+	if err != nil {
+		return err
+	}
+	plain := ui.PlainMode(gcfg.Terminal.Plain)
+	d := agent.NewDocker()
+	channel := gcfg.Agent.Claude.Channel
+	if channel == "" {
+		channel = "stable"
+	}
+	rel, err := agent.ResolveClaude(ctx, filepath.Join(config.GetZdevHome(), "agent"), channel, 0)
+	if err != nil {
+		return err
+	}
+	arch, err := d.ServerArch(ctx)
+	if err != nil {
+		return err
+	}
+	var libcs []string
+	for _, pair := range agent.InstalledClaudePlatforms(ctx, d) {
+		if l, a, _ := strings.Cut(pair, " "); a == arch {
+			libcs = append(libcs, l)
+		}
+	}
+	if len(libcs) == 0 {
+		fmt.Printf("Claude Code %s is the current %s release. Nothing downloaded yet: `zdev claude` gets it at its first start.\n", rel.Version, channel)
+		return nil
+	}
+	for _, libc := range libcs {
+		if _, err := agent.EnsureClaude(ctx, d, rel, libc, arch, func(msg string) { ui.StatusStep(msg, plain) }); err != nil {
+			return err
+		}
+	}
+	fmt.Printf("Claude Code %s (%s) is ready; new sessions use it, running ones keep their version.\n", rel.Version, channel)
+	return nil
+}
+
+// chooseClaude picks the Claude build a session runs. The channel's release
+// is checked at most once a day. A session never waits for a new release when
+// a build is already here: it starts with the newest one and the new release
+// downloads in the background for the next session. It waits only for the
+// first build, or for a pinned version that isn't here yet.
+func chooseClaude(ctx context.Context, d agent.Docker, agentDir, channel, libc, arch string, plain bool) (version, vol string, err error) {
+	haveVersion, haveVol := "", ""
+	if !agent.IsPinnedClaude(channel) {
+		haveVersion, haveVol = agent.InstalledClaude(ctx, d, libc, arch)
+	}
+	rel, err := agent.ResolveClaude(ctx, agentDir, channel, agent.ClaudeCheckEvery)
+	if err != nil {
+		if haveVol != "" {
+			return haveVersion, haveVol, nil // offline: what's here
+		}
+		return "", "", err
+	}
+	if haveVol == "" || agent.CompareClaudeVersions(rel.Version, haveVersion) <= 0 {
+		vol, err := agent.EnsureClaude(ctx, d, rel, libc, arch, func(msg string) { ui.StatusStep(msg, plain) })
+		return rel.Version, vol, err
+	}
+	if started, err := agent.StartClaudeDownload(ctx, d, rel, libc, arch); err == nil && started {
+		fmt.Println(ui.Color(fmt.Sprintf("Claude Code %s is downloading in the background; this session runs %s, the next one the new version.", rel.Version, haveVersion), "yellow", plain))
+	}
+	return haveVersion, haveVol, nil
+}
+
 // runSandbox prepares what every session needs (Claude and zdev volumes, the
 // agent's home, the session files), creates the container, applies the fence,
 // serves the relay and runs Claude in the terminal; the container is removed
@@ -528,15 +608,11 @@ func runSandbox(ctx context.Context, gcfg *config.GlobalConfig, s sandboxSpec) (
 	if err != nil {
 		return 0, err
 	}
-	rel, err := agent.ResolveClaude(ctx, agentDir, gcfg.Agent.Claude.Channel)
+	claudeVersion, claudeVol, err := chooseClaude(ctx, d, agentDir, gcfg.Agent.Claude.Channel, info.Libc, arch, plain)
 	if err != nil {
 		return 0, err
 	}
-	claudeVol, err := agent.EnsureClaude(ctx, d, rel, info.Libc, arch, func(msg string) { ui.StatusStep(msg, plain) })
-	if err != nil {
-		return 0, err
-	}
-	if err := agent.CheckClaude(ctx, d, agentDir, s.Image, info, rel.Version, claudeVol); err != nil {
+	if err := agent.CheckClaude(ctx, d, agentDir, s.Image, info, claudeVersion, claudeVol); err != nil {
 		return 0, err
 	}
 	zbin, err := zdevLinuxBinary(arch)
@@ -662,7 +738,7 @@ func runSandbox(ctx context.Context, gcfg *config.GlobalConfig, s sandboxSpec) (
 	if s.Service == "" {
 		what = "bootstrap image"
 	}
-	ui.StatusStep(fmt.Sprintf("Starting sandbox %s (%s, Claude Code %s)", container, what, rel.Version), plain)
+	ui.StatusStep(fmt.Sprintf("Starting sandbox %s (%s, Claude Code %s)", container, what, claudeVersion), plain)
 	rt := runtime.NewDockerCLI()
 	if _, err := rt.CreateContainer(ctx, cfg); err != nil {
 		return 0, fmt.Errorf("creating the sandbox: %w", err)
