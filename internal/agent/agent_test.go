@@ -223,3 +223,68 @@ func TestResolveClaudeUsesCache(t *testing.T) {
 		t.Fatalf("got %v, %v; want the cached 2.1.300", rel, err)
 	}
 }
+
+func TestPrepareProjectDir(t *testing.T) {
+	root := t.TempDir()
+	agentDir, hostClaude := filepath.Join(root, "agent"), filepath.Join(root, "claude")
+	hostProject := "/Users/me/work/shop"
+	hostDir := filepath.Join(hostClaude, "projects", ProjectKey(hostProject))
+	write := func(path, content string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(filepath.Join(hostDir, "memory", "MEMORY.md"), "- [x](x.md)\n")
+	write(filepath.Join(hostDir, "host.jsonl"), `{"type":"summary"}`+"\n"+`{"cwd":"/Users/me/work/shop"}`+"\n")
+	write(filepath.Join(hostDir, "sandbox.jsonl"), `{"cwd":"/app"}`+"\n")
+	write(filepath.Join(hostDir, "sandbox", "subagents", "a.jsonl"), "{}\n")
+
+	dir, err := PrepareProjectDir(agentDir, hostClaude, hostProject, "/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dir != ProjectDir(agentDir, hostProject) {
+		t.Errorf("dir = %s", dir)
+	}
+	exists := func(path string) bool { _, err := os.Stat(path); return err == nil }
+	for _, want := range []string{"memory/MEMORY.md", "sandbox.jsonl", "sandbox/subagents/a.jsonl"} {
+		if !exists(filepath.Join(dir, want)) {
+			t.Errorf("%s missing in the sandboxes' directory", want)
+		}
+	}
+	if exists(filepath.Join(dir, "host.jsonl")) || !exists(filepath.Join(hostDir, "host.jsonl")) {
+		t.Error("a host conversation must stay on the host")
+	}
+	if exists(filepath.Join(hostDir, "sandbox.jsonl")) || exists(filepath.Join(hostDir, "sandbox")) {
+		t.Error("sandbox conversations must leave the host's directory")
+	}
+	if !exists(filepath.Join(hostDir, "memory", "MEMORY.md")) {
+		t.Error("the host's memory must stay")
+	}
+
+	// Only once: later host memory and transcripts are not copied over.
+	write(filepath.Join(hostDir, "memory", "new.md"), "x")
+	write(filepath.Join(hostDir, "later.jsonl"), `{"cwd":"/app"}`+"\n")
+	if _, err := PrepareProjectDir(agentDir, hostClaude, hostProject, "/app"); err != nil {
+		t.Fatal(err)
+	}
+	if exists(filepath.Join(dir, "memory", "new.md")) || exists(filepath.Join(dir, "later.jsonl")) {
+		t.Error("the directory is seeded once, then the two sides stay apart")
+	}
+}
+
+func TestClaudeMountsProjectDir(t *testing.T) {
+	hostClaude := filepath.Join(t.TempDir(), "claude")
+	mounts, err := ClaudeMounts(hostClaude, "/zdev/agent/projects/-Users-me-shop", "/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "type=bind,src=/zdev/agent/projects/-Users-me-shop,dst=" + filepath.Join(hostClaude, "projects", "-app")
+	if len(mounts) != 1 || mounts[0] != want {
+		t.Errorf("mounts = %v, want [%s]", mounts, want)
+	}
+}

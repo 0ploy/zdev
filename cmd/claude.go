@@ -558,14 +558,12 @@ func resumeArgs(rest []string, sessionID, hostDir, service string) []string {
 	return append(out, msg)
 }
 
-// newestTranscript is the most recently written conversation of a project
-// (Claude keeps them in ~/.claude/projects/<key>/<session-id>.jsonl).
+// newestTranscript is the most recently written sandbox conversation of a
+// project (<session-id>.jsonl in the sandboxes' project directory, never
+// the host's).
 func newestTranscript(hostDir string) string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	files, _ := filepath.Glob(filepath.Join(home, ".claude", "projects", agent.ProjectKey(hostDir), "*.jsonl"))
+	dir := agent.ProjectDir(filepath.Join(config.GetZdevHome(), "agent"), hostDir)
+	files, _ := filepath.Glob(filepath.Join(dir, "*.jsonl"))
 	newest, best := "", time.Time{}
 	for _, f := range files {
 		if fi, err := os.Stat(f); err == nil && fi.ModTime().After(best) {
@@ -864,7 +862,11 @@ func runSandbox(ctx context.Context, gcfg *config.GlobalConfig, s sandboxSpec) (
 	if err := d.Stream(ctx, strings.NewReader(agent.PrepareHomeScript), nil, os.Stderr, prepArgs...); err != nil {
 		return 0, fmt.Errorf("preparing the agent's home: %w", err)
 	}
-	claudeMounts, err := agent.ClaudeMounts(hostClaude, s.HostDir, s.Workdir)
+	projectDir, err := agent.PrepareProjectDir(agentDir, hostClaude, s.HostDir, s.Workdir)
+	if err != nil {
+		return 0, fmt.Errorf("preparing the sandbox's Claude project directory: %w", err)
+	}
+	claudeMounts, err := agent.ClaudeMounts(hostClaude, projectDir, s.Workdir)
 	if err != nil {
 		return 0, err
 	}

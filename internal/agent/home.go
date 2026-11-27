@@ -5,13 +5,19 @@ package agent
 // HOME in the agent container is the host's home path (e.g. /Users/me), backed
 // by a per-project volume, so absolute ~/.claude paths in plugin metadata,
 // settings and symlinked skills keep working. From the host's ~/.claude:
-// skills, agents, commands and plugins read-only, this project's memory and
-// transcripts read-write, CLAUDE.md, settings and scripts copied at start.
-// zdev never parses Claude's files; it seeds a fresh .claude.json once.
+// skills, agents, commands and plugins read-only, CLAUDE.md, settings and
+// scripts copied at start. Memory and transcripts are the sandbox's own
+// (ProjectDir), never the host's: a host transcript in the sandbox would leak
+// the host's conversations and resume them there, and one the sandbox wrote
+// would be resumed by Claude on the host as genuine history.
+// zdev seeds a fresh .claude.json once.
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -42,15 +48,134 @@ var nonKeyChars = regexp.MustCompile(`[^A-Za-z0-9]`)
 // every character that is not a letter or digit becomes "-".
 func ProjectKey(path string) string { return nonKeyChars.ReplaceAllString(path, "-") }
 
+// ProjectDir is the sandboxes' Claude project directory (memory and
+// transcripts) for a host project directory, keyed like Claude's own so it
+// follows the directory, not the project name.
+func ProjectDir(agentDir, hostProjectDir string) string {
+	return filepath.Join(agentDir, "projects", ProjectKey(hostProjectDir))
+}
+
+// PrepareProjectDir creates the sandboxes' project directory on first use:
+// the host's memory of the project is copied in, and the conversations
+// earlier sandboxes left in the host's directory (whose cwd is the
+// container's working directory) are moved over. Afterwards nothing is
+// shared: each side keeps its own memory and conversations.
+func PrepareProjectDir(agentDir, hostClaude, hostProjectDir, containerWorkdir string) (string, error) {
+	dir := ProjectDir(agentDir, hostProjectDir)
+	if _, err := os.Stat(dir); err == nil {
+		return dir, nil
+	}
+	tmp := dir + ".tmp"
+	if err := os.RemoveAll(tmp); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(tmp, 0o700); err != nil {
+		return "", err
+	}
+	hostDir := filepath.Join(hostClaude, "projects", ProjectKey(hostProjectDir))
+	if err := copyTree(filepath.Join(hostDir, "memory"), filepath.Join(tmp, "memory")); err != nil {
+		return "", fmt.Errorf("copying the project's memory: %w", err)
+	}
+	if err := os.Rename(tmp, dir); err != nil {
+		_ = os.RemoveAll(tmp)
+		if _, statErr := os.Stat(dir); statErr == nil {
+			return dir, nil // a concurrent session created it first
+		}
+		return "", err
+	}
+	if containerWorkdir != hostProjectDir {
+		moveSandboxTranscripts(hostDir, dir, containerWorkdir)
+	}
+	return dir, nil
+}
+
+// moveSandboxTranscripts moves the conversations recorded with cwd
+// containerWorkdir (and their side directories) from hostDir to dir. Best
+// effort: a conversation that can't be read or moved stays where it is.
+func moveSandboxTranscripts(hostDir, dir, containerWorkdir string) {
+	files, _ := filepath.Glob(filepath.Join(hostDir, "*.jsonl"))
+	for _, f := range files {
+		if transcriptCwd(f) != containerWorkdir {
+			continue
+		}
+		if err := os.Rename(f, filepath.Join(dir, filepath.Base(f))); err != nil {
+			continue
+		}
+		side := strings.TrimSuffix(f, ".jsonl")
+		if fi, err := os.Stat(side); err == nil && fi.IsDir() {
+			_ = os.Rename(side, filepath.Join(dir, filepath.Base(side)))
+		}
+	}
+}
+
+// transcriptCwd is the first cwd recorded in a Claude transcript.
+func transcriptCwd(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	r := bufio.NewReaderSize(f, 1<<20)
+	for i := 0; i < 50; i++ {
+		line, err := r.ReadBytes('\n')
+		var entry struct {
+			Cwd string `json:"cwd"`
+		}
+		if json.Unmarshal(line, &entry) == nil && entry.Cwd != "" {
+			return entry.Cwd
+		}
+		if err != nil {
+			return ""
+		}
+	}
+	return ""
+}
+
+// copyTree copies the regular files and directories under src to dst
+// (symlinks are skipped: the copy must not reach outside src). A missing src
+// copies nothing.
+func copyTree(src, dst string) error {
+	if _, err := os.Stat(src); os.IsNotExist(err) {
+		return nil
+	}
+	return filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(src, path)
+		target := filepath.Join(dst, rel)
+		switch {
+		case d.IsDir():
+			return os.MkdirAll(target, 0o700)
+		case !d.Type().IsRegular():
+			return nil
+		}
+		in, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer in.Close()
+		out, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+		if err != nil {
+			return err
+		}
+		if _, err := io.Copy(out, in); err != nil {
+			out.Close()
+			return err
+		}
+		return out.Close()
+	})
+}
+
 // claudeShared are the ~/.claude directories every session reads.
 var claudeShared = []string{"skills", "agents", "commands", "plugins"}
 
 // ClaudeMounts returns the --mount specs for the host's ~/.claude: the shared
 // directories and the targets of symlinks inside them read-only (at their
-// own paths, so the links resolve), and this project's memory directory
-// read-write at the key of the container's working directory. The memory
-// directory is created on the host when missing.
-func ClaudeMounts(hostClaude, hostProjectDir, containerWorkdir string) ([]string, error) {
+// own paths, so the links resolve), and the sandboxes' project directory
+// (PrepareProjectDir) read-write at the key of the container's working
+// directory.
+func ClaudeMounts(hostClaude, projectDir, containerWorkdir string) ([]string, error) {
 	var mounts []string
 	seen := map[string]bool{}
 	add := func(src, dst string, readOnly bool) error {
@@ -90,11 +215,7 @@ func ClaudeMounts(hostClaude, hostProjectDir, containerWorkdir string) ([]string
 			}
 		}
 	}
-	memory := filepath.Join(hostClaude, "projects", ProjectKey(hostProjectDir))
-	if err := os.MkdirAll(memory, 0o700); err != nil {
-		return nil, fmt.Errorf("creating %s: %w", memory, err)
-	}
-	if err := add(memory, filepath.Join(hostClaude, "projects", ProjectKey(containerWorkdir)), false); err != nil {
+	if err := add(projectDir, filepath.Join(hostClaude, "projects", ProjectKey(containerWorkdir)), false); err != nil {
 		return nil, err
 	}
 	sort.Strings(mounts)

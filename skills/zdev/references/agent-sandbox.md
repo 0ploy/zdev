@@ -26,4 +26,5 @@ The sandbox runs zdev's small bootstrap image; zdev commands are refused. Write 
 - Settings live only in `~/.zdev/global-config.yaml` under `agent:` (service per project, connectors, `host_access`, `disable_plugins`, `docker_socket: accept`), never in the project config.
 - A service that mounts the Docker socket makes `zdev claude` refuse the project unless `agent.projects.<name>.docker_socket: accept`.
 - Git sync conflict reported by `zdev status`: `zdev mutagen repair-git`.
+- Sandbox memory and conversations are separate from Claude on the host (`~/.zdev/agent/projects/<host-path-key>/`, seeded once from the host's memory): `zdev claude --continue` only resumes sandbox conversations.
 - New Claude Code release: checked daily, downloaded in the background, used from the next session; `zdev claude update` fetches it now.
