@@ -83,7 +83,7 @@ func SystemPrompt(d PromptData) string {
 			w("- These are BusyBox's, not GNU's (fewer options, e.g. no `grep -P`): %s.\n", strings.Join(d.Info.BusyBox, ", "))
 		}
 	}
-	w("- `zdev` and `claude` are added at the end of PATH.\n\n")
+	w("- `zdev` and `claude` are added at the end of PATH, and so are `jq`, `gh` and `glab` (an image's own copy comes first).\n\n")
 
 	w("# The running app\n\n")
 	w("The app runs in a separate container, `%s`, so its processes are not visible here (`ps` shows only yours). ", d.Service)

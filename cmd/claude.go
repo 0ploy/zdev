@@ -839,7 +839,11 @@ func runSandbox(ctx context.Context, gcfg *config.GlobalConfig, s sandboxSpec) (
 	if err != nil {
 		return 0, err
 	}
-	agent.MarkUsed(ctx, d, agentDir, claudeVol, toolsVol)
+	sandboxToolsVol, err := agent.EnsureSandboxTools(ctx, d, arch)
+	if err != nil {
+		return 0, err
+	}
+	agent.MarkUsed(ctx, d, agentDir, claudeVol, toolsVol, sandboxToolsVol)
 
 	// The agent's home (at the host's home path) and Claude's configuration.
 	hostHome, err := os.UserHomeDir()
@@ -935,7 +939,7 @@ func runSandbox(ctx context.Context, gcfg *config.GlobalConfig, s sandboxSpec) (
 	}
 	env := map[string]string{
 		"HOME":                            hostHome,
-		"PATH":                            info.Path + ":/opt/zdev/bin:/opt/zdev/claude",
+		"PATH":                            info.Path + ":/opt/zdev/bin:/opt/zdev/claude:" + agent.SandboxToolsMount,
 		"SHELL":                           "/bin/bash",
 		"DISABLE_AUTOUPDATER":             "1",
 		"CLAUDE_SECURESTORAGE_CONFIG_DIR": agent.AuthMount,
@@ -976,6 +980,7 @@ func runSandbox(ctx context.Context, gcfg *config.GlobalConfig, s sandboxSpec) (
 	cfg.Mounts = append(append([]string(nil), cfg.Mounts...),
 		"type=volume,src="+toolsVol+",dst=/opt/zdev/bin,readonly",
 		"type=volume,src="+claudeVol+",dst=/opt/zdev/claude,readonly",
+		"type=volume,src="+sandboxToolsVol+",dst="+agent.SandboxToolsMount+",readonly",
 		"type=volume,src="+homeVol+",dst="+hostHome,
 		"type=bind,src="+authDir+",dst="+agent.AuthMount,
 		"type=bind,src="+sessionDir+",dst="+agent.SessionMount+",readonly",
