@@ -12,7 +12,7 @@ import (
 
 // MkcertTool returns the ToolInfo for mkcert
 func MkcertTool() ToolInfo {
-	return ToolInfo{ToolRelease: config.Mkcert, BinaryName: "mkcert"}
+	return ToolInfo{ToolRelease: config.Mkcert, BinaryName: "mkcert", VersionArgs: []string{"-version"}}
 }
 
 // Mkcert wraps mkcert operations

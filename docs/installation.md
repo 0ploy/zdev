@@ -19,6 +19,8 @@ The installer places the real binary at `~/.zdev/bin/zdev` and symlinks it into 
 
 Set `ZDEV_NO_UPDATE_CHECK=1` to disable. `zdev self-update` still works for on-demand updates and auto-migrates legacy installs to the symlink layout.
 
+**Helper tools follow along.** zdev downloads mkcert, just and mutagen into `~/.zdev/bin` when it first needs them and they aren't on your `PATH` (a copy on `PATH`, e.g. from Homebrew, always wins and is yours to update). Each zdev release pins exact versions with checksums; when a new zdev pins a newer one, the next command that uses the tool replaces it (`Updating mutagen to ...`). For mutagen it stops the old daemon first, since a newer client can't talk to it; your sync sessions are kept and resume with the new daemon. If the download fails, zdev keeps using the installed copy and tries again next time.
+
 ## Agent skill
 
 ```bash

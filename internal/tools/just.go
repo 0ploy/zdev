@@ -13,7 +13,7 @@ import (
 
 // JustTool returns the ToolInfo for just
 func JustTool() ToolInfo {
-	return ToolInfo{ToolRelease: config.Just, BinaryName: "just", ArchiveType: "tar.gz"}
+	return ToolInfo{ToolRelease: config.Just, BinaryName: "just", ArchiveType: "tar.gz", VersionArgs: []string{"--version"}}
 }
 
 // Just wraps just operations

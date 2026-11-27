@@ -25,6 +25,12 @@ type ToolInfo struct {
 	BinaryName  string
 	ArchiveType string   // "", "tar.gz", or "zip" - empty means bare binary
 	ExtraFiles  []string // Additional files to extract from archive (e.g., mutagen-agents.tar.gz)
+	// VersionArgs print the version (output contains Version); they identify
+	// a copy installed before zdev recorded pins.
+	VersionArgs []string
+	// BeforeUpdate runs with the installed binary before a newer one replaces
+	// it (mutagen stops its daemon, which a newer client can't talk to).
+	BeforeUpdate func(ctx context.Context, oldPath string)
 }
 
 // Manager handles tool downloads and verification
@@ -85,18 +91,64 @@ func (m *Manager) EnsureTool(ctx context.Context, tool ToolInfo) (string, error)
 		return path, nil
 	}
 
-	// Check if we already have it in our bin directory
+	// Check if we already have it in our bin directory, from the pinned release
 	toolPath := m.GetToolPath(tool)
-	if m.ToolExists(tool) {
+	installed := m.ToolExists(tool)
+	if installed && m.toolCurrent(ctx, tool) {
 		return toolPath, nil
 	}
 
-	// Download the tool
+	if installed {
+		fmt.Fprintf(os.Stderr, "Updating %s to %s...\n", tool.Name, tool.Version)
+		if tool.BeforeUpdate != nil {
+			tool.BeforeUpdate(ctx, toolPath)
+		}
+	}
 	if err := m.downloadTool(ctx, tool); err != nil {
+		if installed {
+			// The old copy is untouched (downloadTool replaces only after
+			// verifying); keep working offline and retry next time.
+			fmt.Fprintf(os.Stderr, "Warning: updating %s failed, keeping the installed one: %v\n", tool.Name, err)
+			return toolPath, nil
+		}
 		return "", fmt.Errorf("failed to download %s: %w", tool.Name, err)
 	}
+	m.recordPin(tool)
 
 	return toolPath, nil
+}
+
+// The pin file next to a downloaded tool records the release it came from,
+// so a changed pin in defaults.go replaces it: without it, a copy in
+// ~/.zdev/bin would stay at whatever version was current on first use.
+func (m *Manager) pinPath(tool ToolInfo) string {
+	return filepath.Join(m.binDir, "."+tool.BinaryName+".pin")
+}
+
+func pinOf(tool ToolInfo) string {
+	return tool.Version + " " + tool.Checksum(runtime.GOOS, runtime.GOARCH) + "\n"
+}
+
+func (m *Manager) recordPin(tool ToolInfo) {
+	_ = os.WriteFile(m.pinPath(tool), []byte(pinOf(tool)), 0o644)
+}
+
+// toolCurrent reports whether the installed copy is the pinned release. A
+// copy from before pin files (no file) counts when its version output
+// contains the pinned version; it then gets its pin file.
+func (m *Manager) toolCurrent(ctx context.Context, tool ToolInfo) bool {
+	if b, err := os.ReadFile(m.pinPath(tool)); err == nil {
+		return string(b) == pinOf(tool)
+	}
+	if len(tool.VersionArgs) == 0 {
+		return false
+	}
+	out, err := RunTool(ctx, m.GetToolPath(tool), tool.VersionArgs...)
+	if err != nil || !strings.Contains(out, tool.Version) {
+		return false
+	}
+	m.recordPin(tool)
+	return true
 }
 
 // downloadTool downloads and installs a tool
