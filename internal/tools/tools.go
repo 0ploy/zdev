@@ -19,15 +19,12 @@ import (
 )
 
 // ToolInfo describes a downloadable tool
+// (the pinned release from internal/config/defaults.go plus how it unpacks).
 type ToolInfo struct {
-	Name        string
-	Version     string
-	URLTemplate string
+	config.ToolRelease
 	BinaryName  string
-	ArchiveType string                                              // "", "tar.gz", or "zip" - empty means bare binary
-	URLBuilder  func(template, version, goos, goarch string) string // Custom URL builder, nil uses default
-	ExtraFiles  []string                                            // Additional files to extract from archive (e.g., mutagen-agents.tar.gz)
-	Checksums   map[string]string                                   // SHA-256 by "<goos>/<goarch>"
+	ArchiveType string   // "", "tar.gz", or "zip" - empty means bare binary
+	ExtraFiles  []string // Additional files to extract from archive (e.g., mutagen-agents.tar.gz)
 }
 
 // Manager handles tool downloads and verification
@@ -104,10 +101,10 @@ func (m *Manager) EnsureTool(ctx context.Context, tool ToolInfo) (string, error)
 
 // downloadTool downloads and installs a tool
 func (m *Manager) downloadTool(ctx context.Context, tool ToolInfo) error {
-	url := buildDownloadURL(tool)
+	url := tool.DownloadURL(runtime.GOOS, runtime.GOARCH)
 	destPath := m.GetToolPath(tool)
-	checksum, ok := tool.Checksums[runtime.GOOS+"/"+runtime.GOARCH]
-	if !ok || checksum == "" {
+	checksum := tool.Checksum(runtime.GOOS, runtime.GOARCH)
+	if checksum == "" {
 		return fmt.Errorf("no SHA-256 checksum configured for %s %s/%s", tool.Name, runtime.GOOS, runtime.GOARCH)
 	}
 	if _, err := hex.DecodeString(checksum); err != nil || len(checksum) != sha256.Size*2 {
@@ -288,47 +285,6 @@ func (m *Manager) extractTarGz(archivePath, binaryName, destPath string, extraFi
 	}
 
 	return nil
-}
-
-// buildDownloadURL constructs the download URL for a tool
-func buildDownloadURL(tool ToolInfo) string {
-	goos := runtime.GOOS
-	goarch := runtime.GOARCH
-
-	// Use custom URL builder if provided
-	if tool.URLBuilder != nil {
-		return tool.URLBuilder(tool.URLTemplate, tool.Version, goos, goarch)
-	}
-
-	// Default: mkcert-style (version, version, os, arch)
-	// URL template: https://github.com/FiloSottile/mkcert/releases/download/%s/mkcert-%s-%s-%s
-	return fmt.Sprintf(tool.URLTemplate, tool.Version, tool.Version, goos, goarch)
-}
-
-// JustArch returns the architecture string for just downloads
-// just uses x86_64/aarch64 instead of amd64/arm64
-func JustArch(goarch string) string {
-	switch goarch {
-	case "amd64":
-		return "x86_64"
-	case "arm64":
-		return "aarch64"
-	default:
-		return goarch
-	}
-}
-
-// JustOS returns the OS string for just downloads
-// just uses apple-darwin/unknown-linux-musl instead of darwin/linux
-func JustOS(goos string) string {
-	switch goos {
-	case "darwin":
-		return "apple-darwin"
-	case "linux":
-		return "unknown-linux-musl"
-	default:
-		return goos
-	}
 }
 
 // RunTool executes a tool with the given arguments

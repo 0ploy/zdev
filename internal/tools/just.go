@@ -13,24 +13,7 @@ import (
 
 // JustTool returns the ToolInfo for just
 func JustTool() ToolInfo {
-	return ToolInfo{
-		Name:        "just",
-		Version:     config.JustVersion,
-		URLTemplate: config.JustURLTemplate,
-		BinaryName:  "just",
-		ArchiveType: "tar.gz",
-		Checksums: map[string]string{
-			"darwin/amd64": "036ead9df9bc31dbae9934ae3b4236ed124d0bafcffd33439460ae084d5c9cb7",
-			"darwin/arm64": "6574cea774ed4cae12e24b6aa11857de33e80dab4667cf628fd5840df96a2a9d",
-			"linux/amd64":  "409044617b6f06517c1035e55ca38c8c856ff8b650e41bc2aa1ef82d5903a23e",
-			"linux/arm64":  "23871b1702bfd550fb5f901778fd4290ecf2ee034a45a889fbe96d89b188086d",
-		},
-		URLBuilder: func(template, version, goos, goarch string) string {
-			arch := JustArch(goarch)
-			os := JustOS(goos)
-			return fmt.Sprintf(template, version, version, arch, os)
-		},
-	}
+	return ToolInfo{ToolRelease: config.Just, BinaryName: "just", ArchiveType: "tar.gz"}
 }
 
 // Just wraps just operations
