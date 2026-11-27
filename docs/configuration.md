@@ -208,12 +208,13 @@ Settings for `zdev claude` ([Agents](agents.md)). They live only here, on your m
 
 ```yaml
 agent:
-  claude:
+  claude:                      # what only Claude Code understands
     channel: stable            # stable (default, about weekly) | latest | a version like 2.1.325
-  disable_plugins: [codex@openai-codex]   # Claude plugins switched off in every sandbox (host-only ones)
+    disable_plugins: [codex@openai-codex]   # Claude plugins switched off in every sandbox (host-only ones)
   host_hook: ~/bin/zdev-agent-hook        # runs on this machine when a session starts and ends (see below)
   defaults:                    # for every project
-    connectors: false          # claude.ai connectors (Drive, Slack, ...) of your login; off by default
+    claude:
+      connectors: false        # claude.ai connectors (Drive, Slack, ...) of your login; off by default
     host_access: []            # ports on this machine the agent may reach (e.g. 11434 for Ollama)
     limits: {cpus: "4", memory: 8g, pids: 4096}
     egress: log                # log (every public host, logged) | enforce (only allow_hosts, credential hosts and Claude's own hosts)
@@ -221,8 +222,8 @@ agent:
     credentials: []            # names from agent.credentials below
   projects:
     shop:                      # per project, over defaults
-      service: web             # image the agent runs in when `zdev claude` names none (default: app)
-      connectors: true
+      service: web             # image the agent runs in when the session names none (default: app)
+      claude: {connectors: true}
     ci-runner:
       docker_socket: accept    # a service mounts the Docker socket: run anyway, the sandbox is no boundary
   credentials:                 # tokens the egress proxy swaps in; the sandbox only sees placeholders
@@ -234,7 +235,9 @@ agent:
       # file: ~/.zdev/agent/credentials/github   (must be mode 0600 and yours)
 ```
 
-A project uses a credential when it lists it (`projects.<name>.credentials: [github]`, or in `defaults`). `zdev claude setup`, run in a project, writes both for the host of its `origin` remote: GitHub, or GitLab (gitlab.com or a self-hosted instance, recognized by its API). It walks you through a token for the project's repository (GitHub: a fine-grained token; GitLab: a project access token, role Developer, scope `api`), checks it, stores it in 1Password or a `file:` only you can read, and grants it in place of an earlier credential for the same host, editing this file in place (your comments and order stay). GitHub tokens set `GH_TOKEN`, GitLab tokens `GITLAB_TOKEN`. Prefer a token scoped to the project's repository over your own `gh`/`glab` login: the agent can use whatever the token allows while the session runs. Credentials need zdev's CA bundle in the containers (HTTPS set up, `zdev systemcheck`).
+`zdev agent credentials` manages this section for you: `add` asks for hosts, variables and the source (paste the token and store it in 1Password or an owner-only file, a 1Password reference, or a command), or takes them as flags (`--host`, `--env`, `--command`/`--secret`/`--file`, `--preset npm`); `grant`/`revoke` (in a project, or `--all` for `defaults`), `list`, `test` (reads it, prints only its length) and `remove` (also deletes a token file zdev stored). A project's own `credentials:` list replaces `defaults`, so granting to a project that has none starts from the defaults it gets now. The proxy swaps a token only in request headers: tools that send it in the URL or body, or sign requests with it (AWS), need the real value and can't use a credential.
+
+A project uses a credential when it lists it (`projects.<name>.credentials: [github]`, or in `defaults`). `zdev agent setup`, run in a project, writes both for the host of its `origin` remote: GitHub, or GitLab (gitlab.com or a self-hosted instance, recognized by its API). It walks you through a token for the project's repository (GitHub: a fine-grained token; GitLab: a project access token, role Developer, scope `api`), checks it, stores it in 1Password or a `file:` only you can read, and grants it in place of an earlier credential for the same host, editing this file in place (your comments and order stay). GitHub tokens set `GH_TOKEN`, GitLab tokens `GITLAB_TOKEN`. Prefer a token scoped to the project's repository over your own `gh`/`glab` login: the agent can use whatever the token allows while the session runs. Credentials need zdev's CA bundle in the containers (HTTPS set up, `zdev systemcheck`).
 
 `host_hook` is a command run with `sh` on your machine when a `zdev claude` session starts and when it ends, for example to tell your terminal that Claude runs in this tab. It gets the event in `ZDEV_AGENT_EVENT` (`SessionStart` or `SessionEnd`), the PID of the `zdev claude` process in `ZDEV_AGENT_PID`, the project in `ZDEV_PROJECT`, and on stdin JSON in the shape of Claude Code's hook input: `session_id`, `cwd` (the project directory on your machine) and `hook_event_name`. A replaced sandbox doesn't count as a new session. The hook gets 5 seconds, its output is discarded, and a failure only prints a warning. `SessionEnd` is skipped when `zdev claude` is killed or crashes, so watch `ZDEV_AGENT_PID` if something must not outlive the session. Ignore events you don't know: later versions may send more. For [cmux](https://cmux.com), which then shows the Claude icon on the tab (it clears it when that PID exits):
 
@@ -252,6 +255,6 @@ Outside a cmux tab `cmux claude-hook` does nothing.
 
 What your own `zdev start`, `update` and `restart` applied is recorded in `~/.zdev/agent/approved/<project>.json`; config changes from a sandbox that reach beyond it are refused ([Agents](agents.md)). `zdev down` and `zdev rename` remove the file.
 
-Claude Code releases are downloaded into Docker volumes (`zdev-claude-<version>-<libc>-<arch>`), checked against Anthropic's release manifest; a superseded version is removed a day after a newer one is first used. `zdev claude` asks for the channel's release once a day and never waits for it when a build is already there: the session starts with the newest one here and the new release downloads in the background for the next session (a pinned version, or the very first build, is downloaded before the start). `zdev claude update` asks and downloads right away. Each project keeps the agent's home in a volume (`zdev-agent-home-<project>`, removed by `zdev down -v`).
+Claude Code releases are downloaded into Docker volumes (`zdev-claude-<version>-<libc>-<arch>`), checked against Anthropic's release manifest; a superseded version is removed a day after a newer one is first used. `zdev claude` asks for the channel's release once a day and never waits for it when a build is already there: the session starts with the newest one here and the new release downloads in the background for the next session (a pinned version, or the very first build, is downloaded before the start). `zdev agent update` asks and downloads right away. Each project keeps the agent's home in a volume (`zdev-agent-home-<project>`, removed by `zdev down -v`).
 
 Environment variables zdev itself honors: `ZDEV_HOME` relocates the zdev home directory (config, state, certs, downloaded tools; default `~/.zdev`), `ZDEV_PLAIN=1` forces plain output (no colors, hyperlinks, or step markers - overrides the `terminal.plain` config setting), `ZDEV_NO_UPDATE_CHECK=1` disables the background self-update check, `OP_SERVICE_ACCOUNT_TOKEN` authenticates 1Password secret resolution in CI, and `ZDEV_AGENT_LINUX_BINARY` points `zdev claude` at a Linux build of zdev for the sandbox (development builds; releases download their own).

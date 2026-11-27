@@ -1,6 +1,6 @@
 package config
 
-// Editing ~/.zdev/global-config.yaml from commands (zdev claude setup): the
+// Editing ~/.zdev/global-config.yaml from commands (zdev agent setup): the
 // file is the developer's, with their comments and order, so it is edited as
 // a YAML node tree, never re-encoded from GlobalConfig. The result must still
 // load and validate, or nothing is written.

@@ -18,17 +18,15 @@ type GlobalConfig struct {
 	Agent    AgentConfig         `yaml:"agent"`
 }
 
-// AgentConfig holds the settings of the sandboxed coding agents (zdev claude).
-// They live only in the host's global config, never in .zdev/config.yaml: the
-// agent can edit project config, so anything there could grant it more access.
+// AgentConfig holds the settings of the sandboxed coding agents (zdev agent,
+// zdev claude). They live only in the host's global config, never in
+// .zdev/config.yaml: the agent can edit project config, so anything there
+// could grant it more access. What applies to every agent sits at this level;
+// what only one agent understands sits in that agent's section (claude:).
 type AgentConfig struct {
-	Claude AgentClaudeConfig `yaml:"claude"`
-	// DisablePlugins are Claude plugins switched off in every sandbox:
-	// host-only ones whose hooks or tools don't exist there (e.g.
-	// codex@openai-codex, whose hooks need node and the Codex CLI).
-	DisablePlugins []string                      `yaml:"disable_plugins"`
-	Defaults       AgentProjectConfig            `yaml:"defaults"`
-	Projects       map[string]AgentProjectConfig `yaml:"projects"`
+	Claude   AgentClaudeConfig             `yaml:"claude"`
+	Defaults AgentProjectConfig            `yaml:"defaults"`
+	Projects map[string]AgentProjectConfig `yaml:"projects"`
 	// Credentials are tokens the egress proxy swaps in for their hosts; a
 	// project uses the ones it lists (projects.<p>.credentials).
 	Credentials map[string]AgentCredential `yaml:"credentials"`
@@ -50,19 +48,29 @@ type AgentCredential struct {
 	File    string   `yaml:"file,omitempty"`    // e.g. ~/.zdev/agent/credentials/github-app (mode 0600)
 }
 
-// AgentClaudeConfig selects which Claude Code release sandboxes run.
+// AgentClaudeConfig is what applies to Claude Code in every sandbox.
 type AgentClaudeConfig struct {
 	// Channel is "stable" (default), "latest" or a version like "2.1.325".
 	Channel string `yaml:"channel"`
+	// DisablePlugins are Claude plugins switched off in every sandbox:
+	// host-only ones whose hooks or tools don't exist there (e.g.
+	// codex@openai-codex, whose hooks need node and the Codex CLI).
+	DisablePlugins []string `yaml:"disable_plugins"`
+}
+
+// AgentProjectClaude is per-project policy only Claude Code understands.
+type AgentProjectClaude struct {
+	// Connectors enables claude.ai connectors (MCP servers of the login).
+	Connectors *bool `yaml:"connectors"`
 }
 
 // AgentProjectConfig is per-project agent policy; Defaults supplies what a
 // project entry leaves unset (see GlobalConfig.AgentProject).
 type AgentProjectConfig struct {
-	// Service whose image the agent runs in when `zdev claude` names none.
+	// Service whose image the agent runs in when the session names none.
 	Service string `yaml:"service"`
-	// Connectors enables claude.ai connectors (MCP servers of the login).
-	Connectors *bool `yaml:"connectors"`
+	// Claude holds what only Claude Code understands.
+	Claude AgentProjectClaude `yaml:"claude"`
 	// HostAccess lists host ports the agent may reach through the host fence.
 	HostAccess []int `yaml:"host_access"`
 	// DockerSocket "accept" allows agent mode for a project in which some
@@ -94,8 +102,8 @@ func (g *GlobalConfig) AgentProject(name string) AgentProjectConfig {
 		if src.Service != "" {
 			out.Service = src.Service
 		}
-		if src.Connectors != nil {
-			out.Connectors = src.Connectors
+		if src.Claude.Connectors != nil {
+			out.Claude.Connectors = src.Claude.Connectors
 		}
 		if src.HostAccess != nil {
 			out.HostAccess = src.HostAccess
@@ -130,7 +138,7 @@ func (g *GlobalConfig) AgentProject(name string) AgentProjectConfig {
 
 // ConnectorsEnabled reports whether claude.ai connectors are on (default off).
 func (a AgentProjectConfig) ConnectorsEnabled() bool {
-	return a.Connectors != nil && *a.Connectors
+	return a.Claude.Connectors != nil && *a.Claude.Connectors
 }
 
 // DNSFallbackConfig configures the optional local DNS fallback used when

@@ -1,6 +1,6 @@
 package cmd
 
-// zdev claude setup for GitLab, gitlab.com or a self-hosted instance: the
+// zdev agent setup for GitLab, gitlab.com or a self-hosted instance: the
 // counterpart of GitHub's fine-grained token is a project access token, which
 // reaches only this project. GitLab can't pre-fill its form (only the
 // personal access token page takes URL parameters), so the setup opens the
@@ -169,7 +169,7 @@ Then "Create token" and paste it here.
 		} else if len(others) > 0 {
 			fmt.Printf("The token also reaches %s: it is not a project access token of %s.\n", strings.Join(others, ", "), path)
 			if !askYes(in, "Keep it anyway? [y/N] ", false) {
-				return errors.New("create the token under the project's Settings > Access tokens and run zdev claude setup again")
+				return errors.New("create the token under the project's Settings > Access tokens and run zdev agent setup again")
 			}
 		}
 	}
@@ -177,7 +177,8 @@ Then "Create token" and paste it here.
 	cred := config.AgentCredential{Hosts: []string{host}, Env: []string{"GITLAB_TOKEN"}}
 	op := secrets.NewOnePasswordCLI()
 	if _, found := tools.FindInPath("op"); found && askYes(in, "Store it in 1Password? [Y/n] ", true) {
-		ref, err := storeIn1Password(ctx, in, op, "zdev "+name, token, host, "GitLab", path)
+		ref, err := storeIn1Password(ctx, in, op, "zdev "+name, token, host,
+			"GitLab token for zdev claude sandboxes of "+path+", swapped in by zdev's egress proxy. Created by zdev agent setup.")
 		if err != nil {
 			return err
 		}

@@ -215,7 +215,8 @@ func TestResolveClaudeUsesCache(t *testing.T) {
 	cached := ClaudeRelease{Channel: "stable", Version: "2.1.300", ResolvedAt: time.Now().Add(-20 * time.Hour),
 		Platforms: map[string]ClaudeBuild{"linux-arm64": {SHA256: strings.Repeat("a", 64)}}}
 	b, _ := json.Marshal(cached)
-	if err := os.WriteFile(filepath.Join(dir, "claude-release.json"), b, 0o600); err != nil {
+	_ = os.MkdirAll(filepath.Join(dir, "claude"), 0o700)
+	if err := os.WriteFile(filepath.Join(dir, "claude", "release.json"), b, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	rel, err := ResolveClaude(context.Background(), dir, "stable", ClaudeCheckEvery)

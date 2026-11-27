@@ -29,9 +29,15 @@ zdev run                        # List project commands (.zdev/run/)
 zdev run <cmd> [job] [args]     # Run a project command
 zdev logs                       # View logs
 zdev logs -f app                # Follow logs for a service
-zdev claude [service] [args]    # Claude Code in a sandbox container of the project (see docs/agents.md)
-zdev claude update              # download the newest Claude Code release for the sandboxes now
-zdev claude setup               # check the login, give this project's sandbox a GitHub or GitLab token
+zdev claude [service] [args]    # Claude Code in a sandbox of the project; shortcut for zdev agent run claude, every argument (--help too) goes to Claude (see docs/agents.md)
+zdev agent run claude [service] [args]  # the same, spelled out
+zdev agent update [claude]     # download the newest Claude Code release for the sandboxes now
+zdev agent setup               # check the login, give this project's sandbox a GitHub or GitLab token
+zdev agent credentials         # list the tokens sandboxes get, and which projects get them
+zdev agent credentials add NAME  # add a token (asks, or: --host, --env, --command/--secret/--file, --preset npm)
+zdev agent credentials grant|revoke NAME [--all]  # for this project, or every project
+zdev agent credentials test NAME  # read it as a session would (prints its length, never the value)
+zdev agent credentials remove NAME
 ```
 
 ## Information

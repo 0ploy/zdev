@@ -40,7 +40,7 @@ const SystemPromptFile = SessionMount + "/zdev-system-prompt.md"
 func HomeVolumeName(project string) string { return "zdev-agent-home-" + project }
 
 // AuthDir is the shared login directory on the host.
-func AuthDir(agentDir string) string { return filepath.Join(agentDir, "claude-auth") }
+func AuthDir(agentDir string) string { return filepath.Join(agentDir, "claude", "auth") }
 
 var nonKeyChars = regexp.MustCompile(`[^A-Za-z0-9]`)
 
@@ -52,7 +52,7 @@ func ProjectKey(path string) string { return nonKeyChars.ReplaceAllString(path, 
 // transcripts) for a host project directory, keyed like Claude's own so it
 // follows the directory, not the project name.
 func ProjectDir(agentDir, hostProjectDir string) string {
-	return filepath.Join(agentDir, "projects", ProjectKey(hostProjectDir))
+	return filepath.Join(agentDir, "claude", "projects", ProjectKey(hostProjectDir))
 }
 
 // PrepareProjectDir creates the sandboxes' project directory on first use:
@@ -263,7 +263,7 @@ const TurnEndHook = "/opt/zdev/bin/zdev sandbox turn-end"
 // ManagedSettings is Claude's managed-settings.json for a session: tools run
 // without prompts (the container is the boundary), the updater is off,
 // claude.ai connectors only when the project allows them, the host-only
-// plugins of agent.disable_plugins switched off, and with turnHook the Stop
+// plugins of agent.claude.disable_plugins switched off, and with turnHook the Stop
 // hook that lets the host replace the sandbox between turns.
 func ManagedSettings(connectors bool, disablePlugins []string, turnHook bool) []byte {
 	settings := map[string]any{

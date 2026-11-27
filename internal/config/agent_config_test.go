@@ -6,7 +6,7 @@ func TestAgentProjectMerge(t *testing.T) {
 	yes := true
 	g := &GlobalConfig{Agent: AgentConfig{
 		Defaults: AgentProjectConfig{HostAccess: []int{1}, Limits: AgentLimits{Memory: "2g"}},
-		Projects: map[string]AgentProjectConfig{"shop": {Service: "web", Connectors: &yes, Limits: AgentLimits{CPUs: "2"}}},
+		Projects: map[string]AgentProjectConfig{"shop": {Service: "web", Claude: AgentProjectClaude{Connectors: &yes}, Limits: AgentLimits{CPUs: "2"}}},
 	}}
 	p := g.AgentProject("shop")
 	if p.Service != "web" || !p.ConnectorsEnabled() || p.Limits.CPUs != "2" || p.Limits.Memory != "2g" || p.Limits.Pids != 4096 || len(p.HostAccess) != 1 {

@@ -1,6 +1,6 @@
 package cmd
 
-// zdev claude setup: walks the developer through what agent sandboxes need
+// zdev agent setup: walks the developer through what agent sandboxes need
 // from them. Claude's login stays the shared /login store (renewed by Claude
 // itself, so it can't live in a read-only place); the project's git host
 // (GitHub, or GitLab including self-hosted instances, found from the origin
@@ -42,7 +42,7 @@ var githubAPI = "https://api.github.com"
 
 func runClaudeSetup(ctx context.Context) error {
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
-		return errors.New("zdev claude setup asks questions: run it in a terminal")
+		return errors.New("zdev agent setup asks questions: run it in a terminal")
 	}
 	gcfg, err := config.LoadGlobalConfig()
 	if err != nil {
@@ -56,7 +56,7 @@ func runClaudeSetup(ctx context.Context) error {
 
 	dir, err := config.FindProjectDir()
 	if err != nil {
-		fmt.Println("\nRun zdev claude setup in a project to give its sandbox a GitHub or GitLab token.")
+		fmt.Println("\nRun zdev agent setup in a project to give its sandbox a GitHub or GitLab token.")
 		return nil
 	}
 	pcfg, err := config.LoadProject(dir)
@@ -81,7 +81,7 @@ func runClaudeSetup(ctx context.Context) error {
 		return setupGitLab(ctx, in, plain, gcfg, pcfg.Name, host, path)
 	}
 	ui.StatusStep("Git hosting for "+pcfg.Name, plain)
-	fmt.Printf("origin is on %s, which zdev claude setup doesn't recognize (it sets up GitHub and GitLab).\n", host)
+	fmt.Printf("origin is on %s, which zdev agent setup doesn't recognize (it sets up GitHub and GitLab).\n", host)
 	fmt.Println("A token can still be granted by hand: agent.credentials in ~/.zdev/global-config.yaml (docs/configuration.md).")
 	return nil
 }
@@ -179,14 +179,15 @@ Then "Generate token" and paste it here.
 	} else if len(others) > 0 {
 		fmt.Printf("The token also opens other private repositories of %s (%s): Repository access is not limited to %s.\n", owner, strings.Join(others, ", "), repo)
 		if !askYes(in, "Keep it anyway? [y/N] ", false) {
-			return errors.New("set Repository access to \"Only select repositories\" (on the token's page: Edit) and run zdev claude setup again")
+			return errors.New("set Repository access to \"Only select repositories\" (on the token's page: Edit) and run zdev agent setup again")
 		}
 	}
 
 	cred := config.AgentCredential{Hosts: githubHosts, Env: []string{"GH_TOKEN"}}
 	op := secrets.NewOnePasswordCLI()
 	if _, found := tools.FindInPath("op"); found && askYes(in, "Store it in 1Password? [Y/n] ", true) {
-		ref, err := storeIn1Password(ctx, in, op, "zdev "+name, token, "github.com", "GitHub", owner+"/"+repo)
+		ref, err := storeIn1Password(ctx, in, op, "zdev "+name, token, "github.com",
+			"GitHub token for zdev claude sandboxes of "+owner+"/"+repo+", swapped in by zdev's egress proxy. Created by zdev agent setup.")
 		if err != nil {
 			return err
 		}
@@ -208,7 +209,7 @@ Then "Generate token" and paste it here.
 // storeIn1Password creates an API Credential item in a vault the developer
 // picks and returns its reference by IDs (renames don't break it). The token
 // goes to op on stdin, never on its command line.
-func storeIn1Password(ctx context.Context, in *bufio.Reader, op *secrets.OnePasswordCLI, title, token, host, forge, repo string) (string, error) {
+func storeIn1Password(ctx context.Context, in *bufio.Reader, op *secrets.OnePasswordCLI, title, token, host, notes string) (string, error) {
 	out, err := op.Op(ctx, nil, "vault", "list", "--permission", "create_items", "--format", "json")
 	if err != nil {
 		return "", err
@@ -243,8 +244,7 @@ func storeIn1Password(ctx context.Context, in *bufio.Reader, op *secrets.OnePass
 		"fields": []map[string]string{
 			{"id": "credential", "type": "CONCEALED", "label": "credential", "value": token},
 			{"id": "hostname", "type": "STRING", "label": "hostname", "value": host},
-			{"id": "notesPlain", "type": "STRING", "purpose": "NOTES", "label": "notesPlain",
-				"value": forge + " token for zdev claude sandboxes of " + repo + ", swapped in by zdev's egress proxy. Created by zdev claude setup."},
+			{"id": "notesPlain", "type": "STRING", "purpose": "NOTES", "label": "notesPlain", "value": notes},
 		},
 	}
 	tmpl, _ := json.Marshal(item)
@@ -286,8 +286,10 @@ func grantCredential(project, name string, cred config.AgentCredential) error {
 	if err != nil {
 		return err
 	}
+	// From what the project gets now: a project without its own list gets
+	// the defaults, and its new list replaces them, so they must carry over.
 	grants := []string{name}
-	for _, c := range gcfg.Agent.Projects[project].Credentials {
+	for _, c := range gcfg.AgentProject(project).Credentials {
 		if c != name && !sharesHost(gcfg.Agent.Credentials[c], cred.Hosts) {
 			grants = append(grants, c)
 		}

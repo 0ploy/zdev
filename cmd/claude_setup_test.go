@@ -72,3 +72,25 @@ func TestGrantCredentialReplacesSameHost(t *testing.T) {
 		t.Errorf("grants = %v", got)
 	}
 }
+
+// A project's own list replaces the defaults, so setup granting the first
+// project-level credential must carry the defaults over.
+func TestGrantCredentialKeepsDefaults(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("ZDEV_HOME", home)
+	_ = os.WriteFile(filepath.Join(home, config.GlobalConfigFilename), []byte(`agent:
+  credentials:
+    npm: {hosts: [registry.npmjs.org], command: echo x}
+  defaults: {credentials: [npm]}
+`), 0o600)
+	if err := grantCredential("app", "gitlab-app", config.AgentCredential{Hosts: []string{"gitlab.example.com"}, File: "~/t"}); err != nil {
+		t.Fatal(err)
+	}
+	g, err := config.LoadGlobalConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := g.Agent.Projects["app"].Credentials; len(got) != 2 || got[0] != "gitlab-app" || got[1] != "npm" {
+		t.Errorf("grants = %v, want gitlab-app plus npm from the defaults", got)
+	}
+}

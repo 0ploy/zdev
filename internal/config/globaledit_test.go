@@ -13,7 +13,7 @@ func TestEditGlobalConfigKeepsComments(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("ZDEV_HOME", home)
 	path := filepath.Join(home, GlobalConfigFilename)
-	orig := "# my settings\ndomain: example.test # the domain\nagent:\n  disable_plugins: [codex@openai-codex]\n"
+	orig := "# my settings\ndomain: example.test # the domain\nagent:\n  claude:\n    disable_plugins: [codex@openai-codex]\n"
 	if err := os.WriteFile(path, []byte(orig), 0o600); err != nil {
 		t.Fatal(err)
 	}

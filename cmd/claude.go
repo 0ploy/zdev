@@ -36,8 +36,9 @@ import (
 
 var claudeCmd = &cobra.Command{
 	Use:   "claude [service] [claude arguments...]",
-	Short: "Run Claude Code in a sandbox container of this project",
-	Long: `Run Claude Code in a sandbox container of this project.
+	Short: "Run Claude Code in a sandbox of this project (zdev agent run claude)",
+	Long: `Run Claude Code in a sandbox container of this project; the shortcut for
+'zdev agent run claude'. Everything after it goes to Claude, --help included.
 
 The sandbox is created from a service's image (default: app), with the same
 source, environment and network as the service, and removed when the session
@@ -51,10 +52,9 @@ goes to Claude unchanged:
   zdev claude node --continue    in the node service's image, continue the last conversation
   zdev claude "fix the login"    start with a prompt
   zdev claude -- app             pass "app" to Claude (a prompt that equals a service name)
-  zdev claude update             download the newest Claude Code release now
-  zdev claude setup              check the login, give this project's sandbox a GitHub token
 
-Log in once with /login inside Claude; every sandbox shares that login.
+Log in once with /login inside Claude; every sandbox shares that login. Setup,
+tokens and updates: zdev agent (zdev agent --help).
 
 zdev checks for a new Claude Code release once a day (agent.claude.channel in
 ~/.zdev/global-config.yaml). A session never waits for it: it starts with the
@@ -158,19 +158,8 @@ func hostTimeZone() string {
 	return ""
 }
 
+// runClaude runs a Claude Code session: zdev claude, zdev agent run claude.
 func runClaude(cmd *cobra.Command, args []string) error {
-	if len(args) > 0 && args[0] == "update" {
-		if len(args) > 1 {
-			return errors.New("zdev claude update takes no arguments (zdev claude -- update ... passes them to Claude)")
-		}
-		return withDocker(noTimeout, runClaudeUpdate)
-	}
-	if len(args) > 0 && args[0] == "setup" {
-		if len(args) > 1 {
-			return errors.New("zdev claude setup takes no arguments (zdev claude -- setup ... passes them to Claude)")
-		}
-		return runClaudeSetup(cmd.Context())
-	}
 	var exitCode int
 	run := func(ctx context.Context, proj *project.Project) error {
 		code, err := claudeSession(ctx, proj, args)
@@ -734,7 +723,7 @@ func checkAgentPreconditions(ctx context.Context, d agent.Docker, gcfg *config.G
 	return nil
 }
 
-// runClaudeUpdate is `zdev claude update`: asks for the channel's release now
+// runClaudeUpdate is `zdev agent update`: asks for the channel's release now
 // and downloads it for every libc that already has a build on this engine,
 // so the next session doesn't wait and doesn't start with an older version.
 func runClaudeUpdate(ctx context.Context) error {
@@ -894,7 +883,7 @@ func runSandbox(ctx context.Context, gcfg *config.GlobalConfig, s sandboxSpec) (
 	if err := os.WriteFile(filepath.Join(sessionDir, "zdev-system-prompt.md"), []byte(s.Prompt(info)), 0o644); err != nil {
 		return 0, err
 	}
-	if err := os.WriteFile(filepath.Join(sessionDir, "managed-settings.json"), agent.ManagedSettings(s.Connectors, gcfg.Agent.DisablePlugins, s.TurnHook), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(sessionDir, "managed-settings.json"), agent.ManagedSettings(s.Connectors, gcfg.Agent.Claude.DisablePlugins, s.TurnHook), 0o644); err != nil {
 		return 0, err
 	}
 

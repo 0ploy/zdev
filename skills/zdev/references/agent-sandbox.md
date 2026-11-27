@@ -13,7 +13,7 @@
 - **Git only here, never through `zdev exec`.** `.git/hooks` and `.git/config` are read-only: commit and branch, but ask the developer for pushes, remotes and git config.
 - **No tool installs:** no root privileges. Add missing tools to the service's Dockerfile and ask the developer to rebuild. `jq`, `gh` and `glab` are always there (zdev adds static copies at `/opt/zdev/tools`, last on PATH).
 - **Network:** the project's services (by name or the project URL) directly; the internet only through the proxy in `HTTPS_PROXY` (logged; HTTPS, no raw TCP/SSH: git over HTTPS). A proxy refusal is a 403 with `X-Zdev-Refused` (curl: "CONNECT tunnel failed, response 403"): relay it, don't debug the network. Under `egress: enforce` only the project's `allow_hosts` work.
-- **Git and tokens:** HTTPS only; SSH is off (port 22 refused) and `git@`/`ssh://` remotes of GitHub, GitLab, Bitbucket are rewritten to HTTPS. Granted tokens (`GH_TOKEN` and the like) are placeholders the proxy replaces for their hosts: use git, `gh` and `glab` normally (`GITLAB_TOKEN` for GitLab, also self-hosted), never hunt for the real token. No token: ask the developer to run `zdev claude setup` on the host (GitHub or GitLab), or grant one in `agent.credentials` (host config).
+- **Git and tokens:** HTTPS only; SSH is off (port 22 refused) and `git@`/`ssh://` remotes of GitHub, GitLab, Bitbucket are rewritten to HTTPS. Granted tokens (`GH_TOKEN` and the like) are placeholders the proxy replaces for their hosts: use git, `gh` and `glab` normally (`GITLAB_TOKEN` for GitLab, also self-hosted), never hunt for the real token. No token: ask the developer to run `zdev agent setup` on the host (GitHub or GitLab), or `zdev agent credentials add <name>` for any other service (npm, Sentry, ...), which only works for tools that send the token in a request header.
 
 ## Bootstrap (repository without `.zdev/`)
 
@@ -27,5 +27,5 @@ The sandbox runs zdev's small bootstrap image; zdev commands are refused. Write 
 - Terminal integration (e.g. cmux tab icon): `agent.host_hook`, a host command run at session start/end with `ZDEV_AGENT_EVENT` (`SessionStart`/`SessionEnd`), `ZDEV_AGENT_PID` (the `zdev claude` PID, outlives sandbox replacements) and Claude-hook JSON on stdin. cmux: `CMUX_CLAUDE_PID=$ZDEV_AGENT_PID cmux claude-hook session-start|session-end`. Recipe in docs/configuration.md.
 - A service that mounts the Docker socket makes `zdev claude` refuse the project unless `agent.projects.<name>.docker_socket: accept`.
 - Git sync conflict reported by `zdev status`: `zdev mutagen repair-git`.
-- Sandbox memory and conversations are separate from Claude on the host (`~/.zdev/agent/projects/<host-path-key>/`, seeded once from the host's memory): `zdev claude --continue` only resumes sandbox conversations.
-- New Claude Code release: checked daily, downloaded in the background, used from the next session; `zdev claude update` fetches it now.
+- Sandbox memory and conversations are separate from Claude on the host (`~/.zdev/agent/claude/projects/<host-path-key>/`, seeded once from the host's memory): `zdev claude --continue` only resumes sandbox conversations.
+- New Claude Code release: checked daily, downloaded in the background, used from the next session; `zdev agent update` fetches it now.

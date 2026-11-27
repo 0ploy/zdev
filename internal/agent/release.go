@@ -3,7 +3,7 @@ package agent
 // Which Claude Code build sandboxes run (PLAN_2 section 2), ported from
 // Cronyard's internal/engine/claudecode.go: the channel resolves to a version
 // and per-platform SHA-256 from Anthropic's release manifests, at most once a
-// day (ClaudeCheckEvery; stable moves about weekly) unless `zdev claude update`
+// day (ClaudeCheckEvery; stable moves about weekly) unless `zdev agent update`
 // asks now. zdev runs a new process per command, so the resolved release is
 // cached on disk; when the release folder can't be reached, the last one is used.
 
@@ -104,7 +104,8 @@ func ResolveClaude(ctx context.Context, dir, channel string, maxAge time.Duratio
 	if channel == "" {
 		channel = "stable"
 	}
-	cachePath := filepath.Join(dir, "claude-release.json")
+	// Claude's state lives under <agent dir>/claude/, next to other agents'.
+	cachePath := filepath.Join(dir, "claude", "release.json")
 	var cached *ClaudeRelease
 	if b, err := os.ReadFile(cachePath); err == nil {
 		var r ClaudeRelease
@@ -125,6 +126,7 @@ func ResolveClaude(ctx context.Context, dir, channel string, maxAge time.Duratio
 	rel.ResolvedAt = time.Now()
 	if b, err := json.MarshalIndent(rel, "", "  "); err == nil {
 		_ = os.MkdirAll(dir, 0o700)
+		_ = os.MkdirAll(filepath.Dir(cachePath), 0o700)
 		_ = os.WriteFile(cachePath, b, 0o600)
 	}
 	return rel, nil

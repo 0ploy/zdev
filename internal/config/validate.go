@@ -143,6 +143,10 @@ func validateGlobalConfig(cfg *GlobalConfig) error {
 
 var claudeChannelVersion = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$`)
 
+// ValidateAgentConfig checks agent settings the way loading the global config
+// does (zdev agent credentials validates a credential before writing it).
+func ValidateAgentConfig(a AgentConfig) error { return validateAgentConfig(&a) }
+
 func validateAgentConfig(a *AgentConfig) error {
 	switch ch := a.Claude.Channel; {
 	case ch == "", ch == "stable", ch == "latest", claudeChannelVersion.MatchString(ch):
