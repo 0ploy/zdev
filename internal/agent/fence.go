@@ -13,9 +13,11 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+
+	"github.com/0ploy/zdev/internal/config"
 )
 
-const fenceDockerfile = "FROM alpine:3.24\nRUN apk add --no-cache iptables ip6tables\n"
+const fenceDockerfile = "FROM " + config.AlpineImage + "\nRUN apk add --no-cache iptables ip6tables\n"
 
 // FenceImage is the helper image's tag: built locally, named by the hash of
 // its Dockerfile so a change builds a new one.

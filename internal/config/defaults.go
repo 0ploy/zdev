@@ -53,6 +53,14 @@ const (
 	// renovate: datasource=docker
 	DNSImage = "dockurr/dnsmasq:2.93"
 
+	// AlpineImage is the base of zdev's own helper images: the one-shot
+	// containers that fill the agent volumes, and the locally built sandbox
+	// bootstrap and fence (iptables) images. Those two are tagged by a hash
+	// of their Dockerfile, so a bump here rebuilds them with current
+	// packages.
+	// renovate: datasource=docker
+	AlpineImage = "alpine:3.24.4"
+
 	// TestImage is the lightweight image used for integration tests
 	// Keep in sync with testdata/projects/*/config.yaml fixtures
 	TestImage = "alpine:latest"

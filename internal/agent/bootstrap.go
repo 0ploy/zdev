@@ -12,9 +12,11 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+
+	"github.com/0ploy/zdev/internal/config"
 )
 
-const bootstrapDockerfile = `FROM alpine:3.24
+const bootstrapDockerfile = "FROM " + config.AlpineImage + `
 RUN apk add --no-cache bash coreutils findutils grep sed gawk diffutils patch less \
       git openssh-client curl wget jq yq-go ripgrep python3 tzdata ca-certificates
 `

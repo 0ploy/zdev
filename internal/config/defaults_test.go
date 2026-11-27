@@ -41,6 +41,7 @@ func TestDefaultImagesPinned(t *testing.T) {
 		"RedisInsightsImage": RedisInsightsImage,
 		"LogsImage":          LogsImage,
 		"DNSImage":           DNSImage,
+		"AlpineImage":        AlpineImage,
 	} {
 		tag, ok := pinned[name]
 		if !ok {

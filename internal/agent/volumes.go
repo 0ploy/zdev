@@ -18,10 +18,12 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/0ploy/zdev/internal/config"
 )
 
 // FillImage runs the one-shot fill containers (curl, zstd, sha256sum).
-const FillImage = "alpine:3.24"
+const FillImage = config.AlpineImage
 
 const (
 	volumeLabel        = "zdev.agent"
