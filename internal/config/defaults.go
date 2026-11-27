@@ -18,29 +18,40 @@ const (
 	DNSResolverPort = 5335
 )
 
-// Shared service image versions
+// Shared service image versions. Pin a full version, never latest or a
+// floating tag: zdev pulls an image only when it is missing, so a floating
+// tag stays at whatever it pointed to on a machine's first pull. Each pin
+// carries a "renovate:" comment on the line above it, which Renovate's regex
+// manager uses to propose updates (TestDefaultImagesPinned keeps the shape).
 const (
 	// RouterImage is the default Traefik router image
-	RouterImage = "traefik:v3.7"
+	// renovate: datasource=docker
+	RouterImage = "traefik:v3.7.20"
 
 	// MailImage is the default Mailpit image
-	MailImage = "axllent/mailpit:latest"
+	// renovate: datasource=docker
+	MailImage = "axllent/mailpit:v1.34.0"
 
 	// DBUIImage is the default Adminer image for database management
-	DBUIImage = "adminer:latest"
+	// (the plain version tag is the standalone variant, like latest)
+	// renovate: datasource=docker
+	DBUIImage = "adminer:6.3.1"
 
 	// RedisInsightsImage is the default Redis Insights image
-	RedisInsightsImage = "redis/redisinsight:latest"
+	// renovate: datasource=docker
+	RedisInsightsImage = "redis/redisinsight:3.10.2"
 
 	// LogsImage is the default Dozzle log viewer image
-	LogsImage = "amir20/dozzle:latest"
+	// renovate: datasource=docker
+	LogsImage = "amir20/dozzle:v11.5.0"
 
 	// DNSImage is the dnsmasq image used for the optional local DNS
 	// fallback (see internal/resolver). It reads /etc/dnsmasq.conf, which
 	// zdev generates and bind-mounts, and answers *.<domain> -> 127.0.0.1
 	// authoritatively with no upstream. Only pulled when a user enables
 	// the fallback for a rebinding-protecting router.
-	DNSImage = "dockurr/dnsmasq:latest"
+	// renovate: datasource=docker
+	DNSImage = "dockurr/dnsmasq:2.93"
 
 	// TestImage is the lightweight image used for integration tests
 	// Keep in sync with testdata/projects/*/config.yaml fixtures
