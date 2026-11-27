@@ -1,5 +1,9 @@
 ## Unreleased
 
+### Features
+
+- **`zdev claude` can tell your terminal about the session.** `agent.host_hook` in `~/.zdev/global-config.yaml` runs a command of yours on your machine when a session starts and ends, with the event, the `zdev claude` PID and Claude-hook-shaped JSON (session id, project directory). Nothing from the sandbox reaches it. With the recipe for [cmux](https://cmux.com), a sandboxed Claude gets the Claude icon on its tab, as Claude on your Mac does. See [docs/configuration.md](docs/configuration.md#agent-sandboxes-agent).
+
 ### Bug Fixes
 
 - **`${PROJECTNAME}` no longer picks up a `PROJECTNAME` from the environment.** Running zdev from inside another project's `zdev run` job (which exports `PROJECTNAME`), or from a shell that has it set, resolved `${PROJECTNAME}` in `variables:` and `name:` to the calling project's name, so commands could target the wrong project's containers. It now always means the project's own name.
