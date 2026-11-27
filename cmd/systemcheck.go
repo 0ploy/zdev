@@ -294,25 +294,15 @@ func checkMkcert(ctx context.Context, cfg *config.GlobalConfig) (string, int) {
 		return "", 0
 	}
 
-	// Check system PATH first
-	if path, found := tools.FindInPath("mkcert"); found {
+	// System PATH first, then zdev's own copy (updated to the pinned
+	// release if a newer zdev pins another one)
+	if path, found := ssl.FindMkcert(); found {
 		version, err := tools.RunTool(ctx, path, "-version")
 		if err != nil {
 			version = "unknown"
 		}
 		fmt.Printf("%s (%s %s)\n", statusText("OK"), path, version)
 		return path, 0
-	}
-
-	// Check zdev bin directory
-	zdevBinPath := filepath.Join(config.GetZdevHome(), "bin", "mkcert")
-	if _, err := os.Stat(zdevBinPath); err == nil {
-		version, err := tools.RunTool(ctx, zdevBinPath, "-version")
-		if err != nil {
-			version = "unknown"
-		}
-		fmt.Printf("%s (%s %s)\n", statusText("OK"), zdevBinPath, version)
-		return zdevBinPath, 0
 	}
 
 	fmt.Printf("%s (not installed)\n", statusText("MISSING"))

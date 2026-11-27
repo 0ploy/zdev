@@ -118,6 +118,21 @@ func (m *Manager) EnsureTool(ctx context.Context, tool ToolInfo) (string, error)
 	return toolPath, nil
 }
 
+// InstalledTool returns a usable copy without installing a missing one: the
+// copy on PATH, or zdev's own, replaced first when its pin changed (a failed
+// update keeps the old copy). For tools whose first install belongs to setup
+// (mkcert), so later commands still pick up a newer pinned release.
+func (m *Manager) InstalledTool(ctx context.Context, tool ToolInfo) (string, bool) {
+	if path, found := FindInPath(tool.BinaryName); found {
+		return path, true
+	}
+	if !m.ToolExists(tool) {
+		return "", false
+	}
+	path, err := m.EnsureTool(ctx, tool)
+	return path, err == nil
+}
+
 // The pin file next to a downloaded tool records the release it came from,
 // so a changed pin in defaults.go replaces it: without it, a copy in
 // ~/.zdev/bin would stay at whatever version was current on first use.

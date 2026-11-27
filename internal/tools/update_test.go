@@ -153,3 +153,25 @@ func TestEnsureToolKeepsOldCopyWhenUpdateFails(t *testing.T) {
 		t.Error("pin file written although the update failed, so it would never be retried")
 	}
 }
+
+func TestInstalledToolNeverInstallsMissing(t *testing.T) {
+	f := newUpdateFixture(t, "2.0.0", false)
+	if path, ok := f.manager.InstalledTool(context.Background(), f.tool); ok || path != "" {
+		t.Errorf("InstalledTool = %q, %v for a missing tool", path, ok)
+	}
+	if n := f.downloads.Load(); n != 0 {
+		t.Errorf("downloads = %d: a missing tool is setup's job", n)
+	}
+}
+
+func TestInstalledToolUpdatesOutdatedCopy(t *testing.T) {
+	f := newUpdateFixture(t, "2.0.0", false)
+	f.install(t, "1.0.0")
+	path, ok := f.manager.InstalledTool(context.Background(), f.tool)
+	if !ok || path != f.manager.GetToolPath(f.tool) {
+		t.Fatalf("InstalledTool = %q, %v", path, ok)
+	}
+	if got := f.installedVersion(t); got != "2.0.0" {
+		t.Errorf("installed version %q, want the pinned 2.0.0", got)
+	}
+}

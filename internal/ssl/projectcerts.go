@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/0ploy/zdev/internal/config"
 	"github.com/0ploy/zdev/internal/tools"
@@ -137,19 +138,17 @@ func SweepOrphanProjectCerts(keep map[string]bool) error {
 }
 
 // FindMkcert returns the mkcert binary path: system PATH first, then zdev's
-// own bin directory. Never downloads (that's firstrun/systemcheck's job).
+// own bin directory. Never installs a missing mkcert (that's
+// firstrun/systemcheck's job), but replaces zdev's copy when a newer zdev
+// pins another release.
 func FindMkcert() (string, bool) {
-	if path, found := tools.FindInPath("mkcert"); found {
-		return path, true
-	}
 	toolMgr, err := tools.NewManager()
 	if err != nil {
-		return "", false
+		return tools.FindInPath("mkcert")
 	}
-	if toolMgr.ToolExists(tools.MkcertTool()) {
-		return toolMgr.GetToolPath(tools.MkcertTool()), true
-	}
-	return "", false
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	return toolMgr.InstalledTool(ctx, tools.MkcertTool())
 }
 
 // NewDefaultCertManager returns a CertManager backed by an already installed mkcert.
