@@ -51,7 +51,8 @@ func runStart(cmd *cobra.Command, args []string) error {
 
 func runStartImpl(ctx context.Context, proj *project.Project, args []string) error {
 	plainMode := false
-	if gcfg, err := config.LoadGlobalConfig(); err == nil && gcfg != nil {
+	gcfg, err := config.LoadGlobalConfig()
+	if err == nil && gcfg != nil {
 		plainMode = ui.PlainMode(gcfg.Terminal.Plain)
 		// If the local DNS fallback is enabled, make sure its container is
 		// up before we verify resolution - system DNS resolves through it.
@@ -94,7 +95,12 @@ func runStartImpl(ctx context.Context, proj *project.Project, args []string) err
 		return err
 	}
 
-	if _, agentRequest := project.AgentRequest(); proj.Config.AutoOpenAtStart && !agentRequest {
+	_, agentRequest := project.AgentRequest()
+	if !agentRequest {
+		hintStaleImagePins(gcfg)
+	}
+
+	if proj.Config.AutoOpenAtStart && !agentRequest {
 		if globalCfg, err := config.LoadGlobalConfig(); err == nil {
 			url := fmt.Sprintf("%s://%s", schemeFor(globalCfg), proj.Config.Domain)
 			fmt.Printf("\nOpening %s\n", url)

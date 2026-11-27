@@ -95,6 +95,7 @@ func runStatusImpl(ctx context.Context, proj *project.Project) error {
 		}
 	}
 
+	hintStaleImagePins(cfg)
 	return nil
 }
 

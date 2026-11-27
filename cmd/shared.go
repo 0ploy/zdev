@@ -177,3 +177,15 @@ func openBrowser(url string) error {
 
 	return cmd.Start()
 }
+
+// hintStaleImagePins prints the notice for shared-service images an older
+// zdev froze in global-config.yaml (see config.StaleImagePins).
+func hintStaleImagePins(cfg *config.GlobalConfig) {
+	if cfg == nil {
+		return
+	}
+	if hint := cfg.StaleImagePinsHint(); hint != "" {
+		fmt.Println()
+		fmt.Print(hint)
+	}
+}

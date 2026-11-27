@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/0ploy/zdev/internal/config"
 	"github.com/0ploy/zdev/internal/project"
 	"github.com/spf13/cobra"
 )
@@ -67,6 +68,11 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 			fmt.Printf("Project %s updated\n", proj.Config.Name)
 		} else {
 			fmt.Printf("Project %s is up to date\n", proj.Config.Name)
+		}
+		if _, agentRequest := project.AgentRequest(); !agentRequest {
+			if gcfg, err := config.LoadGlobalConfig(); err == nil {
+				hintStaleImagePins(gcfg)
+			}
 		}
 		return nil
 	})

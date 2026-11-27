@@ -192,6 +192,8 @@ func runSystemcheck(cmd *cobra.Command, args []string) error {
 	// Check 1Password CLI (user-installed, only needed for op-env secrets)
 	issues += check1Password(ctx)
 
+	hintStaleImagePins(globalCfg)
+
 	// Handle --install-ca flag
 	if installCAFlag && mkcertPath != "" {
 		fmt.Println()

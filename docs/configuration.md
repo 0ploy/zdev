@@ -198,6 +198,8 @@ shared:
     shell: false      # enable Dozzle's in-container shell (default false; see below)
 ```
 
+Shared-service images (`shared.<service>.image`, `dns.image`) default to the versions the installed zdev was tested with and follow them on upgrade. Set one only to pin your own version or to use a mirror. zdev up to v0.14 wrote every default image into this file, which kept those versions forever; `zdev start`, `zdev status`, `zdev update`, `zdev services` and `zdev systemcheck` warn about such lines (another tag of the default image). Delete them to follow the defaults again.
+
 `mutagen.sync_mode` is passed to every Mutagen session as `--sync-mode`. Changing it recreates the sync sessions on the next `zdev start`. The one-way modes sync host to container only, so files a container writes (`vendor/` from `composer install`, generated code) never come back to the host.
 
 ### Agent sandboxes (`agent:`)

@@ -12,22 +12,24 @@ ssl:
   enabled: true  # Set to false to skip HTTPS/certificate setup
 
 # Shared services configuration
+# Images default to the versions this zdev release was tested with and follow
+# them on upgrade. Set an image only to pin your own version or a mirror.
 shared:
   router:
-    image: ${RouterImage}
+    # image: ${RouterImage}
     dashboard: true
 
-  mail:
-    image: ${MailImage}
+  # mail:
+  #   image: ${MailImage}
 
-  db:
-    image: ${DBUIImage}
+  # db:
+  #   image: ${DBUIImage}
 
-  redis_insights:
-    image: ${RedisInsightsImage}
+  # redis_insights:
+  #   image: ${RedisInsightsImage}
 
-  logs:
-    image: ${LogsImage}
+  # logs:
+  #   image: ${LogsImage}
 
 # Terminal output settings
 terminal:
@@ -43,5 +45,5 @@ mutagen:
 # Local DNS fallback (only for routers that block the wildcard record from
 # resolving to 127.0.0.1). Enable with `zdev dns enable`; whether it is
 # active is determined by your host resolver config, not by this file.
-dns:
-  image: ${DNSImage}
+# dns:
+#   image: ${DNSImage}

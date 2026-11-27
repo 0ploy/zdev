@@ -100,6 +100,7 @@ func runServicesStart(cmd *cobra.Command, args []string) error {
 		}
 
 		printSharedServiceURLs(cfg, "Shared services started:")
+		hintStaleImagePins(cfg)
 		return nil
 	})
 }
@@ -194,6 +195,7 @@ func runServicesStatusImpl(ctx context.Context) error {
 		}
 	}
 
+	hintStaleImagePins(cfg)
 	return nil
 }
 
@@ -211,6 +213,10 @@ func runServicesRecreateImpl(ctx context.Context) error {
 	docker := runtime.NewDockerCLI()
 	registry := sharedServiceRegistry()
 
+	if hint := cfg.StaleImagePinsHint(); hint != "" {
+		fmt.Print(hint)
+		fmt.Println()
+	}
 	fmt.Println("Recreating shared services...")
 	fmt.Println()
 

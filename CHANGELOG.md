@@ -6,6 +6,7 @@
 
 ### Bug Fixes
 
+- **Shared services follow zdev's default images again.** zdev wrote every default image (Traefik, Mailpit, Adminer, Redis Insights, Dozzle, dnsmasq) into the `~/.zdev/global-config.yaml` it generated, so those versions stuck: upgrading zdev never moved the router from the Traefik it first wrote there. New files leave the images commented out. For existing files, `zdev start`, `zdev status`, `zdev update`, `zdev services` and `zdev systemcheck` warn about the lines that pin another tag of a default image; delete them to follow zdev's defaults, or keep them to stay on your version. zdev never changes the file itself.
 - **`${PROJECTNAME}` no longer picks up a `PROJECTNAME` from the environment.** Running zdev from inside another project's `zdev run` job (which exports `PROJECTNAME`), or from a shell that has it set, resolved `${PROJECTNAME}` in `variables:` and `name:` to the calling project's name, so commands could target the wrong project's containers. It now always means the project's own name.
 
 ## v0.14.0
