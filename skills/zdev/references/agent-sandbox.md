@@ -13,7 +13,7 @@
 - **Git only here, never through `zdev exec`.** `.git/hooks` and `.git/config` are read-only: commit and branch, but ask the developer for pushes, remotes and git config.
 - **No tool installs:** no root privileges. Add missing tools to the service's Dockerfile and ask the developer to rebuild.
 - **Network:** the project's services (by name or the project URL) directly; the internet only through the proxy in `HTTPS_PROXY` (logged; HTTPS, no raw TCP/SSH: git over HTTPS). A proxy refusal is a 403 with `X-Zdev-Refused` (curl: "CONNECT tunnel failed, response 403"): relay it, don't debug the network. Under `egress: enforce` only the project's `allow_hosts` work.
-- **Git and tokens:** HTTPS only; SSH is off (port 22 refused) and `git@`/`ssh://` remotes of GitHub, GitLab, Bitbucket are rewritten to HTTPS. Granted tokens (`GH_TOKEN` and the like) are placeholders the proxy replaces for their hosts: use git and `gh` normally, never hunt for the real token. No token: ask the developer to grant one in `agent.credentials` (host config).
+- **Git and tokens:** HTTPS only; SSH is off (port 22 refused) and `git@`/`ssh://` remotes of GitHub, GitLab, Bitbucket are rewritten to HTTPS. Granted tokens (`GH_TOKEN` and the like) are placeholders the proxy replaces for their hosts: use git and `gh` normally, never hunt for the real token. No token: ask the developer to run `zdev claude setup` on the host (GitHub), or grant one in `agent.credentials` (host config).
 
 ## Bootstrap (repository without `.zdev/`)
 

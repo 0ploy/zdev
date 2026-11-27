@@ -196,11 +196,20 @@ func validateAgentConfig(a *AgentConfig) error {
 				return fmt.Errorf("%s.env: %q is not a variable name", where, e)
 			}
 		}
-		if (c.Command == "") == (c.Secret == "") {
-			return fmt.Errorf("%s: set exactly one of command and secret", where)
+		sources := 0
+		for _, v := range []string{c.Command, c.Secret, c.File} {
+			if v != "" {
+				sources++
+			}
 		}
-		if c.Secret != "" && !strings.HasPrefix(c.Secret, "op-env://") {
-			return fmt.Errorf("%s.secret must be op-env://<environment-id>/<VARIABLE>", where)
+		if sources != 1 {
+			return fmt.Errorf("%s: set exactly one of command, secret and file", where)
+		}
+		if c.Secret != "" && !strings.HasPrefix(c.Secret, "op-env://") && !(strings.HasPrefix(c.Secret, "op://") && strings.Count(c.Secret, "/") >= 4) {
+			return fmt.Errorf("%s.secret must be op://<vault>/<item>/<field> or op-env://<environment-id>/<VARIABLE>", where)
+		}
+		if c.File != "" && !strings.HasPrefix(c.File, "/") && !strings.HasPrefix(c.File, "~/") {
+			return fmt.Errorf("%s.file must be an absolute path (or start with ~/)", where)
 		}
 	}
 	if err := check("agent.defaults", a.Defaults); err != nil {

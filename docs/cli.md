@@ -31,6 +31,7 @@ zdev logs                       # View logs
 zdev logs -f app                # Follow logs for a service
 zdev claude [service] [args]    # Claude Code in a sandbox container of the project (see docs/agents.md)
 zdev claude update              # download the newest Claude Code release for the sandboxes now
+zdev claude setup               # check the login, give this project's sandbox a GitHub token
 ```
 
 ## Information

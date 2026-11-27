@@ -27,6 +27,8 @@ func TestValidateAgentConfig(t *testing.T) {
 		{Credentials: map[string]AgentCredential{"github": {Hosts: []string{"github.com", "*.github.com"}, Env: []string{"GH_TOKEN"}, Command: "gh auth token"}},
 			Projects: map[string]AgentProjectConfig{"x": {Credentials: []string{"github"}}}},
 		{Credentials: map[string]AgentCredential{"npm": {Hosts: []string{"registry.npmjs.org"}, Secret: "op-env://abc/NPM_TOKEN"}}},
+		{Credentials: map[string]AgentCredential{"github": {Hosts: []string{"github.com"}, Secret: "op://vault/item/credential"}}},
+		{Credentials: map[string]AgentCredential{"github": {Hosts: []string{"github.com"}, File: "~/.zdev/agent/credentials/github"}}},
 	}
 	for _, a := range ok {
 		if err := validateAgentConfig(&a); err != nil {
@@ -45,6 +47,8 @@ func TestValidateAgentConfig(t *testing.T) {
 		{Credentials: map[string]AgentCredential{"github": {Hosts: []string{"github.com"}}}},                                       // no source
 		{Credentials: map[string]AgentCredential{"github": {Hosts: []string{"github.com"}, Command: "x", Secret: "op-env://a/B"}}}, // both
 		{Credentials: map[string]AgentCredential{"github": {Hosts: []string{"github.com"}, Secret: "op://vault/item"}}},
+		{Credentials: map[string]AgentCredential{"github": {Hosts: []string{"github.com"}, Secret: "op://v/i/f", File: "/x"}}},
+		{Credentials: map[string]AgentCredential{"github": {Hosts: []string{"github.com"}, File: "relative/token"}}},
 		{Credentials: map[string]AgentCredential{"github": {Hosts: []string{"github.com"}, Command: "x", Env: []string{"GH-TOKEN"}}}},
 	}
 	for _, a := range bad {

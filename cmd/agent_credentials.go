@@ -11,8 +11,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/0ploy/zdev/internal/agent"
@@ -30,7 +32,7 @@ var gitHTTPSHosts = []string{"github.com", "gitlab.com", "bitbucket.org"}
 // can't be read is left out with a warning: the session works without it.
 func resolveCredentials(ctx context.Context, gcfg *config.GlobalConfig, names []string) []agent.Credential {
 	var out []agent.Credential
-	var op secrets.Resolver
+	var op *secrets.OnePasswordCLI
 	for _, name := range names {
 		c, ok := gcfg.Agent.Credentials[name]
 		if !ok {
@@ -46,7 +48,7 @@ func resolveCredentials(ctx context.Context, gcfg *config.GlobalConfig, names []
 	return out
 }
 
-func credentialValue(ctx context.Context, c config.AgentCredential, op *secrets.Resolver) (string, error) {
+func credentialValue(ctx context.Context, c config.AgentCredential, op **secrets.OnePasswordCLI) (string, error) {
 	if c.Command != "" {
 		cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
@@ -62,12 +64,25 @@ func credentialValue(ctx context.Context, c config.AgentCredential, op *secrets.
 		}
 		return v, nil
 	}
-	envID, key, err := secrets.ParseRef(c.Secret)
-	if err != nil {
-		return "", err
+	if c.File != "" {
+		return readCredentialFile(expandHome(c.File))
 	}
 	if *op == nil {
 		*op = secrets.NewOnePasswordCLI()
+	}
+	if strings.HasPrefix(c.Secret, "op://") {
+		v, err := (*op).ReadRef(ctx, c.Secret)
+		if err != nil {
+			return "", err
+		}
+		if v = strings.TrimSpace(v); v == "" {
+			return "", fmt.Errorf("%s is empty", c.Secret)
+		}
+		return v, nil
+	}
+	envID, key, err := secrets.ParseRef(c.Secret)
+	if err != nil {
+		return "", err
 	}
 	vars, err := (*op).ReadEnvironment(ctx, envID)
 	if err != nil {
@@ -78,6 +93,39 @@ func credentialValue(ctx context.Context, c config.AgentCredential, op *secrets.
 		return "", fmt.Errorf("%s has no %s", envID, key)
 	}
 	return v, nil
+}
+
+// readCredentialFile reads a token file that only its owner may read: one
+// that others can read (or write) is refused rather than used.
+func readCredentialFile(path string) (string, error) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	if fi.Mode().Perm()&0o077 != 0 {
+		return "", fmt.Errorf("%s is readable by others (mode %04o): chmod 600 it", path, fi.Mode().Perm())
+	}
+	if st, ok := fi.Sys().(*syscall.Stat_t); ok && int(st.Uid) != os.Getuid() {
+		return "", fmt.Errorf("%s belongs to another user", path)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	v := strings.TrimSpace(string(b))
+	if v == "" {
+		return "", fmt.Errorf("%s is empty", path)
+	}
+	return v, nil
+}
+
+func expandHome(p string) string {
+	if rest, ok := strings.CutPrefix(p, "~/"); ok {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, rest)
+		}
+	}
+	return p
 }
 
 // credentialEnv is the sandbox's view of the credentials: the placeholders in

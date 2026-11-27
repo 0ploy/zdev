@@ -36,12 +36,14 @@ type AgentConfig struct {
 
 // AgentCredential is a token bound to hosts. The sandbox only ever sees a
 // placeholder in Env; the value is read on the host when a session starts,
-// from Command's output or a 1Password Environment (Secret).
+// from exactly one of Command's output, 1Password (Secret) or a file only
+// the developer can read (File).
 type AgentCredential struct {
-	Hosts   []string `yaml:"hosts"`   // exact, or *.example.com
-	Env     []string `yaml:"env"`     // variables holding the placeholder (e.g. GH_TOKEN)
-	Command string   `yaml:"command"` // e.g. "gh auth token"
-	Secret  string   `yaml:"secret"`  // op-env://<environment-id>/<VARIABLE>
+	Hosts   []string `yaml:"hosts"`             // exact, or *.example.com
+	Env     []string `yaml:"env,omitempty"`     // variables holding the placeholder (e.g. GH_TOKEN)
+	Command string   `yaml:"command,omitempty"` // e.g. "gh auth token"
+	Secret  string   `yaml:"secret,omitempty"`  // op://<vault>/<item>/<field> or op-env://<environment-id>/<VARIABLE>
+	File    string   `yaml:"file,omitempty"`    // e.g. ~/.zdev/agent/credentials/github-app (mode 0600)
 }
 
 // AgentClaudeConfig selects which Claude Code release sandboxes run.

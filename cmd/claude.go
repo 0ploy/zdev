@@ -52,6 +52,7 @@ goes to Claude unchanged:
   zdev claude "fix the login"    start with a prompt
   zdev claude -- app             pass "app" to Claude (a prompt that equals a service name)
   zdev claude update             download the newest Claude Code release now
+  zdev claude setup              check the login, give this project's sandbox a GitHub token
 
 Log in once with /login inside Claude; every sandbox shares that login.
 
@@ -163,6 +164,12 @@ func runClaude(cmd *cobra.Command, args []string) error {
 			return errors.New("zdev claude update takes no arguments (zdev claude -- update ... passes them to Claude)")
 		}
 		return withDocker(noTimeout, runClaudeUpdate)
+	}
+	if len(args) > 0 && args[0] == "setup" {
+		if len(args) > 1 {
+			return errors.New("zdev claude setup takes no arguments (zdev claude -- setup ... passes them to Claude)")
+		}
+		return runClaudeSetup(cmd.Context())
 	}
 	var exitCode int
 	run := func(ctx context.Context, proj *project.Project) error {

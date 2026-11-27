@@ -226,10 +226,12 @@ agent:
     github:
       hosts: [github.com, api.github.com]
       env: [GH_TOKEN, GITHUB_TOKEN]
-      command: gh auth token   # or: secret: op-env://<environment-id>/GITHUB_TOKEN
+      command: gh auth token   # exactly one of: command, secret, file
+      # secret: op://<vault>/<item>/<field>  or  op-env://<environment-id>/GITHUB_TOKEN
+      # file: ~/.zdev/agent/credentials/github   (must be mode 0600 and yours)
 ```
 
-A project uses a credential when it lists it (`projects.<name>.credentials: [github]`, or in `defaults`). Prefer a token scoped to the project's repository over your own `gh` login: the agent can use whatever the token allows while the session runs. Credentials need zdev's CA bundle in the containers (HTTPS set up, `zdev systemcheck`).
+A project uses a credential when it lists it (`projects.<name>.credentials: [github]`, or in `defaults`). `zdev claude setup`, run in a project, writes both for GitHub: it walks you through a fine-grained token for the project's repository, checks it, stores it in 1Password or a `file:` only you can read, and grants it, editing this file in place (your comments and order stay). Prefer a token scoped to the project's repository over your own `gh` login: the agent can use whatever the token allows while the session runs. Credentials need zdev's CA bundle in the containers (HTTPS set up, `zdev systemcheck`).
 
 What your own `zdev start`, `update` and `restart` applied is recorded in `~/.zdev/agent/approved/<project>.json`; config changes from a sandbox that reach beyond it are refused ([Agents](agents.md)). `zdev down` and `zdev rename` remove the file.
 

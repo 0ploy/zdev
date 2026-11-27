@@ -327,3 +327,44 @@ func defaultListAccounts(ctx context.Context, binary string) ([]opAccount, error
 	}
 	return accounts, nil
 }
+
+// Op runs an op command (stdin optional) with the binary lookup and the
+// interactive signin retry of ReadEnvironment. stdout may hold secrets:
+// callers must not log it; errors carry op's stderr only.
+func (o *OnePasswordCLI) Op(ctx context.Context, stdin []byte, args ...string) ([]byte, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if err := o.ensureBinary(ctx); err != nil {
+		return nil, err
+	}
+	run := func() ([]byte, string, error) {
+		cmd := exec.CommandContext(ctx, o.binary, args...)
+		if stdin != nil {
+			cmd.Stdin = bytes.NewReader(stdin)
+		}
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		cmd.Env = append(os.Environ(), o.sessionEnv...)
+		err := cmd.Run()
+		return stdout.Bytes(), stderr.String(), err
+	}
+	out, stderr, err := run()
+	if err != nil && isAuthError(stderr) && o.interactive() {
+		if signinErr := o.recoverAuth(ctx); signinErr == nil {
+			out, stderr, err = run()
+		}
+	}
+	if err != nil {
+		return nil, fmt.Errorf("op %s: %s", args[0], strings.TrimSpace(stderr))
+	}
+	return out, nil
+}
+
+// ReadRef reads one secret reference (op://vault/item/field).
+func (o *OnePasswordCLI) ReadRef(ctx context.Context, ref string) (string, error) {
+	out, err := o.Op(ctx, nil, "read", "--no-newline", ref)
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
