@@ -54,11 +54,7 @@ const (
 // Clearing it here (as PID 1, before anything else) makes the gate effective
 // for plain `docker start` too, not only for containers zdev just created.
 func SyncGateCommand(command string) string {
-	return "rm -f " + syncReadyFlag + " " + legacySyncReadyFlag + " 2>/dev/null" +
-		"; touch " + syncWaitingFlag +
-		"; while [ ! -f " + syncReadyFlag + " ]; do sleep 0.2; done" +
-		"; rm -f " + syncWaitingFlag +
-		"; exec sh -c " + shellQuote(command)
+	return syncGatePrelude() + "; exec sh -c " + shellQuote(command)
 }
 
 // MutagenSyncMount describes a bind mount to be synced via Mutagen
@@ -861,7 +857,7 @@ func (p *Project) openSyncGate(ctx context.Context, containerName string) error 
 // wrapped never raises the marker, and services that are slow to start are
 // signalled anyway rather than held up.
 func (p *Project) awaitSyncGate(ctx context.Context, serviceName, containerName string) {
-	if p.Config.Services[serviceName].Command == "" {
+	if !p.syncGated(serviceName, p.Config.Services[serviceName]) {
 		return // no wrapper, no gate
 	}
 	// Nothing to wait for if the container isn't up - don't spend the whole

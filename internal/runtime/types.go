@@ -100,6 +100,9 @@ type RunConfig struct {
 	// stdin isn't a terminal (CI/piped), no TTY is attached and the command must
 	// be able to run non-interactively.
 	Interactive bool
+	// Quiet discards the container's output (probes whose result is only
+	// the exit status).
+	Quiet bool
 }
 
 // Bind is a bind mount of an existing container.

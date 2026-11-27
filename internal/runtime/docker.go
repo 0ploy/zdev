@@ -314,6 +314,9 @@ func (d *DockerCLI) RunContainer(ctx context.Context, cfg RunConfig) error {
 	args = append(args, cfg.Command...)
 
 	cmd := d.command(ctx, args...)
+	if cfg.Quiet {
+		return cmd.Run() // no stdio: output discarded
+	}
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -665,6 +668,46 @@ func (d *DockerCLI) GetImageLabels(ctx context.Context, image string) (map[strin
 		labels = map[string]string{}
 	}
 	return labels, nil
+}
+
+// ImageEntrypoint returns a local image's ENTRYPOINT, CMD and ID. They are
+// read from a container created (never started) from the image and removed
+// again: with the containerd image store, inspecting a multi-platform image
+// by tag can return an empty Config (seen with nginx:alpine on Docker 29)
+// although containers get the right values. What a container gets is what
+// matters here anyway.
+func (d *DockerCLI) ImageEntrypoint(ctx context.Context, image string) ([]string, []string, string, error) {
+	id, err := d.run(ctx, "image", "inspect", "--format={{.Id}}", image)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	cid, err := d.run(ctx, "create", "--label", "zdev.probe=true", image)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	cid = strings.TrimSpace(cid)
+	defer func() { _, _ = d.run(context.WithoutCancel(ctx), "rm", "-f", cid) }()
+	out, err := d.run(ctx, "inspect", "--type=container",
+		`--format={{json .Config.Entrypoint}}{{"\n"}}{{json .Config.Cmd}}`, cid)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	return parseImageEntrypoint(strings.TrimSpace(out) + "\n" + strings.TrimSpace(id))
+}
+
+func parseImageEntrypoint(out string) ([]string, []string, string, error) {
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) != 3 {
+		return nil, nil, "", fmt.Errorf("unexpected image inspect output %q", out)
+	}
+	var entrypoint, cmd []string
+	if err := json.Unmarshal([]byte(lines[0]), &entrypoint); err != nil {
+		return nil, nil, "", fmt.Errorf("image ENTRYPOINT: %w", err)
+	}
+	if err := json.Unmarshal([]byte(lines[1]), &cmd); err != nil {
+		return nil, nil, "", fmt.Errorf("image CMD: %w", err)
+	}
+	return entrypoint, cmd, strings.TrimSpace(lines[2]), nil
 }
 
 // BuildImage builds a local image from a Dockerfile, streaming build output

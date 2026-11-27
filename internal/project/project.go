@@ -54,6 +54,11 @@ type Project struct {
 	// before a container removal isn't repeated by the start path that
 	// follows (see ensureBuiltImage).
 	builtImages map[string]bool
+
+	// imageGates records, per synced service without a command:, how its
+	// image's entrypoint is wrapped in the sync-ready gate (resolveImageGate).
+	// buildContainerConfig reads it, so it stays free of Docker calls.
+	imageGates map[string]imageGate
 }
 
 // startContainer starts a container and remembers that this run started it.
@@ -529,13 +534,6 @@ func (p *Project) warnOutdatedServices(ctx context.Context, filter map[string]bo
 
 // startServiceWithMutagen starts a service with optional Mutagen volume transformation
 func (p *Project) startServiceWithMutagen(ctx context.Context, name string, svc config.ServiceConfig, mutagenEnabled bool, mutagenMounts MutagenMounts) error {
-	// The sync-ready gate can only wrap a command zdev knows about. A service
-	// that relies on its image's own CMD starts the moment the container does,
-	// racing the initial sync - say so instead of failing mysteriously later.
-	if mutagenEnabled && mutagenMounts.Has(name) && svc.Command == "" {
-		fmt.Printf("Warning: service %s has synced mounts but no command: in config - it starts before file sync completes\n", name)
-	}
-
 	containerName := p.ContainerName(name)
 
 	// Build the image first when a `dockerfile:` config is present, so an
@@ -615,6 +613,14 @@ func (p *Project) startServiceWithMutagen(ctx context.Context, name string, svc 
 				return err
 			}
 		}
+	}
+
+	// Gate the image's own entrypoint when there is no command: to wrap.
+	// An image zdev can't wrap starts the moment the container does, racing
+	// the initial sync - say so instead of failing mysteriously later.
+	p.resolveImageGate(ctx, name, svc, mutagenEnabled, mutagenMounts)
+	if gate, ok := p.imageGates[name]; ok && !gate.Wrap {
+		fmt.Printf("Warning: service %s has synced mounts, but zdev can't hold it until the sync completes (%s) - it starts before file sync completes\n", name, gate.Reason)
 	}
 
 	// Build container config (single source of truth)
@@ -1189,6 +1195,7 @@ func (p *Project) serviceNeedsRecreate(ctx context.Context, serviceName string, 
 	if mutagenEnabled {
 		mutagenMountMap = NewMutagenMounts(p.GetMutagenSyncMounts())
 	}
+	p.resolveImageGate(ctx, serviceName, svc, mutagenEnabled, mutagenMountMap)
 	expectedCfg := p.buildContainerConfig(serviceName, svc, mutagenEnabled, mutagenMountMap)
 
 	return currentLabels[runtime.ConfigHashLabel] != expectedCfg.Labels[runtime.ConfigHashLabel], nil
@@ -1295,6 +1302,9 @@ func (p *Project) buildContainerConfig(name string, svc config.ServiceConfig, mu
 		} else {
 			cfg.Command = []string{"sh", "-c", svc.Command}
 		}
+	} else if gate := p.imageGates[name]; gate.Wrap && mutagenEnabled && mutagenMounts.Has(name) {
+		// No command to wrap: wrap the image's own entrypoint instead.
+		cfg.Entrypoint, cfg.Command = gatedEntrypoint(gate.Args)
 	}
 
 	// Stamp a deterministic hash of the final config so serviceNeedsRecreate

@@ -44,6 +44,10 @@ type MockRuntime struct {
 	// ImageLabels stores labels per image name (for GetImageLabels)
 	ImageLabels map[string]map[string]string
 
+	// ImageConfigs stores ENTRYPOINT/CMD/ID per image name (for
+	// ImageEntrypoint); an image missing here has neither.
+	ImageConfigs map[string]MockImageConfig
+
 	// BuiltImages stores build configs by tag (set by BuildImage)
 	BuiltImages map[string]ImageBuildConfig
 
@@ -559,6 +563,25 @@ func (m *MockRuntime) ImageExists(_ context.Context, image string) (bool, error)
 }
 
 // GetImageLabels returns labels for a mock image
+// MockImageConfig is what ImageEntrypoint reports for an image.
+type MockImageConfig struct {
+	Entrypoint []string
+	Cmd        []string
+	ID         string
+}
+
+// ImageEntrypoint returns the configured ENTRYPOINT/CMD/ID of an image.
+func (m *MockRuntime) ImageEntrypoint(_ context.Context, image string) ([]string, []string, string, error) {
+	m.record("ImageEntrypoint", image)
+	if err := m.err("ImageEntrypoint"); err != nil {
+		return nil, nil, "", err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	c := m.ImageConfigs[image]
+	return c.Entrypoint, c.Cmd, c.ID, nil
+}
+
 func (m *MockRuntime) GetImageLabels(_ context.Context, image string) (map[string]string, error) {
 	m.record("GetImageLabels", image)
 	if err := m.err("GetImageLabels"); err != nil {

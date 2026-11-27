@@ -106,6 +106,7 @@ func (p *Project) AgentBaseConfig(ctx context.Context, service string) (runtime.
 	if err != nil {
 		return runtime.ContainerConfig{}, err
 	}
+	p.resolveImageGate(ctx, service, svc, p.IsMutagenEnabled(), mounts)
 	cfg := p.buildContainerConfig(service, svc, p.IsMutagenEnabled(), mounts)
 	// The same 1Password values the service gets (the agent can read the
 	// app's environment anyway); resolved here, never on a compare path.
@@ -117,6 +118,7 @@ func (p *Project) AgentBaseConfig(ctx context.Context, service string) (runtime.
 	cfg.Ports = nil
 	cfg.Labels = map[string]string{}
 	cfg.Command = nil
+	cfg.Entrypoint = "" // the sync gate's wrapper; the sandbox sets its own
 	cfg.RestartPolicy = ""
 	return cfg, nil
 }
@@ -324,6 +326,7 @@ func (p *Project) ApplyAgentGitGuards(ctx context.Context) error {
 		if enabled {
 			mm = NewMutagenMounts(p.GetMutagenSyncMounts())
 		}
+		p.resolveImageGate(ctx, name, svc, enabled, mm)
 		with := p.buildContainerConfig(name, svc, enabled, mm).Labels[runtime.ConfigHashLabel]
 		p.skipGitGuards = true
 		without := p.buildContainerConfig(name, svc, enabled, mm).Labels[runtime.ConfigHashLabel]

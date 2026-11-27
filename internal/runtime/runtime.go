@@ -60,5 +60,8 @@ type Runtime interface {
 	PullImage(ctx context.Context, image string) error
 	ImageExists(ctx context.Context, image string) (bool, error)
 	GetImageLabels(ctx context.Context, image string) (map[string]string, error)
+	// ImageEntrypoint returns a local image's ENTRYPOINT and CMD (exec form,
+	// as Docker stores them) and its ID.
+	ImageEntrypoint(ctx context.Context, image string) (entrypoint, cmd []string, id string, err error)
 	BuildImage(ctx context.Context, cfg ImageBuildConfig) error
 }

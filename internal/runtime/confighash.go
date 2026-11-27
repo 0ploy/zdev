@@ -76,6 +76,9 @@ func ComputeConfigHash(cfg ContainerConfig) string {
 		Ports       []string
 		NetworkName string
 		Aliases     []string
+		// Only when set (the sync gate's wrapper), so hashes of containers
+		// that keep their image's entrypoint are unchanged.
+		Entrypoint string `json:",omitempty"`
 	}{
 		Image:       cfg.Image,
 		WorkingDir:  cfg.WorkingDir,
@@ -86,6 +89,7 @@ func ComputeConfigHash(cfg ContainerConfig) string {
 		Ports:       ports,
 		NetworkName: cfg.NetworkName,
 		Aliases:     aliases,
+		Entrypoint:  cfg.Entrypoint,
 	}
 
 	b, _ := json.Marshal(payload)

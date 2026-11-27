@@ -159,14 +159,15 @@ Identical for every stack - no auth, no TLS. See `config-examples.md` for the fu
 - App **source** is bind-mounted at runtime, not `COPY`d, so source edits never need a rebuild -
   that's the reason build staleness ignores the context. Keep dev images to toolchain/system deps +
   baked config; never `COPY` app source into a `dockerfile:` dev image.
-- **Sync-ready gate is only auto-injected around a config `command:`.** zdev wraps a `command:` with
-  a `while [ ! -f /tmp/.zdev-sync-ready ]` wait so the app doesn't start before Mutagen's initial sync.
+- **Sync-ready gate: zdev holds every synced service until Mutagen's initial sync is done.** It wraps
+  a config `command:` with a `while [ ! -f /tmp/.zdev-sync-ready ]` wait; a service without one gets
+  its image's own ENTRYPOINT/CMD wrapped the same way (`sh -c <gate>; exec "$@"`), so php-fpm, nginx
+  or zpinit in supervise mode start as always, just after the sync - no entrypoint script needed.
   (The marker sits in `/tmp` because the wrapper runs as the image's default user, which on many
   images cannot write to `/`. The old `/.zdev-sync-ready` is still touched as root for entrypoints
   that wait on it themselves, but it cannot be re-armed on a non-root image - prefer the `/tmp` one.)
-  A `dockerfile:` image that runs via `ENTRYPOINT`/`CMD` (no config `command:`) does NOT get that
-  wrap - so a boot step that reads synced files (e.g. `pnpm install` needing `package.json`) must
-  wait for `/tmp/.zdev-sync-ready` itself, and zdev warns at start that the service is unguarded.
+  Only an image without `sh` can't be wrapped (zdev warns at start that it's unguarded); Mutagen
+  can't sync into such an image anyway.
   The marker is only touched once every sync mount of that service has flushed AND its session is
   connected; if one never comes up the container stays parked at the gate (alive, not dead) and
   `zdev start` exits non-zero naming the mount. The wrapper clears the marker on every container
