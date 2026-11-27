@@ -99,13 +99,7 @@ func runMutagenStatusImpl(ctx context.Context, proj *project.Project) error {
 		// can sit in a perfectly normal-looking state - "Watching for
 		// changes", both ends connected - while its beta endpoint is gone or
 		// every file it tried to write was rejected.
-		problem := ""
-		if healthy, detail, known := m.SessionHealthy(ctx, mount.SessionName); known && !healthy {
-			problem = detail
-			if problem == "" {
-				problem = "not synchronizing"
-			}
-		}
+		problem := project.SyncProblem(ctx, m, mount.SessionName)
 
 		fmt.Printf("%s: %s\n", mount.SessionName, status)
 		fmt.Printf("  Host:      %s\n", mount.HostPath)

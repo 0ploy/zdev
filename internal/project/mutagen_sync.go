@@ -390,13 +390,52 @@ func (p *Project) ensureMutagenSession(ctx context.Context, m *mutagen.Mutagen, 
 		fmt.Printf("Creating sync session %s...\n", mount.SessionName)
 	}
 
-	if err := m.CreateSession(ctx, desired); err != nil {
+	if err := createSyncSession(ctx, m, desired); err != nil {
 		return false, fmt.Errorf("failed to create session %s: %w", mount.SessionName, err)
 	}
 	if err := writeSessionHash(mount.SessionName, desiredHash); err != nil {
 		fmt.Printf("Warning: could not record sync session hash for %s: %v\n", mount.SessionName, err)
 	}
 	return true, nil
+}
+
+// reconcileTimeout bounds the reconcile pass of createSyncSession.
+var reconcileTimeout = 3 * time.Minute
+
+// createSyncSession creates a session from desired so that it starts in sync.
+//
+// A new session has no common ancestor, so in two-way-safe mode every file
+// that differs between the host and the container volume is a conflict ("both
+// sides created it") that nothing ever resolves. A recreated session always
+// meets such files: the volume keeps the content of the old session, while
+// the host has moved on (uncommitted edits, a branch switch while stopped).
+// The service then holds at the sync-ready gate for good. So a two-way-safe
+// session is first created as two-way-resolved, where the host (alpha) wins
+// conflicts, flushed once so both sides agree, terminated, and created again
+// as configured, now from identical trees. Files only the container has are
+// still copied to the host, as two-way-safe would. The host must win: it is
+// the source of truth, and a recreated session's container side is stale by
+// definition. Other modes are created as configured.
+func createSyncSession(ctx context.Context, m *mutagen.Mutagen, desired mutagen.SessionConfig) error {
+	if desired.SyncMode != "" && desired.SyncMode != mutagen.DefaultSyncMode {
+		return m.CreateSession(ctx, desired)
+	}
+	reconcile := desired
+	reconcile.SyncMode = "two-way-resolved"
+	fmt.Printf("Reconciling %s (where host and container differ, the host's version wins)...\n", desired.Name)
+	if err := m.CreateSession(ctx, reconcile); err != nil {
+		return err
+	}
+	fctx, cancel := context.WithTimeout(ctx, reconcileTimeout)
+	flushErr := m.FlushSession(fctx, desired.Name)
+	cancel()
+	if err := m.TerminateSession(ctx, desired.Name); err != nil {
+		return fmt.Errorf("ending the reconcile pass: %w", err)
+	}
+	if flushErr != nil {
+		fmt.Printf("Warning: reconciling %s did not finish (%v); files that still differ may show up as conflicts\n", desired.Name, flushErr)
+	}
+	return m.CreateSession(ctx, desired)
 }
 
 // RecreateSyncSession terminates a mount's session if present and creates it
@@ -417,7 +456,7 @@ func (p *Project) RecreateSyncSession(ctx context.Context, m *mutagen.Mutagen, m
 	}
 
 	desired := p.SessionConfigFor(mount)
-	if err := m.CreateSession(ctx, desired); err != nil {
+	if err := createSyncSession(ctx, m, desired); err != nil {
 		return fmt.Errorf("failed to create session %s: %w", mount.SessionName, err)
 	}
 	if err := writeSessionHash(mount.SessionName, desired.Hash()); err != nil {
@@ -583,12 +622,8 @@ func (p *Project) waitForInitialSync(ctx context.Context, m *mutagen.Mutagen, mo
 			continue
 		}
 
-		healthy, detail, known := m.SessionHealthy(ctx, mount.SessionName)
-		if known && !healthy {
-			if detail == "" {
-				detail = "session is not synchronizing"
-			}
-			failed[mount.SessionName] = detail
+		if problem := SyncProblem(ctx, m, mount.SessionName); problem != "" {
+			failed[mount.SessionName] = problem
 		}
 	}
 
@@ -603,6 +638,37 @@ func (p *Project) waitForInitialSync(ctx context.Context, m *mutagen.Mutagen, mo
 	}
 
 	return failed
+}
+
+// SyncProblem says why a session isn't synchronizing ("" when it is, or when
+// its state can't be read): conflicts with their files and the fix, else
+// Mutagen's own problem messages. zdev start and zdev mutagen status share it.
+func SyncProblem(ctx context.Context, m *mutagen.Mutagen, session string) string {
+	healthy, detail, known := m.SessionHealthy(ctx, session)
+	if !known || healthy {
+		return ""
+	}
+	if conflicts, err := m.Conflicts(ctx, session); err == nil && len(conflicts) > 0 {
+		return conflictDetail(conflicts)
+	}
+	if detail == "" {
+		return "session is not synchronizing"
+	}
+	return detail
+}
+
+// conflictDetail says which files are stuck and how to get past them.
+func conflictDetail(paths []string) string {
+	shown := paths
+	if len(shown) > 5 {
+		shown = shown[:5]
+	}
+	more := ""
+	if len(paths) > len(shown) {
+		more = fmt.Sprintf(" and %d more", len(paths)-len(shown))
+	}
+	return fmt.Sprintf("%d conflict(s), changed on both the host and in the container: %s%s - 'zdev mutagen reset' recreates the session with the host's versions",
+		len(paths), strings.Join(shown, ", "), more)
 }
 
 // IsMutagenEnabled checks if Mutagen is enabled for this project

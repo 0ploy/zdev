@@ -36,6 +36,8 @@ zdev mutagen flush   # Wait for sync to complete
 zdev mutagen reset   # Recreate sync sessions (if stuck)
 ```
 
+**When a session is (re)created, the host wins.** zdev recreates a session when its config changes (ignores, ownership, sync mode) and on `zdev mutagen reset`. The container volume still holds the old session's files then, and a brand-new session has no shared history, so every file that differs on the two sides would be a conflict two-way-safe never resolves. zdev therefore first reconciles: a short pass in which the host's version wins wherever the two differ, then the configured session from identical trees. Files only the container has are kept and copied to the host. If a session still ends up with conflicts, `zdev start` names the files; `zdev mutagen reset` settles them in the host's favor.
+
 `zdev mutagen status` reports one line per synced directory, with the state of that mount's own sync session.
 
 Directories that must not be synced (`mutagen.no_sync`) and per-service file ownership (`mutagen.user`, `group`, modes) are covered in [configuration.md](configuration.md#volumes) and the [service fields](configuration.md#service-fields-servicesname).
