@@ -24,6 +24,7 @@ The sandbox runs zdev's small bootstrap image; zdev commands are refused. Write 
 - Needs `bash` + `git` in the service's image.
 - Set `services.<name>.mutagen.user` to the app's user, or the agent runs as root (without capabilities).
 - Settings live only in `~/.zdev/global-config.yaml` under `agent:` (service per project, connectors, `host_access`, `disable_plugins`, `docker_socket: accept`), never in the project config.
+- Terminal integration (e.g. cmux tab icon): `agent.host_hook`, a host command run at session start/end with `ZDEV_AGENT_EVENT` (`SessionStart`/`SessionEnd`), `ZDEV_AGENT_PID` (the `zdev claude` PID, outlives sandbox replacements) and Claude-hook JSON on stdin. cmux: `CMUX_CLAUDE_PID=$ZDEV_AGENT_PID cmux claude-hook session-start|session-end`. Recipe in docs/configuration.md.
 - A service that mounts the Docker socket makes `zdev claude` refuse the project unless `agent.projects.<name>.docker_socket: accept`.
 - Git sync conflict reported by `zdev status`: `zdev mutagen repair-git`.
 - Sandbox memory and conversations are separate from Claude on the host (`~/.zdev/agent/projects/<host-path-key>/`, seeded once from the host's memory): `zdev claude --continue` only resumes sandbox conversations.

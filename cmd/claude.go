@@ -466,6 +466,7 @@ func claudeSession(ctx context.Context, proj *project.Project, args []string) (i
 		return 0, err
 	}
 	s.SessionID = sessionID
+	defer startAgentHook(gcfg.Agent.HostHook, name, proj.Dir, sessionID, plain)()
 	for {
 		code, err := runSandbox(ctx, gcfg, s)
 		mu.Lock()
@@ -697,6 +698,7 @@ func bootstrapSession(ctx context.Context, args []string) (int, error) {
 			fmt.Println(sum)
 		}
 	}()
+	defer startAgentHook(gcfg.Agent.HostHook, name, dir, sessionID, plain)()
 	return runSandbox(ctx, gcfg, sandboxSpec{
 		SessionID: sessionID,
 		Egress:    agent.Egress{Domain: gcfg.Domain, Mode: acfg.Egress, Allow: acfg.AllowHosts},

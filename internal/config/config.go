@@ -32,6 +32,10 @@ type AgentConfig struct {
 	// Credentials are tokens the egress proxy swaps in for their hosts; a
 	// project uses the ones it lists (projects.<p>.credentials).
 	Credentials map[string]AgentCredential `yaml:"credentials"`
+	// HostHook is a command (run with sh) on this machine when a session
+	// starts and ends: SessionStart/SessionEnd in ZDEV_AGENT_EVENT and as
+	// Claude-hook JSON on stdin, the zdev claude PID in ZDEV_AGENT_PID.
+	HostHook string `yaml:"host_hook"`
 }
 
 // AgentCredential is a token bound to hosts. The sandbox only ever sees a

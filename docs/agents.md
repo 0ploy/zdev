@@ -59,6 +59,8 @@ When the agent's own service changes (an update from Claude or from you: config,
 
 **A repository without `.zdev/`:** `zdev claude` starts a bootstrap session in a small image of zdev's own (bash, git, GNU tools) to set the project up. Afterwards run `zdev start` and continue with `zdev claude --continue` in the project's own image.
 
+**Your terminal can know about the session:** `agent.host_hook` runs a command of yours on your machine when a session starts and ends, with nothing from the sandbox in it. The recipe for [cmux](https://cmux.com) gives the tab the Claude icon, as Claude on your Mac does ([Configuration](configuration.md#agent-sandboxes-agent)).
+
 **Settings** live only in `~/.zdev/global-config.yaml` (never in the project config, which the agent can edit): see [Configuration](configuration.md#agent-sandboxes-agent).
 
 ## Install the zdev skill
