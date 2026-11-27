@@ -1,3 +1,9 @@
+## Unreleased
+
+### Bug Fixes
+
+- **`${PROJECTNAME}` no longer picks up a `PROJECTNAME` from the environment.** Running zdev from inside another project's `zdev run` job (which exports `PROJECTNAME`), or from a shell that has it set, resolved `${PROJECTNAME}` in `variables:` and `name:` to the calling project's name, so commands could target the wrong project's containers. It now always means the project's own name.
+
 ## v0.14.0
 
 Containers can call other projects by the URL you use in the browser:

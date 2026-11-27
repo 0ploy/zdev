@@ -298,10 +298,12 @@ func buildVariables(projectDir string) map[string]string {
 	vars["USER"] = os.Getenv("USER")
 	vars["HOME"] = os.Getenv("HOME")
 
-	// Include all environment variables
+	// Include all environment variables, except PROJECTNAME: it is reserved for
+	// the parsed name, and `zdev run` exports the caller's, which would resolve
+	// this project's ${PROJECTNAME} to another project's name.
 	for _, env := range os.Environ() {
 		parts := strings.SplitN(env, "=", 2)
-		if len(parts) == 2 {
+		if len(parts) == 2 && parts[0] != "PROJECTNAME" {
 			// Don't override built-in variables
 			if _, exists := vars[parts[0]]; !exists {
 				vars[parts[0]] = parts[1]
