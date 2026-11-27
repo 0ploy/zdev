@@ -425,3 +425,28 @@ func TestComputeConfigHash_ExcludesSecretsHashLabel(t *testing.T) {
 		t.Errorf("hash must ignore runtime.SecretsHashLabel: %s vs %s", h1, h2)
 	}
 }
+
+func TestUsesSecrets(t *testing.T) {
+	p, _, _ := newSecretsProject(t)
+	if !p.UsesSecrets() {
+		t.Error("service op-env:// reference not detected")
+	}
+
+	plain := newTestProject(runtime.NewMockRuntime())
+	if plain.UsesSecrets() {
+		t.Error("project without references reported as using secrets")
+	}
+
+	svc := plain.Config.Services["app"]
+	svc.OpEnv = testSecretsEnvID
+	plain.Config.Services["app"] = svc
+	if !plain.UsesSecrets() {
+		t.Error("attached Environment (op-env:) not detected")
+	}
+
+	projectLevel := newTestProject(runtime.NewMockRuntime())
+	projectLevel.Config.Environment = map[string]string{"API_KEY": testRef}
+	if !projectLevel.UsesSecrets() {
+		t.Error("project-level op-env:// reference not detected")
+	}
+}

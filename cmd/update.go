@@ -56,6 +56,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		proj.BuildMode = project.BuildModeFromFlags(updateBuild, updateNoBuild)
 		proj.RefreshSecrets = updateRefreshSecrets
 		agentGate(proj)
+		warnOutdatedOpCLI(ctx, proj)
 		fmt.Printf("Updating project %s...\n", proj.Config.Name)
 
 		updated, err := proj.Update(ctx)

@@ -4,6 +4,10 @@
 
 - **`zdev claude` can tell your terminal about the session.** `agent.host_hook` in `~/.zdev/global-config.yaml` runs a command of yours on your machine when a session starts and ends, with the event, the `zdev claude` PID and Claude-hook-shaped JSON (session id, project directory). Nothing from the sandbox reaches it. With the recipe for [cmux](https://cmux.com), a sandboxed Claude gets the Claude icon on its tab, as Claude on your Mac does. See [docs/configuration.md](docs/configuration.md#agent-sandboxes-agent).
 
+### Features
+
+- **1Password secrets work with the stable 1Password CLI.** zdev now reads Environments with `op environment secret list` (op 2.42 or later) instead of the beta-only `op environment read`, so `brew install 1password-cli` is enough. Switch from the beta with `brew uninstall 1password-cli@beta && brew install 1password-cli`: older betas lack the new command. In projects with `op-env` references, `zdev start` and `zdev update` warn right away when `op` is missing or too old, instead of failing at the next container recreate; `zdev systemcheck` reports it too. Multiline values such as PEM keys now arrive intact.
+
 ### Bug Fixes
 
 - **Shared services follow zdev's default images again.** zdev wrote every default image (Traefik, Mailpit, Adminer, Redis Insights, Dozzle, dnsmasq) into the `~/.zdev/global-config.yaml` it generated, so those versions stuck: upgrading zdev never moved the router from the Traefik it first wrote there. New files leave the images commented out. For existing files, `zdev start`, `zdev status`, `zdev update`, `zdev services` and `zdev systemcheck` warn about the lines that pin another tag of a default image; delete them to follow zdev's defaults, or keep them to stay on your version. zdev never changes the file itself.

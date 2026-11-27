@@ -19,6 +19,16 @@ func (p *Project) resolver() secrets.Resolver {
 	return p.Secrets
 }
 
+// UsesSecrets reports whether any service pulls anything from 1Password.
+func (p *Project) UsesSecrets() bool {
+	for _, svc := range p.Config.Services {
+		if p.serviceUsesSecrets(svc) {
+			return true
+		}
+	}
+	return false
+}
+
 // serviceUsesSecrets reports whether the service pulls anything from
 // 1Password: a whole attached Environment (op-env:) or op-env://
 // references in its effective env.

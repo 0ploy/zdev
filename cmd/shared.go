@@ -13,6 +13,7 @@ import (
 	"github.com/0ploy/zdev/internal/config"
 	"github.com/0ploy/zdev/internal/project"
 	runtimePkg "github.com/0ploy/zdev/internal/runtime"
+	"github.com/0ploy/zdev/internal/secrets"
 	"github.com/0ploy/zdev/internal/services"
 	"github.com/0ploy/zdev/internal/state"
 	"github.com/0ploy/zdev/internal/ui"
@@ -187,5 +188,18 @@ func hintStaleImagePins(cfg *config.GlobalConfig) {
 	if hint := cfg.StaleImagePinsHint(); hint != "" {
 		fmt.Println()
 		fmt.Print(hint)
+	}
+}
+
+// warnOutdatedOpCLI warns before anything fails when the project pulls
+// secrets from 1Password and the local op can't read Environments. Secrets
+// resolve only when a container is created, so without this check an op too
+// old for them would surface days later, at the next recreate.
+func warnOutdatedOpCLI(ctx context.Context, proj *project.Project) {
+	if _, agentRequest := project.AgentRequest(); agentRequest || !proj.UsesSecrets() {
+		return
+	}
+	if err := secrets.CheckCLI(ctx); err != nil {
+		fmt.Printf("Warning: %v\n\n", err)
 	}
 }

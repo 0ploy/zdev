@@ -48,21 +48,27 @@ func TestParseRef(t *testing.T) {
 }
 
 func TestParseEnvironmentOutput(t *testing.T) {
-	out := "PLAIN=hello\n" +
-		"WITH_EQUALS=a=b=c\n" +
-		"EMPTY=\n" +
-		"URL=mysql://dev:dev@localhost:3306/db\n" +
-		"DUPLICATE=first\n" +
-		"DUPLICATE=last\n" +
-		"garbage line without separator\n"
+	// The shape of op 2.42's `op environment secret list --reveal --format json`.
+	out := `[
+  {"name": "PLAIN", "value": "hello", "concealed": false},
+  {"name": "WITH_EQUALS", "value": "a=b=c", "concealed": true},
+  {"name": "EMPTY", "value": "", "concealed": true},
+  {"name": "MULTILINE", "value": "-----BEGIN KEY-----\nabc\n-----END KEY-----", "concealed": true},
+  {"name": "DUPLICATE", "value": "first", "concealed": false},
+  {"name": "DUPLICATE", "value": "last", "concealed": false},
+  {"name": "", "value": "nameless", "concealed": false}
+]`
 
-	vars := parseEnvironmentOutput(out)
+	vars, err := parseEnvironmentOutput(out)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	want := map[string]string{
 		"PLAIN":       "hello",
 		"WITH_EQUALS": "a=b=c",
 		"EMPTY":       "",
-		"URL":         "mysql://dev:dev@localhost:3306/db",
+		"MULTILINE":   "-----BEGIN KEY-----\nabc\n-----END KEY-----",
 		"DUPLICATE":   "last",
 	}
 	if len(vars) != len(want) {
@@ -73,6 +79,37 @@ func TestParseEnvironmentOutput(t *testing.T) {
 			t.Errorf("vars[%q] = %q, want %q", k, vars[k], v)
 		}
 	}
+
+	if vars, err := parseEnvironmentOutput("[]\n"); err != nil || len(vars) != 0 {
+		t.Errorf("empty Environment: %v, %v", vars, err)
+	}
+	if vars, err := parseEnvironmentOutput(""); err != nil || len(vars) != 0 {
+		t.Errorf("no output: %v, %v", vars, err)
+	}
+}
+
+func TestParseEnvironmentOutputNeverQuotesOutput(t *testing.T) {
+	_, err := parseEnvironmentOutput("SECRET=hunter2\n")
+	if err == nil {
+		t.Fatal("non-JSON output accepted")
+	}
+	if strings.Contains(err.Error(), "hunter2") {
+		t.Errorf("error quotes op's output, which holds secrets: %v", err)
+	}
+}
+
+// secretsJSON renders name/value pairs as op environment secret list does.
+func secretsJSON(pairs ...string) string {
+	var b strings.Builder
+	b.WriteString("[")
+	for i := 0; i+1 < len(pairs); i += 2 {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		fmt.Fprintf(&b, `{"name":%q,"value":%q,"concealed":true}`, pairs[i], pairs[i+1])
+	}
+	b.WriteString("]")
+	return b.String()
 }
 
 // testCLI builds an OnePasswordCLI with all seams stubbed. Tests override
@@ -99,7 +136,7 @@ func stubRead(output string) func(context.Context, string, string, []string) (st
 func TestReadEnvironment_ReturnsAllVars(t *testing.T) {
 	o := testCLI()
 	readCalls := 0
-	inner := stubRead("API_KEY=value-a\nDB_PASS=value-b\n")
+	inner := stubRead(secretsJSON("API_KEY", "value-a", "DB_PASS", "value-b"))
 	o.runRead = func(ctx context.Context, binary, envID string, env []string) (string, string, error) {
 		readCalls++
 		if envID != testEnvID {
@@ -123,7 +160,7 @@ func TestReadEnvironment_ReturnsAllVars(t *testing.T) {
 func TestReadEnvironment_CacheAvoidsSecondInvocation(t *testing.T) {
 	o := testCLI()
 	readCalls := 0
-	inner := stubRead("API_KEY=value-a\nOTHER=value-b\n")
+	inner := stubRead(secretsJSON("API_KEY", "value-a", "OTHER", "value-b"))
 	o.runRead = func(ctx context.Context, binary, envID string, env []string) (string, string, error) {
 		readCalls++
 		return inner(ctx, binary, envID, env)
@@ -153,7 +190,7 @@ func TestReadEnvironment_DistinctEnvironmentsReadSeparately(t *testing.T) {
 	var readIDs []string
 	o.runRead = func(ctx context.Context, binary, envID string, env []string) (string, string, error) {
 		readIDs = append(readIDs, envID)
-		return "KEY=" + envID + "\n", "", nil
+		return secretsJSON("KEY", envID), "", nil
 	}
 
 	for _, envID := range []string{"env-a", "env-b", "env-a"} {
@@ -178,7 +215,7 @@ func TestEnsureBinary_MissingNonInteractive(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when op is missing")
 	}
-	for _, want := range []string{"not found in PATH", "brew install 1password-cli@beta"} {
+	for _, want := range []string{"not found in PATH", "brew install 1password-cli"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q should contain %q", err.Error(), want)
 		}
@@ -203,7 +240,7 @@ func TestEnsureBinary_InstallOfferAccepted(t *testing.T) {
 	prompted := false
 	o.confirm = func(string) bool { prompted = true; return true }
 	o.runInstall = func(context.Context) error { installed = true; return nil }
-	o.runRead = stubRead("API_KEY=val\n")
+	o.runRead = stubRead(secretsJSON("API_KEY", "val"))
 
 	got, err := o.ReadEnvironment(context.Background(), testEnvID)
 	if err != nil {
@@ -272,7 +309,7 @@ func TestRead_AuthRecoveryRetriesOnce(t *testing.T) {
 			return "", "[ERROR] you are not currently signed in", fmt.Errorf("exit status 1")
 		}
 		envOnRetry = env
-		return "API_KEY=val\n", "", nil
+		return secretsJSON("API_KEY", "val"), "", nil
 	}
 
 	got, err := o.ReadEnvironment(context.Background(), testEnvID)
@@ -363,7 +400,7 @@ func TestRead_AuthErrorNonInteractiveNoPrompt(t *testing.T) {
 	}
 }
 
-func TestRead_StableCLIWithoutEnvironmentsHint(t *testing.T) {
+func TestRead_OldCLIWithoutEnvironmentsHint(t *testing.T) {
 	o := testCLI()
 	o.runRead = func(context.Context, string, string, []string) (string, string, error) {
 		return "", `[ERROR] unknown command "environment" for "op"`, fmt.Errorf("exit status 1")
@@ -373,8 +410,10 @@ func TestRead_StableCLIWithoutEnvironmentsHint(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !strings.Contains(err.Error(), "1password-cli@beta") {
-		t.Errorf("stable-CLI error should point at the beta build: %v", err)
+	for _, want := range []string{"too old", "brew install 1password-cli", "brew uninstall 1password-cli@beta"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("old-CLI error should contain %q: %v", want, err)
+		}
 	}
 }
 
@@ -398,7 +437,7 @@ func TestRead_AccountAddWhenNoAccounts(t *testing.T) {
 		if readCalls == 1 {
 			return "", "[ERROR] no accounts configured for use with 1Password CLI", fmt.Errorf("exit status 1")
 		}
-		return "API_KEY=val\n", "", nil
+		return secretsJSON("API_KEY", "val"), "", nil
 	}
 
 	got, err := o.ReadEnvironment(context.Background(), testEnvID)

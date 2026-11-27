@@ -65,6 +65,7 @@ func runStartImpl(ctx context.Context, proj *project.Project, args []string) err
 	}
 
 	agentGate(proj)
+	warnOutdatedOpCLI(ctx, proj)
 	if len(args) == 1 {
 		service := args[0]
 		ui.StatusStep(fmt.Sprintf("Starting service %s", service), plainMode)

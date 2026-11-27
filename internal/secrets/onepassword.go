@@ -17,9 +17,9 @@ import (
 )
 
 // OnePasswordCLI reads 1Password Environments by shelling out to the
-// 1Password CLI (`op environment read`, beta). The binary is
+// 1Password CLI (`op environment secret list`, 2.42+). The binary is
 // user-installed and looked up in PATH lazily on first read, so projects
-// without secrets never require it. `op environment read` returns the
+// without secrets never require it. `op environment secret list` returns the
 // whole Environment in one invocation (one auth prompt no matter how
 // many variables); the parsed set is cached in memory per Environment ID
 // for the lifetime of the process and never persisted.
@@ -82,8 +82,7 @@ func (o *OnePasswordCLI) ReadEnvironment(ctx context.Context, envID string) (map
 }
 
 // ensureBinary locates op in PATH, offering a Homebrew install on an
-// interactive terminal when it is missing. Environments require the
-// beta CLI build.
+// interactive terminal when it is missing.
 func (o *OnePasswordCLI) ensureBinary(ctx context.Context) error {
 	if o.binary != "" {
 		return nil
@@ -113,10 +112,10 @@ func (o *OnePasswordCLI) ensureBinary(ctx context.Context) error {
 		}
 	}
 
-	return fmt.Errorf("1Password CLI (op) not found in PATH - this project's config uses op-env:// secret references\n\nInstall the beta build (Environments require it): brew install 1password-cli@beta\nDocs: https://www.1password.dev/environments")
+	return fmt.Errorf("1Password CLI (op) not found in PATH - this project's config uses op-env:// secret references\n\nInstall it (2.42 or later): brew install 1password-cli\nDocs: https://www.1password.dev/environments")
 }
 
-// readEnvironment runs op environment read, driving an interactive
+// readEnvironment runs op environment secret list, driving an interactive
 // signin and retrying exactly once when the failure is auth-shaped.
 func (o *OnePasswordCLI) readEnvironment(ctx context.Context, envID string) (map[string]string, error) {
 	run := o.runRead
@@ -134,7 +133,7 @@ func (o *OnePasswordCLI) readEnvironment(ctx context.Context, envID string) (map
 		return nil, wrapReadError(stderr, err)
 	}
 
-	return parseEnvironmentOutput(stdout), nil
+	return parseEnvironmentOutput(stdout)
 }
 
 // recoverAuth drives the interactive path back to a signed-in state:
@@ -214,7 +213,7 @@ func (o *OnePasswordCLI) installViaBrew(ctx context.Context) error {
 	if o.runInstall != nil {
 		return o.runInstall(ctx)
 	}
-	cmd := exec.CommandContext(ctx, "brew", "install", "1password-cli@beta")
+	cmd := exec.CommandContext(ctx, "brew", "install", "1password-cli")
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -255,36 +254,61 @@ func wrapReadError(stderr string, err error) error {
 	if isAuthError(stderr) {
 		return fmt.Errorf("1Password secret resolution failed: %s\n\nSign in with: op signin\nOr enable the desktop app integration: 1Password > Settings > Developer > Integrate with 1Password CLI\nFor non-interactive use, set OP_SERVICE_ACCOUNT_TOKEN", detail)
 	}
-	// The stable CLI build predates Environments; only the beta has the
-	// `op environment` command family.
+	// Builds before 2.42 lack `op environment secret list`: older stable
+	// ones have no `op environment` at all, older betas only `read`.
 	if strings.Contains(strings.ToLower(detail), "unknown command") {
-		return fmt.Errorf("1Password secret resolution failed: the installed op CLI does not support Environments\n\nInstall the beta build: brew install 1password-cli@beta")
+		return fmt.Errorf("1Password secret resolution failed: the installed op CLI is too old for Environments\n\n%s", upgradeHint)
 	}
 	return fmt.Errorf("1Password secret resolution failed: %s", detail)
 }
 
-// parseEnvironmentOutput parses op environment read output: one
-// KEY=VALUE per line, no quoting. Duplicate keys keep the last value
-// (dotenv convention; 1Password does not deduplicate). Lines without
-// '=' are skipped. Multiline values are not representable in this
-// format and therefore unsupported.
-func parseEnvironmentOutput(out string) map[string]string {
-	vars := make(map[string]string)
-	for _, line := range strings.Split(out, "\n") {
-		if line == "" {
-			continue
-		}
-		key, val, ok := strings.Cut(line, "=")
-		if !ok || key == "" {
-			continue
-		}
-		vars[key] = val
+// CheckCLI reports, without contacting 1Password, whether the op in PATH
+// can read Environments: a missing op or one before 2.42 (which lacks
+// `op environment secret list`) returns an error saying how to fix it.
+// It costs one local `op ... --help` run (~10 ms).
+func CheckCLI(ctx context.Context) error {
+	path, found := tools.FindInPath("op")
+	if !found {
+		return fmt.Errorf("1Password CLI (op) not found - this project uses op-env secrets\nInstall 1Password CLI 2.42 or later: brew install 1password-cli")
 	}
-	return vars
+	if _, err := tools.RunTool(ctx, path, "environment", "secret", "list", "--help"); err != nil {
+		return fmt.Errorf("1Password CLI (op) at %s is too old for this project's op-env secrets\n%s", path, upgradeHint)
+	}
+	return nil
+}
+
+// upgradeHint is how to get an op that reads Environments (2.42+). The beta
+// cask provides op too, so Homebrew refuses the stable one next to it.
+const upgradeHint = "Install 1Password CLI 2.42 or later: brew install 1password-cli\n(If the beta is installed: brew uninstall 1password-cli@beta first.)"
+
+// opSecret is one entry of `op environment secret list --format json`.
+type opSecret struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+// parseEnvironmentOutput parses `op environment secret list --format json`:
+// an array of {name, value, concealed}. Duplicate names keep the last value.
+// The error never quotes the output: it holds secret values.
+func parseEnvironmentOutput(out string) (map[string]string, error) {
+	vars := make(map[string]string)
+	if strings.TrimSpace(out) == "" {
+		return vars, nil
+	}
+	var secrets []opSecret
+	if err := json.Unmarshal([]byte(out), &secrets); err != nil {
+		return nil, fmt.Errorf("1Password secret resolution failed: op environment secret list did not return the expected JSON list")
+	}
+	for _, s := range secrets {
+		if s.Name != "" {
+			vars[s.Name] = s.Value
+		}
+	}
+	return vars, nil
 }
 
 func defaultRunRead(ctx context.Context, binary, envID string, extraEnv []string) (string, string, error) {
-	cmd := exec.CommandContext(ctx, binary, "environment", "read", envID)
+	cmd := exec.CommandContext(ctx, binary, "environment", "secret", "list", envID, "--reveal", "--format", "json")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

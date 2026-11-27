@@ -44,9 +44,11 @@ Rules that follow:
 
 ## Requirements
 
-- **Beta 1Password CLI** - Environments don't exist in the stable build:
-  `brew install 1password-cli@beta` (>= 2.33.0-beta.02). If `op` is missing when a project needs
-  it, zdev offers the brew install itself on an interactive terminal.
+- **1Password CLI >= 2.42** (stable; the beta is no longer needed): `brew install 1password-cli`.
+  With the beta installed, `brew uninstall 1password-cli@beta` first (both provide `op`). If `op`
+  is missing when a project needs it, zdev offers the brew install itself on an interactive terminal.
+  `zdev start`/`update` in a project with `op-env` references warn early when `op` is missing or too
+  old - fix it then, or the next container recreate fails.
 - 1Password desktop app with the CLI integration on: **Settings > Developer > Integrate with
   1Password CLI**. First resolution pops an authorization prompt (Touch ID).
 - zdev >= the release that shipped `op-env` - older binaries reject the unknown config field
@@ -93,7 +95,7 @@ while changing the wiring (attach/detach/change ID, add/remove references) still
 | First start / after `zdev down` / recreate on config change | Yes - one call per Environment |
 | `zdev update --refresh-secrets` | Yes - one call per Environment |
 
-Each distinct Environment is fetched once per operation (`op environment read`, cached per
+Each distinct Environment is fetched once per operation (`op environment secret list`, cached per
 process) no matter how many services and references use it, so the typical worst case is one
 auth prompt. On recreates, resolution happens BEFORE the old container is removed - a failure
 (signed out, deleted Environment) leaves the running service intact.
@@ -132,11 +134,11 @@ failures become actionable errors instead of hangs.
 
 | Symptom | Cause / fix |
 |---------|-------------|
-| `1Password CLI (op) not found in PATH` | Install the beta: `brew install 1password-cli@beta`. On a TTY zdev offers to run this itself |
+| `1Password CLI (op) not found in PATH` | `brew install 1password-cli`. On a TTY zdev offers to run this itself |
 | `authorization timeout` | The 1Password app's approval dialog went unanswered - unlock the app, rerun, approve the popup |
 | `not signed in` / `no accounts configured` | On a TTY zdev drives `op signin` / `op account add` interactively; otherwise enable the desktop-app CLI integration or set `OP_SERVICE_ACCOUNT_TOKEN` |
 | `no accounts configured` even though the app integration is on (macOS) | The terminal was denied access to the 1Password app's data ("Terminal would like to access data from other apps"), so `op account list` is silently empty. Allow the terminal in System Settings > Privacy & Security > App Management, or `tccutil reset All <terminal-bundle-id>`, restart the terminal and approve the prompt. Quick check: works in Terminal.app but not the usual terminal |
-| `does not support Environments` | Stable `op` build installed - Environments need the beta (`1password-cli@beta`) |
+| `too old for Environments` | `op` before 2.42 (older stable, or an older beta with only `op environment read`): `brew upgrade 1password-cli`, or replace the beta (`brew uninstall 1password-cli@beta && brew install 1password-cli`) |
 | `expected op-env://<environment-id>/<VARIABLE>` | Reference is missing its Environment ID segment - the old single-segment form (`op-env://KEY`) is not valid |
 | `variable X not found in 1Password Environment` | Variable missing in that Environment (names are case-sensitive) - check Developer > Environments in the app |
 | Team member's zdev errors on `op-env` field | Their zdev predates the feature - they must update zdev |
@@ -146,8 +148,6 @@ failures become actionable errors instead of hangs.
 
 ## Limits
 
-- Values must be single-line (`op environment read` output is line-based). Multiline secrets
-  (PEM keys) need a different transport - e.g. base64 the value in 1Password and decode in the app.
 - Duplicate keys in an Environment resolve to the last occurrence.
 - Resolved values are visible via `docker inspect` on the developer's machine - inherent to
   container env (same as docker-compose), not a zdev-specific exposure.

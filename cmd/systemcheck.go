@@ -380,8 +380,8 @@ func checkMutagen(ctx context.Context, cfg *config.GlobalConfig) {
 // check1Password reports the 1Password CLI status. op is user-installed
 // (never auto-downloaded) and only required when the current project's
 // config contains op-env:// secret references, so absence is
-// informational unless such a project is present. Environments need the
-// beta CLI build.
+// informational unless such a project is present. Environments need
+// op 2.42 or later (`op environment secret list`).
 func check1Password(ctx context.Context) int {
 	fmt.Print("1password:     ")
 
@@ -403,7 +403,7 @@ func check1Password(ctx context.Context) int {
 	if !found {
 		if usesRefs {
 			fmt.Printf("%s (not found in PATH but this project uses op-env:// secret references)\n", statusText("MISSING"))
-			fmt.Println("               Install it: brew install 1password-cli@beta")
+			fmt.Println("               Install it: brew install 1password-cli")
 			return 1
 		}
 		fmt.Printf("%s (not installed - only needed for op-env:// secret references)\n", statusText("SKIP"))
@@ -415,15 +415,16 @@ func check1Password(ctx context.Context) int {
 		version = "unknown"
 	}
 
-	// Environments are beta-CLI-only; a stable build has no
-	// `op environment` command family.
-	if _, err := tools.RunTool(ctx, path, "environment", "--help"); err != nil {
+	// Probe the command, not the version: betas before 2.42 have
+	// `op environment read` only, older stable builds no `op environment`.
+	if _, err := tools.RunTool(ctx, path, "environment", "secret", "list", "--help"); err != nil {
 		if usesRefs {
-			fmt.Printf("%s (%s %s - no Environments support, this project needs it)\n", statusText("MISSING"), path, version)
-			fmt.Println("               Install the beta build: brew install 1password-cli@beta")
+			fmt.Printf("%s (%s %s - too old for Environments, this project needs them)\n", statusText("MISSING"), path, version)
+			fmt.Println("               Upgrade to 2.42 or later: brew upgrade 1password-cli")
+			fmt.Println("               (with the beta installed: brew uninstall 1password-cli@beta && brew install 1password-cli)")
 			return 1
 		}
-		fmt.Printf("%s (%s %s - stable build, Environments need the beta)\n", statusText("SKIP"), path, version)
+		fmt.Printf("%s (%s %s - too old for Environments, 2.42 or later needed)\n", statusText("SKIP"), path, version)
 		return 0
 	}
 
