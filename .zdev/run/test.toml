@@ -1,0 +1,60 @@
+description = "Tests"
+
+[jobs.unit]
+description = "Unit tests, mock runtime (arguments go to go test, default ./...)"
+service = "app"
+run = '''
+[ $# -eq 0 ] && set -- ./...
+go test "$@"
+'''
+
+[jobs.vet]
+description = "go vet and gofmt"
+service = "app"
+run = '''
+go vet ./...
+unformatted=$(gofmt -l cmd internal main.go)
+[ -z "$unformatted" ] || fail "not gofmt'ed: $unformatted"
+'''
+
+[jobs.all]
+description = "vet + unit"
+needs = ["vet", "unit"]
+
+[jobs.integration]
+description = "Integration tests against the host's real Docker (arguments go to the test binaries, e.g. -test.run TestX)"
+run = '''
+. .zdev/run/scripts/lib.sh
+# They drive the host's Docker, Mutagen and ~/.zdev, so they run on the
+# host: compiled for it in the container, then executed here.
+[ -n "${ZDEV_SANDBOX:-}" ] && fail "integration tests use the host's Docker and Mutagen: ask the developer to run 'zdev run test integration'"
+zdev run test compile-integration "$host_os" "$host_arch"
+sync_files
+
+root=$PWD
+failed=""
+# fd 3: the test binaries must not eat the list from stdin
+while read -r bin dir <&3; do
+  step "Running $dir"
+  if ! (cd "$dir" && "$root/.itest/$bin" -test.v -test.count=1 "$@"); then
+    failed="$failed $dir"
+  fi
+done 3< .itest/packages
+[ -z "$failed" ] || fail "failed:$failed"
+'''
+
+[jobs.compile-integration]
+description = "Compile the integration test binaries into .itest/ for GOOS GOARCH"
+hidden = true
+service = "app"
+env = { GOOS = "{1}", GOARCH = "{2}" }
+run = '''
+rm -rf .itest && mkdir -p .itest
+: > .itest/packages
+for dir in $(grep -rl --include='*_test.go' '^//go:build integration' cmd internal | xargs -n1 dirname | sort -u); do
+  bin=$(printf '%s' "$dir" | tr / -).test
+  step "Compiling $dir for $GOOS/$GOARCH"
+  go test -c -tags=integration -o ".itest/$bin" "./$dir"
+  echo "$bin $dir" >> .itest/packages
+done
+'''

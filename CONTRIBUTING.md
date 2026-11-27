@@ -5,11 +5,13 @@
 ```bash
 git clone https://github.com/0ploy/zdev.git
 cd zdev
-make build    # Build binary
-make test     # Run unit tests
+zdev start           # Build and start the dev container (Go toolchain inside)
+zdev run build       # Build ./zdev for this machine (+ ./zdev-linux-<arch>)
+zdev run test all    # go vet + gofmt + unit tests
+zdev run install     # Build and install the dev build to ~/.zdev/bin
 ```
 
-Requirements: Go 1.27+, Docker Desktop (for integration tests)
+Requirements: zdev and a Docker engine. No Go on the host: zdev develops itself as a zdev project. The `app` service (`.zdev/Dockerfile`) is a toolbox container that holds the Go toolchain and stays up, with nothing routed; the project commands in `.zdev/run/` run Go there and cross-compile for the host. Inside the container (`zdev exec app bash`, or a `zdev claude` session) `go` and `make` work directly. A host Go install still works with the `make` targets below.
 
 ## Project Structure
 
@@ -36,29 +38,32 @@ testdata/projects/       # Test fixtures (minimal, full, variables, mutagen)
 
 ## Testing
 
-### Unit tests (`make test`)
+### Unit tests (`zdev run test unit`)
 
 Run on every change before committing. Fast (seconds), no external dependencies.
 
 ```bash
-make test                           # All unit tests
-go test ./internal/create/ -v       # Single package
-go test ./... -run TestValidateName # Single test
+zdev run test unit                                 # All unit tests
+zdev run test unit ./internal/create/ -v           # Single package (arguments go to go test)
+zdev run test unit ./... -run TestValidateName     # Single test
+zdev run test all                                  # go vet + gofmt + unit tests
 ```
 
 Unit tests use the mock runtime (`internal/runtime/mock.go`) for Docker operations and test fixtures in `testdata/projects/`.
 
-### Integration tests (`make test-integration`)
+### Integration tests (`zdev run test integration`)
 
 Run before releases, after refactoring core logic (project lifecycle, routing, Mutagen), or when changing code that unit tests can't cover. Requires Docker - spins up real containers.
 
 ```bash
-make test-integration                                      # All integration tests
-go test -v -tags=integration -count=1 ./internal/project/  # Single package
+zdev run test integration                          # All integration tests
+zdev run test integration -test.run TestProject_   # Filter (arguments go to the test binaries)
 ```
 
-Integration tests are tagged with `//go:build integration` so they don't run during `make test`. They create real Docker containers, networks, and volumes, and clean up after themselves (including state registry).
-The full Make target runs packages serially (`-p 1`) because multiple packages snapshot and restore the same shared-service containers.
+They drive the host's Docker, Mutagen and `~/.zdev`, so they can't run inside a container: the job compiles one test binary per package for the host OS/arch in the `app` container (`go test -c`, into the gitignored `.itest/`), waits for file sync, and runs them on the host from each package's directory, one after the other. They are refused in a `zdev claude` sandbox. With Go on the host, `make test-integration` does the same directly.
+
+Integration tests are tagged with `//go:build integration` so they don't run with the unit tests. They create real Docker containers, networks, and volumes, and clean up after themselves (including state registry).
+Both the job and the Make target run packages serially (`-p 1`) because multiple packages snapshot and restore the same shared-service containers.
 
 ### Writing tests
 
@@ -209,7 +214,7 @@ The main mkcert cert covers `*.<domain>`, `*.shared.<domain>` and `<domain>`. A 
 
 Ownership is split on purpose. The **project lifecycle** issues the cert, because only project config knows the hostnames: `ensureProjectCert` runs in `registerAndConnect` (every start and update, after registration), and every unregister path (`Down`, `zdev remove`, `zdev cleanup`, `Rename`) calls `ssl.RemoveProjectCert`. The **router** (`refreshProjectCerts` in `StartRouter`) needs no project config: it deletes certs of projects not in state and re-signs the main and per-project certs from their existing SANs when the mkcert CA changes. Hosts come from `routedHosts()`, built on the same helpers as the Traefik labels, so certs and routes can't diverge.
 
-Testing: `ssl.Signer` is the mkcert seam (`NewCertManagerWithSigner`). `internal/ssl` tests use an in-process CA that signs real certs; `internal/project` and `internal/services` each expose a package-level `newCertManager` to swap. `make test` never needs the mkcert binary.
+Testing: `ssl.Signer` is the mkcert seam (`NewCertManagerWithSigner`). `internal/ssl` tests use an in-process CA that signs real certs; `internal/project` and `internal/services` each expose a package-level `newCertManager` to swap. The unit tests never need the mkcert binary.
 
 ## Documentation
 
@@ -246,7 +251,7 @@ Key patterns:
 ## Release Process
 
 1. Update `CHANGELOG.md` - add new `## vX.Y.Z` section at top
-2. Run `make test` and `make test-integration`
+2. Run `zdev run test all` and `zdev run test integration`
 3. Commit, tag, push:
    ```bash
    git add -A && git commit -m "Release vX.Y.Z"

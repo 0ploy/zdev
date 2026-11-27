@@ -1,0 +1,15 @@
+description = "Build ./zdev for this machine and ./zdev-linux-<arch> (the binary zdev claude needs next to a dev build)"
+run = '''
+. .zdev/run/scripts/lib.sh
+version=$(git describe --tags --always --dirty 2>/dev/null || echo dev)
+ldflags="-s -w -X github.com/0ploy/zdev/cmd.Version=$version -X github.com/0ploy/zdev/cmd.BuildTime=$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+
+step "Building zdev $version for $host_os/$host_arch"
+in_go env GOOS="$host_os" GOARCH="$host_arch" go build -trimpath -ldflags "$ldflags" -o zdev .
+if [ "$host_os" != linux ]; then
+  step "Building zdev-linux-$host_arch"
+  in_go env GOOS=linux GOARCH="$host_arch" go build -trimpath -ldflags "$ldflags" -o "zdev-linux-$host_arch" .
+fi
+sync_files
+./zdev version | head -1
+'''

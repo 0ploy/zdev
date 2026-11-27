@@ -1,0 +1,15 @@
+description = "Build and install the dev build to ~/.zdev/bin (replaces the installed zdev)"
+needs = ["build"]
+run = '''
+. .zdev/run/scripts/lib.sh
+[ -n "${ZDEV_SANDBOX:-}" ] && fail "install replaces the host's zdev: run it on the host"
+mkdir -p "$HOME/.zdev/bin"
+for f in zdev zdev-linux-*; do
+  [ -f "$f" ] || continue
+  # Copy, then rename: overwriting a running binary in place can get it
+  # killed on macOS (the kernel caches its code signature).
+  cp "$f" "$HOME/.zdev/bin/.$f.new"
+  mv -f "$HOME/.zdev/bin/.$f.new" "$HOME/.zdev/bin/$f"
+  step "Installed ~/.zdev/bin/$f"
+done
+'''

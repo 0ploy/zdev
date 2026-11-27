@@ -20,3 +20,7 @@ coverage.out
 
 # Test server binaries (built via `make test-server`)
 testdata/bin/testserver-*
+
+# zdev
+.zdev/local/
+.itest/

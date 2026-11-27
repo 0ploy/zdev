@@ -6,8 +6,9 @@ Local development environment framework for web applications. Go CLI that shells
 
 ## Workflow
 
-- Run `make test` before every commit (fast, mock runtime).
-- Run `make test-integration` before releases, or after changing project lifecycle / routing / Mutagen / runtime code (spins up real Docker, takes minutes).
+- **The Go toolchain lives in the `app` container (`.zdev/`), not on the host.** On the host use `zdev run test unit` / `zdev run test vet` / `zdev run build` / `zdev run install`; in a `zdev claude` sandbox `go` and `make` work directly.
+- Run `zdev run test all` (vet + unit, mock runtime) before every commit.
+- Run `zdev run test integration` before releases, or after changing project lifecycle / routing / Mutagen / runtime code (real Docker, takes minutes). It compiles test binaries for the host in the container and runs them on the host, so it is refused in a sandbox: ask the developer to run it.
 - **Never commit, push, or tag without explicit user confirmation.** Show the proposed commit message and wait for approval before `git commit`, `git push`, or `git tag`. Never add "Co-Authored-By" lines.
 
 Release process:

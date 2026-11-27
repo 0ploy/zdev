@@ -1,0 +1,24 @@
+name: zdev
+
+# zdev is a CLI, not a server: the app container is a toolbox that stays up
+# so `zdev exec app ...` and `zdev run ...` can use its Go toolchain. Nothing
+# is routed, so the shared services aren't needed.
+shared:
+  router: false
+  mail: false
+  logs: false
+
+services:
+  app:
+    dockerfile: .zdev/Dockerfile
+    # PID 1 ignores SIGTERM unless it handles it: without the trap, every
+    # stop waits for Docker's 10s kill timeout.
+    command: trap 'exit 0' TERM INT; sleep infinity & wait
+    working_dir: /app
+    volumes:
+      - ${PROJECTPATH}:/app
+      - go_mod:/go/pkg/mod
+      - go_build:/home/dev/.cache/go-build
+    mutagen:
+      user: dev
+      group: dev
