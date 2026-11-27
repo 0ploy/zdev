@@ -2,9 +2,11 @@ package cmd
 
 // zdev claude setup: walks the developer through what agent sandboxes need
 // from them. Claude's login stays the shared /login store (renewed by Claude
-// itself, so it can't live in a read-only place); GitHub gets a token per
-// project, fine-grained to the project's repository, kept in 1Password or a
-// file only the developer can read, and granted in the global config.
+// itself, so it can't live in a read-only place); the project's git host
+// (GitHub, or GitLab including self-hosted instances, found from the origin
+// remote) gets a token per project, limited to the project's repository where
+// the host allows it, kept in 1Password or a file only the developer can read,
+// and granted in the global config.
 
 import (
 	"bufio"
@@ -54,21 +56,41 @@ func runClaudeSetup(ctx context.Context) error {
 
 	dir, err := config.FindProjectDir()
 	if err != nil {
-		fmt.Println("\nRun zdev claude setup in a project to give its sandbox a GitHub token.")
+		fmt.Println("\nRun zdev claude setup in a project to give its sandbox a GitHub or GitLab token.")
 		return nil
 	}
 	pcfg, err := config.LoadProject(dir)
 	if err != nil {
 		return err
 	}
-	owner, repo, ok := githubRepo(dir)
-	ui.StatusStep("GitHub for "+pcfg.Name, plain)
+	host, path, ok := originRemote(dir)
 	if !ok {
-		fmt.Println("The project's origin remote is not on github.com: nothing to set up.")
+		ui.StatusStep("Git hosting for "+pcfg.Name, plain)
+		fmt.Println("The project has no origin remote: nothing to set up.")
 		return nil
 	}
+	if host == "github.com" {
+		owner, repo, ok := strings.Cut(path, "/")
+		if !ok || strings.Contains(repo, "/") {
+			fmt.Printf("origin (%s) is not a GitHub repository: nothing to set up.\n", path)
+			return nil
+		}
+		return setupGitHub(ctx, in, plain, gcfg, pcfg.Name, owner, repo)
+	}
+	if isGitLab(ctx, host) {
+		return setupGitLab(ctx, in, plain, gcfg, pcfg.Name, host, path)
+	}
+	ui.StatusStep("Git hosting for "+pcfg.Name, plain)
+	fmt.Printf("origin is on %s, which zdev claude setup doesn't recognize (it sets up GitHub and GitLab).\n", host)
+	fmt.Println("A token can still be granted by hand: agent.credentials in ~/.zdev/global-config.yaml (docs/configuration.md).")
+	return nil
+}
+
+// setupGitHub offers the GitHub credentials for owner/repo.
+func setupGitHub(ctx context.Context, in *bufio.Reader, plain bool, gcfg *config.GlobalConfig, project, owner, repo string) error {
+	ui.StatusStep("GitHub for "+project, plain)
 	fmt.Printf("Repository: %s/%s\n", owner, repo)
-	if name := grantedGitHub(gcfg, pcfg.Name); name != "" {
+	if name := grantedFor(gcfg, project, "github.com"); name != "" {
 		fmt.Printf("The sandbox gets credential %s (%s).\n", name, describeSource(gcfg.Agent.Credentials[name]))
 		if !askYes(in, "Replace it? [y/N] ", false) {
 			return nil
@@ -83,14 +105,14 @@ How should the sandbox reach GitHub?
 `)
 	switch ask(in, "Choice [1]: ") {
 	case "", "1":
-		return setupGitHubToken(ctx, in, plain, pcfg.Name, owner, repo)
+		return setupGitHubToken(ctx, in, plain, project, owner, repo)
 	case "2":
 		if _, ok := tools.FindInPath("gh"); !ok {
 			return errors.New("gh is not installed")
 		}
 		name := "github-gh"
 		cred := config.AgentCredential{Hosts: githubHosts, Env: []string{"GH_TOKEN"}, Command: "gh auth token"}
-		if err := grantCredential(pcfg.Name, name, cred); err != nil {
+		if err := grantCredential(project, name, cred); err != nil {
 			return err
 		}
 		return verifyGitHubCredential(ctx, name, cred, owner, repo)
@@ -164,7 +186,7 @@ Then "Generate token" and paste it here.
 	cred := config.AgentCredential{Hosts: githubHosts, Env: []string{"GH_TOKEN"}}
 	op := secrets.NewOnePasswordCLI()
 	if _, found := tools.FindInPath("op"); found && askYes(in, "Store it in 1Password? [Y/n] ", true) {
-		ref, err := storeIn1Password(ctx, in, op, "zdev "+name, token, owner+"/"+repo)
+		ref, err := storeIn1Password(ctx, in, op, "zdev "+name, token, "github.com", "GitHub", owner+"/"+repo)
 		if err != nil {
 			return err
 		}
@@ -186,7 +208,7 @@ Then "Generate token" and paste it here.
 // storeIn1Password creates an API Credential item in a vault the developer
 // picks and returns its reference by IDs (renames don't break it). The token
 // goes to op on stdin, never on its command line.
-func storeIn1Password(ctx context.Context, in *bufio.Reader, op *secrets.OnePasswordCLI, title, token, repo string) (string, error) {
+func storeIn1Password(ctx context.Context, in *bufio.Reader, op *secrets.OnePasswordCLI, title, token, host, forge, repo string) (string, error) {
 	out, err := op.Op(ctx, nil, "vault", "list", "--permission", "create_items", "--format", "json")
 	if err != nil {
 		return "", err
@@ -220,9 +242,9 @@ func storeIn1Password(ctx context.Context, in *bufio.Reader, op *secrets.OnePass
 		"category": "API_CREDENTIAL",
 		"fields": []map[string]string{
 			{"id": "credential", "type": "CONCEALED", "label": "credential", "value": token},
-			{"id": "hostname", "type": "STRING", "label": "hostname", "value": "github.com"},
+			{"id": "hostname", "type": "STRING", "label": "hostname", "value": host},
 			{"id": "notesPlain", "type": "STRING", "purpose": "NOTES", "label": "notesPlain",
-				"value": "GitHub token for zdev claude sandboxes of " + repo + ", swapped in by zdev's egress proxy. Created by zdev claude setup."},
+				"value": forge + " token for zdev claude sandboxes of " + repo + ", swapped in by zdev's egress proxy. Created by zdev claude setup."},
 		},
 	}
 	tmpl, _ := json.Marshal(item)
@@ -258,7 +280,7 @@ func storeInFile(name, token string) (string, error) {
 }
 
 // grantCredential writes the credential and grants it to the project in
-// place of any other GitHub credential it had.
+// place of any other credential it had for the same host.
 func grantCredential(project, name string, cred config.AgentCredential) error {
 	gcfg, err := config.LoadGlobalConfig()
 	if err != nil {
@@ -266,7 +288,7 @@ func grantCredential(project, name string, cred config.AgentCredential) error {
 	}
 	grants := []string{name}
 	for _, c := range gcfg.Agent.Projects[project].Credentials {
-		if c != name && !isGitHubCredential(gcfg.Agent.Credentials[c]) {
+		if c != name && !sharesHost(gcfg.Agent.Credentials[c], cred.Hosts) {
 			grants = append(grants, c)
 		}
 	}
@@ -379,38 +401,48 @@ func githubGet(ctx context.Context, token, path string, v any) error {
 	return fmt.Errorf("GitHub says %d", res.StatusCode)
 }
 
-var githubRemote = regexp.MustCompile(`^(?:https://(?:[^@/]+@)?github\.com/|git@github\.com:|ssh://git@github\.com/)([^/]+)/([^/]+?)(?:\.git)?/?$`)
+// remoteURL splits a git remote into host and repository path:
+// https://[user@]host[:port]/path, ssh://[user@]host[:port]/path and
+// user@host:path (scp-like), each with an optional .git.
+var remoteURL = regexp.MustCompile(`^(?:https?://(?:[^@/]+@)?([^/:@]+)(?::\d+)?/|ssh://(?:[^@/]+@)?([^/:@]+)(?::\d+)?/|[^@/:]+@([^/:@]+):)(.+?)(?:\.git)?/?$`)
 
-// githubRepo is the owner and name of the project's origin on github.com.
-func githubRepo(dir string) (owner, repo string, ok bool) {
+func parseRemote(remote string) (host, path string, ok bool) {
+	m := remoteURL.FindStringSubmatch(remote)
+	if m == nil {
+		return "", "", false
+	}
+	host = strings.ToLower(m[1] + m[2] + m[3])
+	if host == "" || m[4] == "" {
+		return "", "", false
+	}
+	return host, m[4], true
+}
+
+// originRemote is the host and repository path of the project's origin.
+func originRemote(dir string) (host, path string, ok bool) {
 	out, err := exec.Command("git", "-C", dir, "remote", "get-url", "origin").Output()
 	if err != nil {
 		return "", "", false
 	}
-	return parseGitHubRemote(strings.TrimSpace(string(out)))
+	return parseRemote(strings.TrimSpace(string(out)))
 }
 
-func parseGitHubRemote(remote string) (owner, repo string, ok bool) {
-	m := githubRemote.FindStringSubmatch(remote)
-	if m == nil {
-		return "", "", false
-	}
-	return m[1], m[2], true
-}
-
-func isGitHubCredential(c config.AgentCredential) bool {
+// sharesHost reports whether c covers any of hosts.
+func sharesHost(c config.AgentCredential, hosts []string) bool {
 	for _, h := range c.Hosts {
-		if h == "github.com" {
-			return true
+		for _, want := range hosts {
+			if h == want {
+				return true
+			}
 		}
 	}
 	return false
 }
 
-// grantedGitHub is the GitHub credential the project's sandbox gets, if any.
-func grantedGitHub(gcfg *config.GlobalConfig, project string) string {
+// grantedFor is the credential for host the project's sandbox gets, if any.
+func grantedFor(gcfg *config.GlobalConfig, project, host string) string {
 	for _, c := range gcfg.AgentProject(project).Credentials {
-		if isGitHubCredential(gcfg.Agent.Credentials[c]) {
+		if sharesHost(gcfg.Agent.Credentials[c], []string{host}) {
 			return c
 		}
 	}

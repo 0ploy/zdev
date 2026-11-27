@@ -8,20 +8,24 @@ import (
 	"github.com/0ploy/zdev/internal/config"
 )
 
-func TestParseGitHubRemote(t *testing.T) {
+func TestParseRemote(t *testing.T) {
 	for remote, want := range map[string]string{
-		"git@github.com:0ploy/zpinit.git":           "0ploy/zpinit",
-		"https://github.com/0ploy/zpinit":           "0ploy/zpinit",
-		"https://github.com/0ploy/zpinit.git":       "0ploy/zpinit",
-		"https://user@github.com/0ploy/zpinit.git/": "0ploy/zpinit",
-		"ssh://git@github.com/0ploy/zp.init.git":    "0ploy/zp.init",
-		"https://gitlab.com/0ploy/zpinit.git":       "",
-		"https://github.com.evil.com/a/b":           "",
+		"git@github.com:0ploy/zpinit.git":                      "github.com 0ploy/zpinit",
+		"https://github.com/0ploy/zpinit":                      "github.com 0ploy/zpinit",
+		"https://user@github.com/0ploy/zpinit.git/":            "github.com 0ploy/zpinit",
+		"ssh://git@github.com/0ploy/zp.init.git":               "github.com 0ploy/zp.init",
+		"https://github.com.evil.com/a/b":                      "github.com.evil.com a/b",
+		"git@gitlab.scale.sc:scalecommerce/query-profiler.git": "gitlab.scale.sc scalecommerce/query-profiler",
+		"https://gitlab.com/group/sub/project.git":             "gitlab.com group/sub/project",
+		"ssh://git@git.example.com:2222/team/app.git":          "git.example.com team/app",
+		"https://GitLab.Example.com:8443/team/app":             "gitlab.example.com team/app",
+		"/srv/repos/app.git":                                   "",
+		"file:///srv/repos/app.git":                            "",
 	} {
-		o, r, ok := parseGitHubRemote(remote)
+		h, p, ok := parseRemote(remote)
 		got := ""
 		if ok {
-			got = o + "/" + r
+			got = h + " " + p
 		}
 		if got != want {
 			t.Errorf("%s: got %q, want %q", remote, got, want)
@@ -47,7 +51,7 @@ func TestCredentialFile(t *testing.T) {
 	}
 }
 
-func TestGrantCredentialReplacesGitHub(t *testing.T) {
+func TestGrantCredentialReplacesSameHost(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("ZDEV_HOME", home)
 	_ = os.WriteFile(filepath.Join(home, config.GlobalConfigFilename), []byte(`agent:
