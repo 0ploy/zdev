@@ -7,11 +7,13 @@ package cmd
 // here, in Claude's hook shape.
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"strings"
@@ -63,6 +65,9 @@ func runAgentHook(command, event, agentName, project string, p agentHookPayload)
 	argv := []string{"/bin/sh", "-c", command}
 	env := os.Environ()
 	if strings.TrimSpace(command) == cmuxHostHook {
+		if agentName == "claude" {
+			return cmuxMarkClaude(event)
+		}
 		argv, env, err = cmuxHookCommand(event, agentName, env)
 		if err != nil || argv == nil {
 			return err
@@ -96,17 +101,64 @@ func runAgentHook(command, event, agentName, project string, p agentHookPayload)
 	return nil
 }
 
-// cmuxHookCommand is host_hook: cmux, the hook cmux's own wrappers install,
-// reporting this zdev process as the agent so cmux marks the tab while it
-// runs. Claude goes through `cmux claude-hook`, pi through `cmux hooks pi`.
-// cmux keeps one Claude mark per workspace (the newest session's), but one
-// per tab for pi. A nil argv means nothing to do: outside a cmux terminal,
-// or an event or agent cmux has no hook for.
+// cmuxMarkClaude is host_hook: cmux for Claude: it registers this zdev
+// process as a Claude of the tab on cmux's socket, and cmux shows the icon
+// while the process lives (so a crash needs no SessionEnd).
+//
+// Not through `cmux claude-hook`, as cmux's own wrapper does: that registers
+// under the fixed key "claude_code", which one tab per workspace can own, so
+// the next session took the icon away. A natively started Claude keeps its
+// icon through cmux's resume record instead, which a sandboxed session must
+// not have (see cmuxHookCommand). With a key of its own per process
+// ("claude_code.<suffix>", the shape `cmux hooks pi` uses) every tab keeps
+// its mark. The CLI has no command for this, hence the socket.
+func cmuxMarkClaude(event string) error {
+	surface, workspace := os.Getenv("CMUX_SURFACE_ID"), os.Getenv("CMUX_WORKSPACE_ID")
+	if surface == "" {
+		return nil
+	}
+	key := fmt.Sprintf("claude_code.zdev-%d", os.Getpid())
+	var line string
+	switch event {
+	case "SessionStart":
+		line = fmt.Sprintf("set_agent_pid %s %d", key, os.Getpid())
+	case "SessionEnd":
+		line = "clear_agent_pid " + key
+	default:
+		return nil
+	}
+	sock := os.Getenv("CMUX_SOCKET_PATH")
+	if sock == "" || workspace == "" {
+		return errors.New("CMUX_SOCKET_PATH or CMUX_WORKSPACE_ID is not set")
+	}
+	conn, err := net.DialTimeout("unix", sock, agentHookTimeout)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(agentHookTimeout))
+	if _, err := fmt.Fprintf(conn, "%s --tab=%s --panel=%s\n", line, workspace, surface); err != nil {
+		return err
+	}
+	reply, err := bufio.NewReader(conn).ReadString('\n')
+	if reply = strings.TrimSpace(reply); reply == "" && err != nil {
+		return err
+	}
+	if !strings.HasPrefix(reply, "OK") {
+		return fmt.Errorf("cmux: %s", reply)
+	}
+	return nil
+}
+
+// cmuxHookCommand is host_hook: cmux for pi, the hook cmux's own wrapper
+// installs (`cmux hooks pi`), reporting this zdev process as the agent so
+// cmux marks the tab while it runs. A nil argv means nothing to do: outside
+// a cmux terminal, or an event or agent cmux has no hook for.
 //
 // The CMUX_AGENT_* variables are dropped on purpose: inherited from an agent
 // cmux started (zdev run from Claude's shell on the Mac), they would describe
-// that agent's launch, cmux would trust it and record `claude --resume` to
-// restore this tab, which after a cmux restart starts Claude outside the
+// that agent's launch, cmux would trust it and record a resume command to
+// restore this tab, which after a cmux restart starts the agent outside the
 // sandbox. Without them cmux sees the zdev process, doesn't take it for an
 // agent launch and records nothing to restore.
 func cmuxHookCommand(event, agentName string, env []string) (argv, outEnv []string, err error) {
@@ -125,8 +177,6 @@ func cmuxHookCommand(event, agentName string, env []string) (argv, outEnv []stri
 	var args []string
 	var pidVar string
 	switch agentName {
-	case "claude":
-		args, pidVar = []string{"claude-hook", sub}, "CMUX_CLAUDE_PID"
 	case "pi":
 		args, pidVar = []string{"hooks", "pi", sub}, "CMUX_PI_PID"
 	default:

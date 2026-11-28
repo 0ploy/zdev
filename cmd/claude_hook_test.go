@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -85,14 +86,13 @@ func fakeCmux(t *testing.T) string {
 	return out
 }
 
-func TestCmuxHostHookReportsEachAgentThroughItsCmuxHook(t *testing.T) {
+func TestCmuxHostHookReportsPiThroughItsCmuxHook(t *testing.T) {
 	out := fakeCmux(t)
 	// Inherited from an agent cmux started: must not describe this launch.
 	t.Setenv("CMUX_AGENT_LAUNCH_KIND", "claude")
-	t.Setenv("CMUX_CLAUDE_PID", "1")
+	t.Setenv("CMUX_PI_PID", "1")
 
-	startAgentHook(" cmux ", "claude", "shop", "/Users/dev/shop", "sid-1", true)()
-	startAgentHook("cmux", "pi", "shop", "/Users/dev/shop", "sid-2", true)()
+	startAgentHook(" cmux ", "pi", "shop", "/Users/dev/shop", "sid-2", true)()
 
 	data, err := os.ReadFile(out)
 	if err != nil {
@@ -101,8 +101,6 @@ func TestCmuxHostHookReportsEachAgentThroughItsCmuxHook(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
 	pid := os.Getpid()
 	want := []string{
-		fmt.Sprintf("claude-hook session-start claude=%d pi= launch=", pid),
-		fmt.Sprintf("claude-hook session-end claude=%d pi= launch=", pid),
 		fmt.Sprintf("hooks pi session-start claude= pi=%d launch=", pid),
 		fmt.Sprintf("hooks pi session-end claude= pi=%d launch=", pid),
 	}
@@ -117,6 +115,71 @@ func TestCmuxHostHookReportsEachAgentThroughItsCmuxHook(t *testing.T) {
 		if err := json.Unmarshal([]byte(lines[2*i+1]), &p); err != nil || p.Cwd != "/Users/dev/shop" {
 			t.Errorf("payload %d = %q (%v)", i, lines[2*i+1], err)
 		}
+	}
+}
+
+// fakeCmuxSocket listens where CMUX_SOCKET_PATH points, answers every
+// command line with reply and returns the lines it got.
+func fakeCmuxSocket(t *testing.T, reply string) <-chan string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "cmux") // short: a socket path is limited to ~100 bytes
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	sock := filepath.Join(dir, "s")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	got := make(chan string, 8)
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			line, _ := bufio.NewReader(conn).ReadString('\n')
+			got <- strings.TrimSpace(line)
+			fmt.Fprintln(conn, reply)
+			conn.Close()
+		}
+	}()
+	t.Setenv("CMUX_SOCKET_PATH", sock)
+	t.Setenv("CMUX_WORKSPACE_ID", "ws-1")
+	t.Setenv("CMUX_SURFACE_ID", "surface-1")
+	return got
+}
+
+// Claude gets a mark of its own per zdev process: cmux's `claude-hook` key is
+// one per workspace, and the next session would take the tab's icon away.
+func TestCmuxHostHookMarksClaudeWithAKeyOfItsOwn(t *testing.T) {
+	out := fakeCmux(t)
+	got := fakeCmuxSocket(t, "OK")
+
+	startAgentHook("cmux", "claude", "shop", "/Users/dev/shop", "sid-1", true)()
+
+	pid := os.Getpid()
+	want := []string{
+		fmt.Sprintf("set_agent_pid claude_code.zdev-%d %d --tab=ws-1 --panel=surface-1", pid, pid),
+		fmt.Sprintf("clear_agent_pid claude_code.zdev-%d --tab=ws-1 --panel=surface-1", pid),
+	}
+	for _, w := range want {
+		if line := <-got; line != w {
+			t.Errorf("sent %q, want %q", line, w)
+		}
+	}
+	if _, err := os.Stat(out); !os.IsNotExist(err) {
+		t.Fatalf("the cmux CLI ran for Claude (%v)", err)
+	}
+}
+
+func TestCmuxHostHookReportsCmuxRefusal(t *testing.T) {
+	fakeCmuxSocket(t, "ERROR: Tab not found")
+	err := runAgentHook("cmux", "SessionStart", "claude", "shop", agentHookPayload{})
+	if err == nil || !strings.Contains(err.Error(), "Tab not found") {
+		t.Fatalf("err = %v", err)
 	}
 }
 
