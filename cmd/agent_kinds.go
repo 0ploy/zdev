@@ -58,6 +58,7 @@ type agentPrep struct {
 	AgentDir   string // ~/.zdev/agent
 	HostHome   string // the developer's home, also the agent's HOME
 	HomeVol    string // the per-project volume behind HOME
+	ToolsVol   string // the sandbox tools (jq for the preparation scripts)
 	Workdir    string // the source in the container
 	HostDir    string // the source on this machine
 	Owner      string // uid:gid the agent runs as
@@ -106,6 +107,9 @@ func prepareHome(ctx context.Context, d agent.Docker, p agentPrep, src, script s
 		"--mount", "type=volume,src=" + p.HomeVol + ",dst=" + p.HostHome}
 	if fi, err := os.Stat(src); err == nil && fi.IsDir() {
 		args = append(args, "--mount", "type=bind,src="+src+",dst=/src,readonly")
+	}
+	if p.ToolsVol != "" {
+		args = append(args, "--mount", "type=volume,src="+p.ToolsVol+",dst=/tools,readonly")
 	}
 	for _, e := range env {
 		args = append(args, "-e", e)
@@ -366,7 +370,7 @@ func startPiBuild(agentDir string) bool {
 
 func (piKind) prepare(ctx context.Context, d agent.Docker, p agentPrep) (*agentSetup, error) {
 	hostPi := filepath.Join(p.HostHome, ".pi", "agent")
-	if err := prepareHome(ctx, d, p, hostPi, agent.PiPrepareScript, agent.PiPrepareEnv(p.HostHome, hostPi, p.Workdir, p.Owner)); err != nil {
+	if err := prepareHome(ctx, d, p, hostPi, agent.PiPrepareScript, agent.PiPrepareEnv(p.HostHome, p.Workdir, p.Owner)); err != nil {
 		return nil, err
 	}
 	sessions := agent.PiProjectDir(p.AgentDir, p.HostDir)
@@ -376,7 +380,7 @@ func (piKind) prepare(ctx context.Context, d agent.Docker, p agentPrep) (*agentS
 			return nil, err
 		}
 	}
-	mounts, err := agent.PiMounts(hostPi, sessions, p.Workdir)
+	mounts, err := agent.PiMounts(p.HostHome, sessions, p.Workdir)
 	if err != nil {
 		return nil, err
 	}

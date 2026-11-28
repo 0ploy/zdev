@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -46,20 +45,6 @@ func TestResolvePi(t *testing.T) {
 	}
 }
 
-func TestPiSettings(t *testing.T) {
-	dir := t.TempDir()
-	var s map[string]any
-	if err := json.Unmarshal([]byte(PiSettings(dir)), &s); err != nil || s["defaultProjectTrust"] != "always" {
-		t.Errorf("without host settings: %v %v", s, err)
-	}
-	_ = os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"defaultModel":"opus","defaultProjectTrust":"ask"}`), 0o600)
-	s = nil
-	_ = json.Unmarshal([]byte(PiSettings(dir)), &s)
-	if s["defaultModel"] != "opus" || s["defaultProjectTrust"] != "always" {
-		t.Errorf("with host settings: %v", s)
-	}
-}
-
 func TestPiExtension(t *testing.T) {
 	if ext := PiExtension(false); strings.Contains(ext, "agent_settled") || !strings.Contains(ext, "ZDEV_PI_LIB") {
 		t.Errorf("without turn hook:\n%s", ext)
@@ -70,19 +55,30 @@ func TestPiExtension(t *testing.T) {
 }
 
 func TestPiMounts(t *testing.T) {
-	hostPi := filepath.Join(t.TempDir(), ".pi", "agent")
+	home := t.TempDir()
+	hostPi := filepath.Join(home, ".pi", "agent")
 	_ = os.MkdirAll(filepath.Join(hostPi, "skills"), 0o700)
 	_ = os.MkdirAll(filepath.Join(hostPi, "sessions"), 0o700) // never shared
-	mounts, err := PiMounts(hostPi, "/zdev/agent/pi/projects/-Users-me-shop", "/app")
+	_ = os.MkdirAll(filepath.Join(home, ".agents", "skills", "zdev"), 0o700)
+	mounts, err := PiMounts(home, "/zdev/agent/pi/projects/-Users-me-shop", "/app")
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := []string{
+		"type=bind,src=" + filepath.Join(home, ".agents", "skills") + ",dst=" + filepath.Join(home, ".agents", "skills") + ",readonly",
 		"type=bind,src=" + hostPi + "/skills,dst=" + hostPi + "/skills,readonly",
 		"type=bind,src=/zdev/agent/pi/projects/-Users-me-shop,dst=" + hostPi + "/sessions/--app--",
 	}
-	if strings.Join(mounts, "\n") != strings.Join([]string{want[1], want[0]}, "\n") && strings.Join(mounts, "\n") != strings.Join(want, "\n") {
-		t.Errorf("PiMounts = %q", mounts)
+	if got, w := strings.Join(mounts, "\n"), strings.Join(want, "\n"); got != w {
+		// sorted by spec; compare as sets
+		for _, x := range want {
+			if !strings.Contains(got, x) {
+				t.Errorf("PiMounts lacks %s; got\n%s", x, got)
+			}
+		}
+		if len(mounts) != len(want) {
+			t.Errorf("PiMounts = %q", mounts)
+		}
 	}
 }
 

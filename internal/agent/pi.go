@@ -369,11 +369,16 @@ var piShared = []string{"skills", "prompts", "themes", "extensions"}
 
 // PiMounts returns the --mount specs for the host's ~/.pi/agent (the shared
 // directories read-only, at their own paths, which are the sandbox's agent
-// directory's too) and the project's session directory, at the place pi
+// directory's too), ~/.agents/skills (the Agent Skills location pi reads
+// too, read-only) and the project's session directory, at the place pi
 // keeps a working directory's sessions.
-func PiMounts(hostPiAgent, sessionDir, containerWorkdir string) ([]string, error) {
+func PiMounts(hostHome, sessionDir, containerWorkdir string) ([]string, error) {
+	hostPiAgent := filepath.Join(hostHome, ".pi", "agent")
 	m := newMountSet()
 	if err := m.sharedDirs(hostPiAgent, piShared); err != nil {
+		return nil, err
+	}
+	if err := m.sharedDirs(filepath.Join(hostHome, ".agents"), []string{"skills"}); err != nil {
 		return nil, err
 	}
 	if err := m.add(sessionDir, filepath.Join(hostPiAgent, "sessions", PiSessionKey(containerWorkdir)), false); err != nil {
@@ -382,29 +387,28 @@ func PiMounts(hostPiAgent, sessionDir, containerWorkdir string) ([]string, error
 	return m.sorted(), nil
 }
 
-// PiSettings is the sandbox's settings.json: the host's (when it has one and
-// it parses) with projects trusted (the container is the boundary).
-func PiSettings(hostPiAgent string) string {
-	settings := map[string]any{}
-	if b, err := os.ReadFile(filepath.Join(hostPiAgent, "settings.json")); err == nil {
-		_ = json.Unmarshal(b, &settings)
-	}
-	settings["defaultProjectTrust"] = "always"
-	b, _ := json.MarshalIndent(settings, "", "  ")
-	return string(b) + "\n"
-}
-
 // PiPrepareScript prepares pi's agent directory in the home volume, as root
 // in a one-shot container with the volume at $H and the host's ~/.pi/agent
-// read-only at /src: the host's settings (when it has some; else the
-// sandbox's own stay, since pi saves /model choices there), AGENTS.md and
-// models, the shared login as a symlink (pi locks the file it points to, so
+// read-only at /src and the sandbox tools at /tools: settings.json merged
+// (the sandbox's own, where pi saves /model choices and the changelog it
+// showed, then the host's on top, then projects trusted: the container is
+// the boundary; jq from the sandbox tools, the container has no network),
+// AGENTS.md and models, the shared login as a symlink (pi locks the file it points to, so
 // sandboxes running at once take turns refreshing it), the session mount
 // point, and everything handed to the agent's user.
 const PiPrepareScript = `set -eu
 A="$H/.pi/agent"
 mkdir -p "$A/sessions/$KEY"
-if [ -f /src/settings.json ] || [ ! -f "$A/settings.json" ]; then printf '%s' "$SETTINGS" > "$A/settings.json"; fi
+S="$A/settings.json"
+[ -f "$S" ] || echo '{}' > "$S"
+set -- "$S"
+[ -f /src/settings.json ] && set -- "$S" /src/settings.json
+if ! /tools/jq -s '(.[0] // {}) * (.[1] // {}) * {"defaultProjectTrust": "always"}' "$@" > "$S.tmp" 2>/dev/null; then
+  # A file that doesn't parse: the host's alone, else the trust alone.
+  /tools/jq '. * {"defaultProjectTrust": "always"}' /src/settings.json > "$S.tmp" 2>/dev/null ||
+    echo '{"defaultProjectTrust": "always"}' > "$S.tmp"
+fi
+mv "$S.tmp" "$S"
 for f in AGENTS.md models.json keybindings.json; do
   if [ -f "/src/$f" ]; then cp "/src/$f" "$A/$f"; else rm -f "$A/$f"; fi
 done
@@ -412,8 +416,8 @@ ln -sfn ` + PiAuthMount + `/auth.json "$A/auth.json"
 if [ "$(stat -c %u:%g "$H")" != "$OWNER" ]; then chown -R "$OWNER" "$H"; else chown -h "$OWNER" "$H/.pi" "$A" "$A"/* "$A/sessions" "$A/sessions/$KEY" 2>/dev/null || true; fi`
 
 // PiPrepareEnv returns the variables for PiPrepareScript.
-func PiPrepareEnv(home, hostPiAgent, workdir, owner string) []string {
-	return []string{"H=" + home, "KEY=" + PiSessionKey(workdir), "OWNER=" + owner, "SETTINGS=" + PiSettings(hostPiAgent)}
+func PiPrepareEnv(home, workdir, owner string) []string {
+	return []string{"H=" + home, "KEY=" + PiSessionKey(workdir), "OWNER=" + owner}
 }
 
 // PiExtension is zdev's extension, loaded with -e: it keeps the musl

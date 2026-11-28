@@ -941,7 +941,7 @@ func runSandbox(ctx context.Context, gcfg *config.GlobalConfig, s sandboxSpec) (
 	}
 	defer os.RemoveAll(sessionDir)
 	setup, err := ag.prepare(ctx, d, agentPrep{
-		AgentDir: agentDir, HostHome: hostHome, HomeVol: homeVol, Workdir: s.Workdir, HostDir: s.HostDir,
+		AgentDir: agentDir, HostHome: hostHome, HomeVol: homeVol, ToolsVol: sandboxToolsVol, Workdir: s.Workdir, HostDir: s.HostDir,
 		Owner: s.Owner, SessionDir: sessionDir, Prompt: s.Prompt(info), TurnHook: s.TurnHook,
 		Connectors: s.Connectors, Global: gcfg,
 	})
