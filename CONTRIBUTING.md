@@ -71,6 +71,7 @@ Both the job and the Make target run packages serially (`-p 1`) because multiple
 - **Integration tests:** Use real Docker. Test full lifecycle (start/stop/down), exec, routing, Mutagen sync. Always defer `proj.Down(ctx, false)` for cleanup. `Down()` handles state unregistration and router port refresh automatically.
 - **Shared service restoration:** Integration tests that tear down shared services (router, mail, db, redis) must snapshot what's running before the test and restore it afterward. Use `snapshotSharedServices`/`restoreSharedServices` helpers. Without this, tests silently break the developer's running environment.
 - **Test fixtures:** Add to `testdata/projects/` for config loading tests. Keep fixtures minimal.
+- **Code that starts host zdev** (the agent relay runs `os.Executable()` for each sandbox command): in `cmd` tests that is the test binary, and `TestMain` in `cmd/claude_relay_test.go` turns it into a stand-in that reports its arguments, directory and markers when `ZDEV_TEST_RELAY_CHILD` is set. Reuse it instead of adding a seam for the command runner.
 
 ## Adding a New Command
 

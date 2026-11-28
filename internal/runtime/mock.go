@@ -67,6 +67,9 @@ type MockRuntime struct {
 	// ExecStreamFunc, when set, handles ExecStream after the call is
 	// recorded - tests use it to write output or return an exit error.
 	ExecStreamFunc func(container string, cmd []string, opts ExecStreamOptions) error
+	// ExecStreamContextFunc is ExecStreamFunc with the call's context, for
+	// tests of what cancels an exec (a real one ends with its context).
+	ExecStreamContextFunc func(ctx context.Context, container string, cmd []string, opts ExecStreamOptions) error
 
 	// Errors allows injecting errors for specific method names.
 	// Key is the method name (e.g., "CreateContainer", "StartContainer").
@@ -343,10 +346,13 @@ func (m *MockRuntime) Exec(_ context.Context, container string, cmd []string, in
 }
 
 // ExecStream records the call and delegates to ExecStreamFunc, if set.
-func (m *MockRuntime) ExecStream(_ context.Context, container string, cmd []string, opts ExecStreamOptions) error {
+func (m *MockRuntime) ExecStream(ctx context.Context, container string, cmd []string, opts ExecStreamOptions) error {
 	m.record("ExecStream", container, cmd, opts)
 	if err := m.err("ExecStream"); err != nil {
 		return err
+	}
+	if m.ExecStreamContextFunc != nil {
+		return m.ExecStreamContextFunc(ctx, container, cmd, opts)
 	}
 	if m.ExecStreamFunc != nil {
 		return m.ExecStreamFunc(container, cmd, opts)
