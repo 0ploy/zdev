@@ -70,7 +70,7 @@ func TestToolsPinned(t *testing.T) {
 	}
 	plainVersion := regexp.MustCompile(`^\d+\.\d+(\.\d+)?$`)
 	for name, r := range map[string]ToolRelease{
-		"Mkcert": Mkcert, "Just": Just, "Mutagen": Mutagen, "Jq": Jq, "Gh": Gh, "Glab": Glab, "Bun": Bun,
+		"Mkcert": Mkcert, "Just": Just, "Mutagen": Mutagen, "Jq": Jq, "Gh": Gh, "Glab": Glab, "Fd": Fd, "Rg": Rg, "Bun": Bun,
 	} {
 		if v, ok := pinned[name]; !ok || v != r.Version {
 			t.Errorf("%s: no \"// renovate: datasource=... depName=... extractVersion=...\" line directly above `%s = ToolRelease{Name: %q, Version: %q,`", name, name, r.Name, r.Version)

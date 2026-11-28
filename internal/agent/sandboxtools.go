@@ -95,7 +95,7 @@ func EnsureSandboxTools(ctx context.Context, d Docker, arch string) (string, err
 	if err := d.Stream(ctx, nil, nil, os.Stderr, "run", "--rm", "--user", "0", "--workdir", "/v",
 		"--mount", "type=volume,src="+vol+",dst=/v", "-e", "TOOLS="+spec,
 		"--entrypoint", "sh", FillImage, "-c", fillSandboxTools); err != nil {
-		return "", fmt.Errorf("getting jq, gh and glab for the agent container failed: %w", err)
+		return "", fmt.Errorf("getting the sandbox tools (jq, gh, glab, fd, rg) failed: %w", err)
 	}
 	return vol, nil
 }

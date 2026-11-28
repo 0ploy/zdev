@@ -121,7 +121,8 @@ var (
 			"linux/arm64":  "bcba735aebf8cbc11da9b3742118a665599ac697fa06bc5751cac8dcd540db8a",
 		}}
 
-	// Jq, Gh and Glab go into every agent sandbox (SandboxTools), Linux only.
+	// Jq, Gh, Glab, Fd and Rg go into every agent sandbox (SandboxTools),
+	// Linux only, static builds. pi uses fd and rg for its file search.
 	// renovate: datasource=github-releases depName=jqlang/jq extractVersion=^jq-(?<version>.+)$
 	Jq = ToolRelease{Name: "jq", Version: "1.8.2",
 		URL: "https://github.com/jqlang/jq/releases/download/jq-{version}/jq-linux-{arch}",
@@ -148,6 +149,26 @@ var (
 			"linux/arm64": "a529fd254824b0f3f8d2350080c9b46633b67ff3e2b11455836d7a680c498b09",
 		}}
 
+	// renovate: datasource=github-releases depName=sharkdp/fd extractVersion=^v(?<version>.+)$
+	Fd = ToolRelease{Name: "fd", Version: "10.5.2",
+		URL:         "https://github.com/sharkdp/fd/releases/download/v{version}/fd-v{version}-{arch}-unknown-linux-musl.tar.gz",
+		ArchNames:   map[string]string{"amd64": "x86_64", "arm64": "aarch64"},
+		ArchivePath: "fd-v{version}-{arch}-unknown-linux-musl/fd",
+		SHA256: map[string]string{
+			"linux/amd64": "7e2d07fa2b8807642aaec67b7e2972a9fbe4db26fcb340a7372392db42b26694",
+			"linux/arm64": "63ea52cb31586e6d98efa2f06d73d542f16c7d0c4af0f07b579aaf9714cf907a",
+		}}
+
+	// renovate: datasource=github-releases depName=BurntSushi/ripgrep extractVersion=^(?<version>.+)$
+	Rg = ToolRelease{Name: "rg", Version: "16.0.0",
+		URL:         "https://github.com/BurntSushi/ripgrep/releases/download/{version}/ripgrep-{version}-{arch}-unknown-linux-musl.tar.gz",
+		ArchNames:   map[string]string{"amd64": "x86_64", "arm64": "aarch64"},
+		ArchivePath: "ripgrep-{version}-{arch}-unknown-linux-musl/rg",
+		SHA256: map[string]string{
+			"linux/amd64": "54268ab4643c00a290a29b0086066d64b3f56236dd805ec64629a86f9bd29fd0",
+			"linux/arm64": "374f1886be881e8e8683d7107278f7af1b6017fda75eb97de71f5783f42b0110",
+		}}
+
 	// Bun compiles pi for agent sandboxes (glibc and musl from one build).
 	// renovate: datasource=github-releases depName=oven-sh/bun extractVersion=^bun-v(?<version>.+)$
 	Bun = ToolRelease{Name: "bun", Version: "1.4.5",
@@ -159,5 +180,5 @@ var (
 		}}
 
 	// SandboxTools are added to every agent sandbox, in this order.
-	SandboxTools = []ToolRelease{Jq, Gh, Glab}
+	SandboxTools = []ToolRelease{Jq, Gh, Glab, Fd, Rg}
 )
