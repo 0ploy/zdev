@@ -64,7 +64,7 @@ func runClaudeSetup(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := setupSandboxService(in, plain, gcfg, &project.Project{Dir: dir, Config: pcfg}); err != nil {
+	if err := setupSandboxService(ctx, in, plain, gcfg, &project.Project{Dir: dir, Config: pcfg}); err != nil {
 		return err
 	}
 	host, path, ok := originRemote(dir)
@@ -93,7 +93,7 @@ func runClaudeSetup(ctx context.Context) error {
 // setupSandboxService shows which service's image sessions run in, and when
 // zdev can't tell on its own (no app service, several that mount the
 // project), asks and stores the answer as agent.projects.<project>.service.
-func setupSandboxService(in *bufio.Reader, plain bool, gcfg *config.GlobalConfig, proj *project.Project) error {
+func setupSandboxService(ctx context.Context, in *bufio.Reader, plain bool, gcfg *config.GlobalConfig, proj *project.Project) error {
 	name := proj.Config.Name
 	ui.StatusStep("Sandbox image for "+name, plain)
 	configured := gcfg.AgentProject(name).Service
@@ -101,10 +101,10 @@ func setupSandboxService(in *bufio.Reader, plain bool, gcfg *config.GlobalConfig
 	switch {
 	case err == nil && configured != "":
 		fmt.Printf("Sessions run in service %s's image (agent.projects.%s.service); zdev claude <service> picks another.\n", service, name)
-		return nil
+		return checkSandboxImage(ctx, in, proj, service)
 	case err == nil:
 		fmt.Printf("Sessions run in service %s's image; zdev claude <service> picks another.\n", service)
-		return nil
+		return checkSandboxImage(ctx, in, proj, service)
 	}
 	candidates := proj.AgentServiceCandidates()
 	if len(candidates) == 0 {
@@ -134,6 +134,49 @@ func setupSandboxService(in *bufio.Reader, plain bool, gcfg *config.GlobalConfig
 		return err
 	}
 	fmt.Printf("Sessions run in service %s's image (stored as agent.projects.%s.service).\n", choice, name)
+	return checkSandboxImage(ctx, in, proj, choice)
+}
+
+// checkSandboxImage probes the service's image (when Docker runs and the
+// image is here) and, when it lacks what agent mode needs, shows what to
+// change and offers to make the change.
+func checkSandboxImage(ctx context.Context, in *bufio.Reader, proj *project.Project, service string) error {
+	if checkImageHook != nil {
+		return checkImageHook(ctx, in, proj, service)
+	}
+	image := proj.ServiceImage(service)
+	d := agent.NewDocker()
+	if _, err := d.ImageID(ctx, image); err != nil {
+		fmt.Println("Its image isn't here yet (or Docker isn't running); zdev claude checks it when it starts.")
+		return nil
+	}
+	info, err := agent.ProbeImage(ctx, d, filepath.Join(config.GetZdevHome(), "agent"), image)
+	if err != nil {
+		fmt.Printf("Couldn't check its image: %v\n", err)
+		return nil
+	}
+	return offerImageFix(in, proj, service, info)
+}
+
+// checkImageHook replaces checkSandboxImage in tests (no Docker there).
+var checkImageHook func(ctx context.Context, in *bufio.Reader, proj *project.Project, service string) error
+
+// offerImageFix shows what the image lacks and offers to make the change.
+func offerImageFix(in *bufio.Reader, proj *project.Project, service string, info *agent.ImageInfo) error {
+	missing := info.Missing()
+	if len(missing) == 0 {
+		fmt.Println("Its image has what the sandbox needs (bash, git).")
+		return nil
+	}
+	advice, fix := sandboxImageAdvice(proj, service, info, missing)
+	fmt.Print("\n" + advice)
+	if fix == nil || !askYes(in, "\nMake this change now? [Y/n] ", true) {
+		return nil
+	}
+	if err := fix.apply(proj.Dir); err != nil {
+		return err
+	}
+	fmt.Println("Done. Run zdev update to build the image; zdev claude then runs in it.")
 	return nil
 }
 

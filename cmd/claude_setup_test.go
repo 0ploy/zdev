@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -130,7 +131,9 @@ func TestSetupSandboxService(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := setupSandboxService(bufio.NewReader(strings.NewReader(input)), true, g, p); err != nil {
+		checkImageHook = func(context.Context, *bufio.Reader, *project.Project, string) error { return nil }
+		defer func() { checkImageHook = nil }()
+		if err := setupSandboxService(context.Background(), bufio.NewReader(strings.NewReader(input)), true, g, p); err != nil {
 			t.Fatal(err)
 		}
 	}

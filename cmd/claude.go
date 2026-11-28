@@ -197,8 +197,11 @@ type sandboxSpec struct {
 	Env       map[string]string       // added to the container's environment
 	Fence     agent.Fence
 	// Handler serves the relay; it gets the sandbox container's name.
-	Handler    func(container string) agent.Handler
-	Prompt     func(info *agent.ImageInfo) string
+	Handler func(container string) agent.Handler
+	Prompt  func(info *agent.ImageInfo) string
+	// Lacks explains, for the refusal, what to change when the image lacks
+	// what agent mode needs; nil gives a generic message.
+	Lacks      func(info *agent.ImageInfo, missing []string) string
 	Connectors bool
 	Limits     config.AgentLimits
 	Rest       []string // Claude's arguments
@@ -436,6 +439,13 @@ func claudeSession(ctx context.Context, proj *project.Project, args []string) (i
 					EgressEnforce: acfg.Egress == agent.EgressEnforce, AllowHosts: acfg.AllowHosts,
 					Credentials: describeCredentials(gcfg, creds),
 				})
+			},
+			Lacks: func(info *agent.ImageInfo, missing []string) string {
+				advice, fix := sandboxImageAdvice(proj, service, info, missing)
+				if fix != nil {
+					advice += "\nzdev agent setup can make this change for you.\n"
+				}
+				return advice
 			},
 			Connectors: acfg.ConnectorsEnabled(), Limits: acfg.Limits, Rest: rest, TurnHook: interactive,
 		}, nil
@@ -806,8 +816,10 @@ func runSandbox(ctx context.Context, gcfg *config.GlobalConfig, s sandboxSpec) (
 		return 0, err
 	}
 	if missing := info.Missing(); len(missing) > 0 {
-		return 0, fmt.Errorf("image %s lacks %s, which agent mode needs; add it to the service's Dockerfile (Alpine: apk add %s, Debian/Ubuntu: apt-get install %s)",
-			s.Image, strings.Join(missing, " and "), strings.Join(missing, " "), strings.Join(missing, " "))
+		if s.Lacks != nil {
+			return 0, errors.New(strings.TrimRight(s.Lacks(info, missing), "\n"))
+		}
+		return 0, fmt.Errorf("image %s lacks %s, which agent mode needs", s.Image, strings.Join(missing, " and "))
 	}
 	arch, err := d.ServerArch(ctx)
 	if err != nil {

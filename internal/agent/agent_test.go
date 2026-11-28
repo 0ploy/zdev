@@ -289,3 +289,35 @@ func TestClaudeMountsProjectDir(t *testing.T) {
 		t.Errorf("mounts = %v, want [%s]", mounts, want)
 	}
 }
+
+func TestInstallAdvice(t *testing.T) {
+	for _, tc := range []struct {
+		pm, uid, user string
+		want          []string
+	}{
+		{"apk", "0", "root", []string{"RUN apk add --no-cache bash git"}},
+		{"apt-get", "0", "root", []string{"RUN apt-get update && apt-get install -y --no-install-recommends bash git && rm -rf /var/lib/apt/lists/*"}},
+		{"dnf", "", "", []string{"RUN dnf install -y bash git && dnf clean all"}},
+		{"apk", "82", "www-data", []string{"USER root", "RUN apk add --no-cache bash git", "USER www-data"}},
+		{"apt-get", "1000", "", []string{"USER root", "RUN apt-get update && apt-get install -y --no-install-recommends bash git && rm -rf /var/lib/apt/lists/*", "USER 1000"}},
+	} {
+		info := &ImageInfo{PackageManager: tc.pm, UID: tc.uid, User: tc.user}
+		got, ok := info.InstallAdvice([]string{"bash", "git"})
+		if !ok || strings.Join(got, "\n") != strings.Join(tc.want, "\n") {
+			t.Errorf("%s as %s/%s: %q", tc.pm, tc.uid, tc.user, got)
+		}
+	}
+	if _, ok := (&ImageInfo{}).InstallAdvice([]string{"bash"}); ok {
+		t.Error("an image without a package manager got advice")
+	}
+}
+
+func TestParseProbePackageManagerAndUser(t *testing.T) {
+	info := parseProbe("libc=musl\nos=Alpine Linux v3.24\npath=/usr/bin\ngit=1\npm=apk\nuid=82\nuser=www-data\n")
+	if info.PackageManager != "apk" || info.UID != "82" || info.User != "www-data" || info.Version != probeVersion {
+		t.Errorf("parsed %+v", info)
+	}
+	if m := info.Missing(); strings.Join(m, ",") != "bash" {
+		t.Errorf("missing = %v", m)
+	}
+}

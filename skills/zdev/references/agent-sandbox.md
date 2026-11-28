@@ -21,7 +21,7 @@ The sandbox runs zdev's small bootstrap image; zdev commands are refused. Write 
 
 ## Helping a developer set it up
 
-- Needs `bash` + `git` in the service's image.
+- Needs `bash` + `git` in the service's image. Missing: `zdev claude` prints the exact Dockerfile lines for the image's package manager (in the service's `dockerfile:`, or a new `.zdev/<service>.Dockerfile` `FROM` its `image:`), and `zdev agent setup` offers to apply them; then `zdev update`.
 - Set `services.<name>.mutagen.user` to the app's user, or the agent runs as root (without capabilities).
 - Commands, all on the host: `zdev agent setup` (login check; asks which service's image sessions use when no `app` service decides and several mount the project, stored as `agent.projects.<name>.service`; a GitHub/GitLab token for the project), `zdev agent credentials` (list/add/grant/revoke/test/remove other tokens), `zdev agent update` (newest Claude Code now), `zdev claude [service] [args]` (a session; every argument goes to Claude, `--help` included).
 - Settings live only in `~/.zdev/global-config.yaml` under `agent:`, never in the project config: for every agent `defaults` / `projects.<name>` (`service`, `host_access`, `limits`, `egress`, `allow_hosts`, `credentials`, `docker_socket: accept`) and `host_hook`; Claude-only under `agent.claude` (`channel`, `disable_plugins`) and `agent.projects.<name>.claude.connectors`.

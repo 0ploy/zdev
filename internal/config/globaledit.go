@@ -1,9 +1,9 @@
 package config
 
-// Editing ~/.zdev/global-config.yaml from commands (zdev agent setup): the
-// file is the developer's, with their comments and order, so it is edited as
-// a YAML node tree, never re-encoded from GlobalConfig. The result must still
-// load and validate, or nothing is written.
+// Editing ~/.zdev/global-config.yaml and .zdev/config.yaml from commands
+// (zdev agent setup): the files are the developer's, with their comments and
+// order, so they are edited as YAML node trees, never re-encoded from the
+// config structs. The result must still load, or nothing is written.
 
 import (
 	"bytes"
@@ -17,7 +17,32 @@ import (
 // EditGlobalConfig applies edit to the global config's YAML tree and writes
 // it back if the result is a valid global config.
 func EditGlobalConfig(edit func(root *yaml.Node) error) error {
-	path := filepath.Join(getZdevHome(), GlobalConfigFilename)
+	return editYAMLFile(filepath.Join(getZdevHome(), GlobalConfigFilename), edit, func(data []byte) error {
+		cfg := newDefaultGlobalConfig()
+		dec := yaml.NewDecoder(bytes.NewReader(data))
+		dec.KnownFields(true)
+		if err := dec.Decode(&cfg); err != nil {
+			return err
+		}
+		return validateGlobalConfig(&cfg)
+	})
+}
+
+// EditProjectConfig applies edit to dir's .zdev/config.yaml the same way
+// (comments and order kept). The result must still parse with known fields
+// only; variables are not substituted here, so ${VAR} values pass as text.
+func EditProjectConfig(dir string, edit func(root *yaml.Node) error) error {
+	return editYAMLFile(filepath.Join(dir, ".zdev", "config.yaml"), edit, func(data []byte) error {
+		var cfg ProjectConfig
+		dec := yaml.NewDecoder(bytes.NewReader(data))
+		dec.KnownFields(true)
+		return dec.Decode(&cfg)
+	})
+}
+
+// editYAMLFile edits path as a YAML node tree and writes it back, in place of
+// the old file, only when check accepts the result.
+func editYAMLFile(path string, edit func(root *yaml.Node) error, check func([]byte) error) error {
 	data, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
 		return err
@@ -44,15 +69,8 @@ func EditGlobalConfig(edit func(root *yaml.Node) error) error {
 		return err
 	}
 	_ = enc.Close()
-
-	cfg := newDefaultGlobalConfig()
-	dec := yaml.NewDecoder(bytes.NewReader(buf.Bytes()))
-	dec.KnownFields(true)
-	if err := dec.Decode(&cfg); err != nil {
-		return fmt.Errorf("the edited config doesn't load (not written): %w", err)
-	}
-	if err := validateGlobalConfig(&cfg); err != nil {
-		return fmt.Errorf("the edited config is invalid (not written): %w", err)
+	if err := check(buf.Bytes()); err != nil {
+		return fmt.Errorf("%s: the edited file doesn't load (not written): %w", path, err)
 	}
 	mode := os.FileMode(0o644)
 	if fi, err := os.Stat(path); err == nil {
