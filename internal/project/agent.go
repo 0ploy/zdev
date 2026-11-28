@@ -79,6 +79,16 @@ func (p *Project) AgentDefaultService(configured string) (string, error) {
 	if _, ok := p.Config.Services["app"]; ok {
 		return "app", nil
 	}
+	candidates := p.AgentServiceCandidates()
+	if len(candidates) == 1 {
+		return candidates[0], nil
+	}
+	return "", fmt.Errorf("can't tell which service's image the agent should run in (no service named app, services mounting the project: %s); name one with zdev claude <service>, or let zdev agent setup store it", strings.Join(candidates, ", "))
+}
+
+// AgentServiceCandidates are the services an agent can run in: those that
+// mount the project directory (AgentSource), sorted.
+func (p *Project) AgentServiceCandidates() []string {
 	var candidates []string
 	for name := range p.Config.Services {
 		if _, err := p.AgentSource(name); err == nil {
@@ -86,10 +96,7 @@ func (p *Project) AgentDefaultService(configured string) (string, error) {
 		}
 	}
 	sort.Strings(candidates)
-	if len(candidates) == 1 {
-		return candidates[0], nil
-	}
-	return "", fmt.Errorf("can't tell which service's image the agent should run in (no service named app, services mounting the project: %s); name one: zdev claude <service>", strings.Join(candidates, ", "))
+	return candidates
 }
 
 // AgentBaseConfig is the sandbox container's starting point: the service's

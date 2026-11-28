@@ -14,6 +14,8 @@ zdev claude "fix the login bug"  # start with a prompt
 zdev claude -- app               # pass "app" to Claude (a prompt that equals a service name)
 ```
 
+**Which image:** the service you name first, else `agent.projects.<project>.service` in `~/.zdev/global-config.yaml`, else the service named `app`, else the one service that mounts the project. When none of these decides (no `app`, several services mount the project), `zdev claude` asks you to name one, and `zdev agent setup` asks once and stores your choice.
+
 **Log in once** with `/login` inside Claude. Every sandbox shares that login (stored in `~/.zdev/agent/claude/auth/`); you log in again only when Claude asks.
 
 **Claude Code updates:** zdev looks for a new release once a day and downloads it in the background; the session after the download uses it (Claude's own updater is off in the sandbox). `zdev agent update` gets it right away. Pick the release line with `agent.claude.channel` ([Configuration](configuration.md#agent-sandboxes-agent)).

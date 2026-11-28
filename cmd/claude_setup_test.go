@@ -1,11 +1,14 @@
 package cmd
 
 import (
+	"bufio"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/0ploy/zdev/internal/config"
+	"github.com/0ploy/zdev/internal/project"
 )
 
 func TestParseRemote(t *testing.T) {
@@ -93,4 +96,78 @@ func TestGrantCredentialKeepsDefaults(t *testing.T) {
 	if got := g.Agent.Projects["app"].Credentials; len(got) != 2 || got[0] != "gitlab-app" || got[1] != "npm" {
 		t.Errorf("grants = %v, want gitlab-app plus npm from the defaults", got)
 	}
+}
+
+func TestSetupSandboxService(t *testing.T) {
+	setup := func(t *testing.T, global string, services map[string]config.ServiceConfig) *project.Project {
+		t.Helper()
+		home := t.TempDir()
+		t.Setenv("ZDEV_HOME", home)
+		_ = os.WriteFile(filepath.Join(home, config.GlobalConfigFilename), []byte(global), 0o600)
+		dir := t.TempDir()
+		for name, svc := range services {
+			for i, v := range svc.Volumes {
+				svc.Volumes[i] = strings.ReplaceAll(v, "PROJECT", dir)
+			}
+			services[name] = svc
+		}
+		return &project.Project{Dir: dir, Config: &config.ProjectConfig{Name: "shop", Services: services}}
+	}
+	stored := func(t *testing.T) string {
+		t.Helper()
+		g, err := config.LoadGlobalConfig()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return g.Agent.Projects["shop"].Service
+	}
+	synced := func(image string) config.ServiceConfig {
+		return config.ServiceConfig{Image: image, Volumes: []string{"PROJECT:/app"}}
+	}
+	run := func(t *testing.T, p *project.Project, input string) {
+		t.Helper()
+		g, err := config.LoadGlobalConfig()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := setupSandboxService(bufio.NewReader(strings.NewReader(input)), true, g, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("app decides", func(t *testing.T) {
+		p := setup(t, "version: 1\n", map[string]config.ServiceConfig{"app": synced("a"), "worker": synced("w")})
+		run(t, p, "2\n") // must not be read
+		if s := stored(t); s != "" {
+			t.Errorf("stored %q although app decides", s)
+		}
+	})
+	t.Run("ambiguous asks and stores", func(t *testing.T) {
+		p := setup(t, "version: 1\n", map[string]config.ServiceConfig{"web": synced("w"), "api": synced("a"), "db": {Image: "postgres"}})
+		run(t, p, "2\n") // candidates sorted: api, web
+		if s := stored(t); s != "web" {
+			t.Errorf("stored %q, want web", s)
+		}
+	})
+	t.Run("decide each time stores nothing", func(t *testing.T) {
+		p := setup(t, "version: 1\n", map[string]config.ServiceConfig{"web": synced("w"), "api": synced("a")})
+		run(t, p, "3\n")
+		if s := stored(t); s != "" {
+			t.Errorf("stored %q", s)
+		}
+	})
+	t.Run("configured is kept", func(t *testing.T) {
+		p := setup(t, "version: 1\nagent:\n  projects:\n    shop: {service: api}\n", map[string]config.ServiceConfig{"web": synced("w"), "api": synced("a")})
+		run(t, p, "2\n")
+		if s := stored(t); s != "api" {
+			t.Errorf("stored %q, want the configured api", s)
+		}
+	})
+	t.Run("nothing mounts the project", func(t *testing.T) {
+		p := setup(t, "version: 1\n", map[string]config.ServiceConfig{"db": {Image: "postgres"}, "cache": {Image: "redis"}})
+		run(t, p, "1\n")
+		if s := stored(t); s != "" {
+			t.Errorf("stored %q", s)
+		}
+	})
 }

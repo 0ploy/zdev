@@ -28,6 +28,7 @@ import (
 
 	"github.com/0ploy/zdev/internal/agent"
 	"github.com/0ploy/zdev/internal/config"
+	"github.com/0ploy/zdev/internal/project"
 	"github.com/0ploy/zdev/internal/secrets"
 	"github.com/0ploy/zdev/internal/tools"
 	"github.com/0ploy/zdev/internal/ui"
@@ -63,6 +64,9 @@ func runClaudeSetup(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if err := setupSandboxService(in, plain, gcfg, &project.Project{Dir: dir, Config: pcfg}); err != nil {
+		return err
+	}
 	host, path, ok := originRemote(dir)
 	if !ok {
 		ui.StatusStep("Git hosting for "+pcfg.Name, plain)
@@ -83,6 +87,53 @@ func runClaudeSetup(ctx context.Context) error {
 	ui.StatusStep("Git hosting for "+pcfg.Name, plain)
 	fmt.Printf("origin is on %s, which zdev agent setup doesn't recognize (it sets up GitHub and GitLab).\n", host)
 	fmt.Println("A token can still be granted by hand: agent.credentials in ~/.zdev/global-config.yaml (docs/configuration.md).")
+	return nil
+}
+
+// setupSandboxService shows which service's image sessions run in, and when
+// zdev can't tell on its own (no app service, several that mount the
+// project), asks and stores the answer as agent.projects.<project>.service.
+func setupSandboxService(in *bufio.Reader, plain bool, gcfg *config.GlobalConfig, proj *project.Project) error {
+	name := proj.Config.Name
+	ui.StatusStep("Sandbox image for "+name, plain)
+	configured := gcfg.AgentProject(name).Service
+	service, err := proj.AgentDefaultService(configured)
+	switch {
+	case err == nil && configured != "":
+		fmt.Printf("Sessions run in service %s's image (agent.projects.%s.service); zdev claude <service> picks another.\n", service, name)
+		return nil
+	case err == nil:
+		fmt.Printf("Sessions run in service %s's image; zdev claude <service> picks another.\n", service)
+		return nil
+	}
+	candidates := proj.AgentServiceCandidates()
+	if len(candidates) == 0 {
+		fmt.Println("No service mounts the project directory, so a sandbox couldn't see the source: add a service with the project mounted (e.g. ${PROJECTPATH}:/app).")
+		return nil
+	}
+	fmt.Println("There is no service named app, and several mount the project. Which one's image should sessions run in?")
+	for i, c := range candidates {
+		fmt.Printf("  %d) %s (%s)\n", i+1, c, proj.Config.Services[c].Image)
+	}
+	fmt.Printf("  %d) Decide each time (zdev claude <service>)\n", len(candidates)+1)
+	var n int
+	if _, err := fmt.Sscan(ask(in, "Choice [1]: ")+" ", &n); err != nil {
+		n = 1
+	}
+	if n < 1 || n > len(candidates) {
+		return nil
+	}
+	choice := candidates[n-1]
+	if err := config.EditGlobalConfig(func(root *yaml.Node) error {
+		m, err := config.YAMLMapping(root, "agent", "projects", name)
+		if err != nil {
+			return err
+		}
+		return config.SetYAML(m, "service", choice)
+	}); err != nil {
+		return err
+	}
+	fmt.Printf("Sessions run in service %s's image (stored as agent.projects.%s.service).\n", choice, name)
 	return nil
 }
 
