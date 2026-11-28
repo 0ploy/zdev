@@ -5,6 +5,11 @@
   "timezone": "Europe/Berlin",
   "labels": ["dependencies"],
   "minimumReleaseAge": "7 days",
+  "schedule": ["before 6am on monday"],
+  "vulnerabilityAlerts": {
+    "description": "Fixes for known vulnerabilities come at once: Renovate's defaults exempt them from the schedule and the release age",
+    "labels": ["dependencies", "security"]
+  },
   "postUpdateOptions": ["gomodTidy"],
   "customManagers": [
     {
