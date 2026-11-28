@@ -137,7 +137,7 @@ func SystemPrompt(d PromptData) string {
 	}
 	w("\n# Git\n\n")
 	w("The repository is here, synced with the developer's machine. Run git only in this container, never through `zdev exec`. ")
-	w("`.git/hooks` and `.git/config` are read-only: commits, branches and merges work; for pushes, remotes and git config, ask the developer.\n\n")
+	w("`.git/hooks` and `.git/config` are read-only: commits, branches and merges work; for pushes, remotes and git config, ask the developer. Nested repositories, submodules and linked worktrees you create stay in this container and never reach the developer's machine.\n\n")
 
 	w("# Network\n\n")
 	if d.Fenced {

@@ -38,7 +38,7 @@ func TestDockerSocketServices(t *testing.T) {
 	}
 }
 
-// The agent's mount of the project directory syncs .zdev and .git: the
+// The agent's mount of the project directory syncs the root's .zdev and .git: the
 // negations come after the built-in .git and the project's own .zdev ignore,
 // and only for the agent's service and only for that mount. The .git guards
 // come last in every session of the project, so no negation lifts them.
@@ -56,9 +56,14 @@ func TestSessionIgnoresAgentNegations(t *testing.T) {
 	}
 	for _, m := range mounts {
 		got := strings.Join(p.sessionIgnores(m, base), ",")
-		want := strings.Join(base, ",") + ",.git/hooks,.git/config"
+		// Spelled out: every guard is a path git on the Mac reads config,
+		// hooks or a git directory from (review 2026-11-28, C2).
+		guards := ",.git/hooks,.git/config,.git/commondir,.git/modules,.git/worktrees,.git/config.worktree"
+		want := strings.Join(base, ",") + guards
 		if m.ContainerPath == "/app" {
-			want = strings.Join(base, ",") + ",!.zdev,!.git,.git/hooks,.git/config"
+			// Anchored, .git as a directory only: nested repositories and a
+			// .git file (linked worktree) stay ignored.
+			want = strings.Join(base, ",") + ",!/.zdev,!/.git/" + guards
 		}
 		if got != want {
 			t.Errorf("%s: ignores = %s, want %s", m.ContainerPath, got, want)

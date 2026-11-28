@@ -52,7 +52,7 @@ func BootstrapPrompt(agent, command, dir string, info *ImageInfo) string {
 	w("- This is zdev's small bootstrap image (Alpine: bash, git, GNU tools, curl, jq, ripgrep, python3); the project's own toolchain is not installed.\n")
 	w("- zdev commands don't work in this session: there is no project yet. `zdev --help` and the zdev skill describe the configuration.\n")
 	w("- When .zdev/config.yaml is written, ask the developer to run `zdev start` on their machine, then `zdev %s --continue` to continue this conversation in the project's own image.\n\n", command)
-	w("# Git\n\n`.git/hooks` and `.git/config` are read-only: commits and branches work; for pushes, remotes and git config, ask the developer.\n\n")
+	w("# Git\n\n`.git/hooks` and `.git/config` are read-only: commits and branches work; for pushes, remotes and git config, ask the developer. Nested repositories, submodules and linked worktrees you create stay in this container.\n\n")
 	w("# Network\n\nThe internet is reachable. The developer's machine and private networks are not.\n")
 	_ = info
 	return b.String()

@@ -257,8 +257,13 @@ func SetAgentSyncService(projectName, service string) (bool, error) {
 
 // agentSyncNegations are appended at the END of the agent mount's ignore
 // list: a later negation overrides an earlier ignore, including the built-in
-// .git and a project's own .zdev entry (spikes 7 and 8).
-var agentSyncNegations = []string{"!.zdev", "!.git"}
+// .git and a project's own .zdev entry (spikes 7 and 8). Anchored, and .git
+// for a directory only: git on the Mac runs what a nested repository's
+// config names (a gitlink staged in the synced index is enough), and a .git
+// FILE (a linked worktree) points git at a directory the agent could choose.
+// Both stay ignored by the built-in .git (review 2026-11-28, C2; checked with
+// Mutagen 0.18).
+var agentSyncNegations = []string{"!/.zdev", "!/.git/"}
 
 // agentGitGuards come last in every sync session of a project in agent mode:
 // the Mac runs hooks and what .git/config names (core.fsmonitor, hooksPath)
@@ -266,13 +271,18 @@ var agentSyncNegations = []string{"!.zdev", "!.git"}
 // volume can write them (the app container through `zdev exec`). Ignored,
 // nothing written there in a container reaches the Mac; the agent sees the
 // Mac's own copies through read-only binds. Last, so no negation in the
-// project's mutagen.ignore can lift them.
-var agentGitGuards = []string{".git/hooks", ".git/config"}
+// project's mutagen.ignore can lift them. Git reads config and hooks from
+// more than those two: commondir names another directory to take them from,
+// modules/ holds the submodules' repositories, worktrees/ the linked
+// worktrees' (each with a commondir), and config.worktree is read when
+// config enables it. Add any path git reads config, hooks or a git directory
+// from here, never remove one.
+var agentGitGuards = []string{".git/hooks", ".git/config", ".git/commondir", ".git/modules", ".git/worktrees", ".git/config.worktree"}
 
 // AgentGitGuards are the .git paths the sync never carries in agent mode.
 func AgentGitGuards() []string { return append([]string(nil), agentGitGuards...) }
 
-// gitGuardMounts are read-only binds of the host's .git/hooks and .git/config
+// gitGuardMounts are read-only binds of the host's existing agentGitGuards
 // over every writable host bind of a service that contains them, in a project
 // in agent mode. Without Mutagen (Linux, or mutagen.no_sync) such a bind is
 // the host directory itself, so any container could write a hook the host
@@ -351,7 +361,7 @@ func (p *Project) ApplyAgentGitGuards(ctx context.Context) error {
 		return err
 	}
 	for _, name := range names {
-		fmt.Printf("Recreating service %s (read-only .git/hooks and .git/config for agent mode)...\n", name)
+		fmt.Printf("Recreating service %s (read-only git hooks and config for agent mode)...\n", name)
 		svc := p.Config.Services[name]
 		if err := p.prefetchSecrets(ctx, name, svc); err != nil {
 			return err
