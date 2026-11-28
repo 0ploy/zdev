@@ -47,11 +47,21 @@ func TestResolvePi(t *testing.T) {
 }
 
 func TestPiExtension(t *testing.T) {
-	if ext := PiExtension(false); strings.Contains(ext, "agent_settled") || !strings.Contains(ext, "ZDEV_PI_LIB") {
+	if ext := PiExtension(false, false); strings.Contains(ext, "agent_settled") || !strings.Contains(ext, "ZDEV_PI_LIB") {
 		t.Errorf("without turn hook:\n%s", ext)
 	}
-	if ext := PiExtension(true); !strings.Contains(ext, `pi.on("agent_settled"`) || !strings.Contains(ext, `"/opt/zdev/bin/zdev", ["sandbox", "turn-end", ctx.sessionManager.getSessionId()]`) {
+	if ext := PiExtension(true, false); !strings.Contains(ext, `pi.on("agent_settled"`) || !strings.Contains(ext, `"/opt/zdev/bin/zdev", ["sandbox", "turn-end", ctx.sessionManager.getSessionId()]`) {
 		t.Errorf("with turn hook:\n%s", ext)
+	}
+}
+
+func TestPiExtensionStatusLine(t *testing.T) {
+	if ext := PiExtension(false, false); strings.Contains(ext, "setFooter") {
+		t.Errorf("status line without asking:\n%s", ext)
+	}
+	ext := PiExtension(false, true)
+	if !strings.Contains(ext, "function zdevStatusLine(pi)") || !strings.Contains(ext, "  zdevStatusLine(pi);\n") {
+		t.Errorf("with status line:\n%s", ext)
 	}
 }
 

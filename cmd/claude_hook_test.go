@@ -164,3 +164,50 @@ func TestSetupCmuxHookStoresTheBuiltInOnlyWhenAsked(t *testing.T) {
 		})
 	}
 }
+
+func TestUseZdevStatusLine(t *testing.T) {
+	own := func() bool { return true }
+	none := func() bool { return false }
+	for _, tc := range []struct {
+		setting string
+		hasOwn  func() bool
+		want    bool
+	}{
+		{"", none, true}, {"", own, false}, {"zdev", own, true}, {"own", none, false},
+	} {
+		if got := useZdevStatusLine(tc.setting, tc.hasOwn); got != tc.want {
+			t.Errorf("useZdevStatusLine(%q, own=%v) = %v", tc.setting, tc.hasOwn(), got)
+		}
+	}
+}
+
+func TestSetupStatusLineAsksOnlyWithOneOfTheirOwn(t *testing.T) {
+	for _, tc := range []struct {
+		name, settings, answer, want string
+	}{
+		{"none of their own: no question", `{}`, "y\n", ""},
+		{"their own, default keeps it", `{"statusLine": {"type": "command", "command": "x"}}`, "\n", "own"},
+		{"their own, zdev's chosen", `{"statusLine": {"type": "command", "command": "x"}}`, "y\n", "zdev"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			zhome, home := t.TempDir(), t.TempDir()
+			t.Setenv("ZDEV_HOME", zhome)
+			_ = os.MkdirAll(filepath.Join(home, ".claude"), 0o755)
+			_ = os.WriteFile(filepath.Join(home, ".claude", "settings.json"), []byte(tc.settings), 0o644)
+			gcfg, err := config.LoadGlobalConfig()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := setupStatusLine(bufio.NewReader(strings.NewReader(tc.answer)), true, gcfg, home); err != nil {
+				t.Fatal(err)
+			}
+			g, err := config.LoadGlobalConfig()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if g.Agent.StatusLine != tc.want {
+				t.Errorf("status_line = %q, want %q", g.Agent.StatusLine, tc.want)
+			}
+		})
+	}
+}

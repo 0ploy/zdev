@@ -161,7 +161,7 @@ func TestParseProbe(t *testing.T) {
 
 func TestManagedSettings(t *testing.T) {
 	var s map[string]any
-	if err := json.Unmarshal(ManagedSettings(false, nil, false), &s); err != nil {
+	if err := json.Unmarshal(ManagedSettings(false, nil, false, false), &s); err != nil {
 		t.Fatal(err)
 	}
 	if s["disableClaudeAiConnectors"] != true {
@@ -173,10 +173,16 @@ func TestManagedSettings(t *testing.T) {
 	if s["hooks"] != nil {
 		t.Errorf("no turn hook unless asked: %v", s["hooks"])
 	}
+	if s["statusLine"] != nil {
+		t.Errorf("no status line unless asked: %v", s["statusLine"])
+	}
 	s = nil
-	_ = json.Unmarshal(ManagedSettings(true, []string{"codex@openai-codex"}, true), &s)
+	_ = json.Unmarshal(ManagedSettings(true, []string{"codex@openai-codex"}, true, true), &s)
 	if !strings.Contains(fmt.Sprint(s["hooks"]), TurnEndHook) {
 		t.Errorf("hooks = %v, want the Stop hook %s", s["hooks"], TurnEndHook)
+	}
+	if sl, _ := s["statusLine"].(map[string]any); sl["command"] != "sh "+ClaudeStatusLineFile {
+		t.Errorf("statusLine = %v", s["statusLine"])
 	}
 	if s["disableClaudeAiConnectors"] != false {
 		t.Error("connectors on when the project allows them")

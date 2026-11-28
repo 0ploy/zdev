@@ -153,6 +153,11 @@ func validateAgentConfig(a *AgentConfig) error {
 	default:
 		return fmt.Errorf("agent.claude.channel must be stable, latest or a version, not %q", ch)
 	}
+	switch a.StatusLine {
+	case "", "zdev", "own":
+	default:
+		return fmt.Errorf("agent.status_line must be zdev or own, not %q", a.StatusLine)
+	}
 	check := func(where string, p AgentProjectConfig) error {
 		switch p.DockerSocket {
 		case "", "accept":

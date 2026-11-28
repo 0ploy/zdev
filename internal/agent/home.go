@@ -284,9 +284,10 @@ const TurnEndHook = "/opt/zdev/bin/zdev sandbox turn-end"
 // ManagedSettings is Claude's managed-settings.json for a session: tools run
 // without prompts (the container is the boundary), the updater is off,
 // claude.ai connectors only when the project allows them, the host-only
-// plugins of agent.claude.disable_plugins switched off, and with turnHook the Stop
-// hook that lets the host replace the sandbox between turns.
-func ManagedSettings(connectors bool, disablePlugins []string, turnHook bool) []byte {
+// plugins of agent.claude.disable_plugins switched off, with turnHook the Stop
+// hook that lets the host replace the sandbox between turns, and with
+// statusLine zdev's status line (ClaudeStatusLineFile) over the developer's.
+func ManagedSettings(connectors bool, disablePlugins []string, turnHook, statusLine bool) []byte {
 	settings := map[string]any{
 		"permissions":                       map[string]string{"defaultMode": "bypassPermissions"},
 		"skipDangerousModePermissionPrompt": true,
@@ -297,6 +298,9 @@ func ManagedSettings(connectors bool, disablePlugins []string, turnHook bool) []
 		settings["hooks"] = map[string]any{
 			"Stop": []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": TurnEndHook, "timeout": 10}}}},
 		}
+	}
+	if statusLine {
+		settings["statusLine"] = map[string]any{"type": "command", "command": "sh " + ClaudeStatusLineFile}
 	}
 	if len(disablePlugins) > 0 {
 		off := map[string]bool{}

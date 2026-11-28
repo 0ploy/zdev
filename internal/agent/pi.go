@@ -543,8 +543,9 @@ func PiModels(hostPiAgent string) (content string, stripped []string, err error)
 // launcher's library path away from the commands pi runs and, with turnHook,
 // tells the host when the agent settled (the moment a stale sandbox can be
 // replaced), as Claude's Stop hook does, with pi's session id: the session a
-// replaced sandbox resumes, also after /new or /resume in pi.
-func PiExtension(turnHook bool) string {
+// replaced sandbox resumes, also after /new or /resume in pi. With statusLine
+// it also sets zdev's status line as pi's footer.
+func PiExtension(turnHook, statusLine bool) string {
 	var b strings.Builder
 	b.WriteString(`// zdev's extension for pi in an agent sandbox (generated).
 const lib = process.env.ZDEV_PI_LIB;
@@ -554,9 +555,16 @@ if (lib) {
   else delete process.env.LD_LIBRARY_PATH;
   delete process.env.ZDEV_PI_LIB;
 }
-
+`)
+	if statusLine {
+		b.WriteString("\n" + piStatusLine)
+	}
+	b.WriteString(`
 export default function (pi) {
 `)
+	if statusLine {
+		b.WriteString("  zdevStatusLine(pi);\n")
+	}
 	if turnHook {
 		b.WriteString(`  pi.on("agent_settled", async (_event, ctx) => {
     try {

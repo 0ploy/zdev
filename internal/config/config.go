@@ -35,6 +35,10 @@ type AgentConfig struct {
 	// Claude-hook JSON on stdin, the zdev claude PID in ZDEV_AGENT_PID.
 	// "cmux" is the built-in cmux integration instead of a command.
 	HostHook string `yaml:"host_hook"`
+	// StatusLine picks the status line in sandboxes: "zdev" (zdev's own),
+	// "own" (the developer's from ~/.claude and ~/.pi/agent), or empty for
+	// zdev's unless the developer has one of their own.
+	StatusLine string `yaml:"status_line"`
 }
 
 // AgentCredential is a token bound to hosts. The sandbox only ever sees a

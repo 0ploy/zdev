@@ -55,6 +55,9 @@ func runAgentSetup(ctx context.Context, agentName string) error {
 	if err := setupCmuxHook(in, plain, gcfg); err != nil {
 		return err
 	}
+	if err := setupStatusLine(in, plain, gcfg, homeDir()); err != nil {
+		return err
+	}
 
 	// The agents set up: the one named, else Claude, and pi once it was used.
 	agentDir := filepath.Join(config.GetZdevHome(), "agent")
@@ -148,6 +151,43 @@ func setupCmuxHook(in *bufio.Reader, plain bool, gcfg *config.GlobalConfig) erro
 	}
 	gcfg.Agent.HostHook = cmuxHostHook
 	fmt.Println("Stored as agent.host_hook: cmux in ~/.zdev/global-config.yaml; it applies from the next session.")
+	return nil
+}
+
+// setupStatusLine asks whether sandboxes show zdev's status line or the
+// developer's own, when they have one (in ~/.claude or ~/.pi/agent) and
+// haven't chosen yet. Without one of their own, sessions show zdev's anyway.
+func setupStatusLine(in *bufio.Reader, plain bool, gcfg *config.GlobalConfig, home string) error {
+	if gcfg.Agent.StatusLine != "" {
+		return nil
+	}
+	var own []string
+	if agent.HasOwnClaudeStatusLine(filepath.Join(home, ".claude")) {
+		own = append(own, "Claude")
+	}
+	if agent.HasOwnPiStatusLine(filepath.Join(home, ".pi", "agent")) {
+		own = append(own, "pi")
+	}
+	if len(own) == 0 {
+		return nil
+	}
+	ui.StatusStep("Status line", plain)
+	fmt.Printf("You have a status line of your own (%s). Sandboxes can show zdev's instead: folder, a sandbox marker, model, git branch, context and subscription usage.\n", strings.Join(own, ", "))
+	choice := "own"
+	if askYes(in, "Use zdev's status line in sandboxes? [y/N] ", false) {
+		choice = "zdev"
+	}
+	if err := config.EditGlobalConfig(func(root *yaml.Node) error {
+		m, err := config.YAMLMapping(root, "agent")
+		if err != nil {
+			return err
+		}
+		return config.SetYAML(m, "status_line", choice)
+	}); err != nil {
+		return err
+	}
+	gcfg.Agent.StatusLine = choice
+	fmt.Printf("Stored as agent.status_line: %s in ~/.zdev/global-config.yaml; it applies from the next session.\n", choice)
 	return nil
 }
 

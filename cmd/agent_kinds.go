@@ -69,6 +69,19 @@ type agentPrep struct {
 	Global     *config.GlobalConfig
 }
 
+// useZdevStatusLine tells whether a session shows zdev's status line:
+// agent.status_line decides, and unset it is zdev's unless the developer has
+// one of their own.
+func useZdevStatusLine(setting string, hasOwn func() bool) bool {
+	switch setting {
+	case "zdev":
+		return true
+	case "own":
+		return false
+	}
+	return !hasOwn()
+}
+
 // agentSetup is what the container needs for the agent.
 type agentSetup struct {
 	Mounts []string
@@ -192,7 +205,13 @@ func (claudeKind) prepare(ctx context.Context, d agent.Docker, p agentPrep) (*ag
 	if err := os.WriteFile(filepath.Join(p.SessionDir, "zdev-system-prompt.md"), []byte(p.Prompt), 0o644); err != nil {
 		return nil, err
 	}
-	if err := os.WriteFile(filepath.Join(p.SessionDir, "managed-settings.json"), agent.ManagedSettings(p.Connectors, p.Global.Agent.Claude.DisablePlugins, p.TurnHook), 0o644); err != nil {
+	statusLine := useZdevStatusLine(p.Global.Agent.StatusLine, func() bool { return agent.HasOwnClaudeStatusLine(hostClaude) })
+	if statusLine {
+		if err := os.WriteFile(filepath.Join(p.SessionDir, filepath.Base(agent.ClaudeStatusLineFile)), []byte(agent.ClaudeStatusLineScript()), 0o644); err != nil {
+			return nil, err
+		}
+	}
+	if err := os.WriteFile(filepath.Join(p.SessionDir, "managed-settings.json"), agent.ManagedSettings(p.Connectors, p.Global.Agent.Claude.DisablePlugins, p.TurnHook, statusLine), 0o644); err != nil {
 		return nil, err
 	}
 	env := map[string]string{
@@ -408,7 +427,7 @@ func (piKind) prepare(ctx context.Context, d agent.Docker, p agentPrep) (*agentS
 	if err := os.WriteFile(filepath.Join(p.SessionDir, "zdev-system-prompt.md"), []byte(p.Prompt), 0o644); err != nil {
 		return nil, err
 	}
-	if err := os.WriteFile(filepath.Join(p.SessionDir, "zdev.js"), []byte(agent.PiExtension(p.TurnHook)), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(p.SessionDir, "zdev.js"), []byte(agent.PiExtension(p.TurnHook, useZdevStatusLine(p.Global.Agent.StatusLine, func() bool { return agent.HasOwnPiStatusLine(hostPi) }))), 0o644); err != nil {
 		return nil, err
 	}
 	return &agentSetup{

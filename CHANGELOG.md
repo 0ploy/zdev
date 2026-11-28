@@ -2,6 +2,7 @@
 
 ### Features
 
+- **Sandboxes show zdev's status line, in Claude and pi.** The project folder, a `⬢ sandbox` marker, model, git branch, context use and the subscription's 5-hour and 7-day windows (or the session's cost with an API key), so a sandboxed session is easy to tell from one on your Mac. If you have a status line of your own, `zdev agent setup` asks which one sandboxes show (`agent.status_line: zdev` or `own`); Claude and pi on your Mac keep theirs. See [docs/configuration.md](docs/configuration.md#agent-sandboxes-agent).
 - **`zdev claude` can tell your terminal about the session.** `agent.host_hook` in `~/.zdev/global-config.yaml` runs a command of yours on your machine when a session starts and ends, with the event, the `zdev claude` PID and Claude-hook-shaped JSON (session id, project directory). Nothing from the sandbox reaches it. `host_hook: cmux` is built in: in [cmux](https://cmux.com), a sandboxed Claude or pi gets the agent's icon on its tab, as agents on your Mac do, and `zdev agent setup` offers to turn it on when it runs in cmux. See [docs/configuration.md](docs/configuration.md#agent-sandboxes-agent).
 
 ### Features
