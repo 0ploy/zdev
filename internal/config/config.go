@@ -33,6 +33,7 @@ type AgentConfig struct {
 	// HostHook is a command (run with sh) on this machine when a session
 	// starts and ends: SessionStart/SessionEnd in ZDEV_AGENT_EVENT and as
 	// Claude-hook JSON on stdin, the zdev claude PID in ZDEV_AGENT_PID.
+	// "cmux" is the built-in cmux integration instead of a command.
 	HostHook string `yaml:"host_hook"`
 }
 

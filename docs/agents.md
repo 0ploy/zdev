@@ -62,7 +62,7 @@ When the agent's own service changes (an update from Claude or from you: config,
 
 **A repository without `.zdev/`:** `zdev claude` starts a bootstrap session in a small image of zdev's own (bash, git, GNU tools) to set the project up. Afterwards run `zdev start` and continue with `zdev claude --continue` in the project's own image.
 
-**Your terminal can know about the session:** `agent.host_hook` runs a command of yours on your machine when a session starts and ends, with nothing from the sandbox in it. The recipe for [cmux](https://cmux.com) gives the tab the Claude icon, as Claude on your Mac does ([Configuration](configuration.md#agent-sandboxes-agent)).
+**Your terminal can know about the session:** `agent.host_hook` runs a command of yours on your machine when a session starts and ends, with nothing from the sandbox in it. `host_hook: cmux` is built in: [cmux](https://cmux.com) then marks the tab with the agent's icon, as it does for agents on your Mac, and `zdev agent setup` offers to turn it on when you run it in cmux ([Configuration](configuration.md#agent-sandboxes-agent)).
 
 **Nothing piles up:** sandboxes go with their session (also after a crash, at the next session start), and so do their generated files. Agent builds and zdev's own volumes for sandboxes go a day after a newer one took over, or after 14 days unused; images of zdev's helper pins go when the pin moves on. Proxy logs are kept 30 days. A project's agent home (`zdev-agent-home-<project>`, holding the agents' settings in the sandbox) goes with `zdev down`.
 

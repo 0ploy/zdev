@@ -52,6 +52,9 @@ func runAgentSetup(ctx context.Context, agentName string) error {
 	}
 	plain := ui.PlainMode(gcfg.Terminal.Plain)
 	in := bufio.NewReader(os.Stdin)
+	if err := setupCmuxHook(in, plain, gcfg); err != nil {
+		return err
+	}
 
 	// The agents set up: the one named, else Claude, and pi once it was used.
 	agentDir := filepath.Join(config.GetZdevHome(), "agent")
@@ -111,6 +114,40 @@ func runAgentSetup(ctx context.Context, agentName string) error {
 	ui.StatusStep("Git hosting for "+pcfg.Name, plain)
 	fmt.Printf("origin is on %s, which zdev agent setup doesn't recognize (it sets up GitHub and GitLab).\n", host)
 	fmt.Println("A token can still be granted by hand: agent.credentials in ~/.zdev/global-config.yaml (docs/configuration.md).")
+	return nil
+}
+
+// setupCmuxHook offers the built-in cmux integration (agent.host_hook: cmux)
+// when setup runs in a cmux terminal and it isn't on yet. A hook of the
+// developer's own is replaced only when they say so.
+func setupCmuxHook(in *bufio.Reader, plain bool, gcfg *config.GlobalConfig) error {
+	current := strings.TrimSpace(gcfg.Agent.HostHook)
+	if current == cmuxHostHook || !inCmux() {
+		return nil
+	}
+	ui.StatusStep("cmux", plain)
+	fmt.Println("This terminal is cmux: it can mark the tab of a zdev claude or zdev pi session, as it does for agents on your Mac.")
+	var yes bool
+	if current == "" {
+		yes = askYes(in, "Turn that on (agent.host_hook: cmux)? [Y/n] ", true)
+	} else {
+		fmt.Printf("agent.host_hook already runs %s.\n", current)
+		yes = askYes(in, "Replace it with the built-in cmux integration? [y/N] ", false)
+	}
+	if !yes {
+		return nil
+	}
+	if err := config.EditGlobalConfig(func(root *yaml.Node) error {
+		m, err := config.YAMLMapping(root, "agent")
+		if err != nil {
+			return err
+		}
+		return config.SetYAML(m, "host_hook", cmuxHostHook)
+	}); err != nil {
+		return err
+	}
+	gcfg.Agent.HostHook = cmuxHostHook
+	fmt.Println("Stored as agent.host_hook: cmux in ~/.zdev/global-config.yaml; it applies from the next session.")
 	return nil
 }
 

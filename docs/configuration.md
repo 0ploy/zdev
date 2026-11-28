@@ -211,7 +211,7 @@ agent:
   claude:                      # what only Claude Code understands
     channel: stable            # stable (default, about weekly) | latest | a version like 2.1.325
     disable_plugins: [codex@openai-codex]   # Claude plugins switched off in every sandbox (host-only ones)
-  host_hook: ~/bin/zdev-agent-hook        # runs on this machine when a session starts and ends (see below)
+  host_hook: ~/bin/zdev-agent-hook        # runs on this machine when a session starts and ends, or "cmux" (see below)
   defaults:                    # for every project
     claude:
       connectors: false        # claude.ai connectors (Drive, Slack, ...) of your login; off by default
@@ -240,20 +240,9 @@ agent:
 
 A project uses a credential when it lists it (`projects.<name>.credentials: [github]`, or in `defaults`). `zdev agent setup`, run in a project, writes both for the host of its `origin` remote: GitHub, or GitLab (gitlab.com or a self-hosted instance, recognized by its API). It walks you through a token for the project's repository (GitHub: a fine-grained token; GitLab: a project access token, role Developer, scope `api`), checks it, stores it in 1Password or a `file:` only you can read, and grants it in place of an earlier credential for the same host, editing this file in place (your comments and order stay). GitHub tokens set `GH_TOKEN`, GitLab tokens `GITLAB_TOKEN`. Prefer a token scoped to the project's repository over your own `gh`/`glab` login: the agent can use whatever the token allows while the session runs. Credentials need zdev's CA bundle in the containers (HTTPS set up, `zdev systemcheck`).
 
-`host_hook` is a command run with `sh` on your machine when a `zdev claude` (or `zdev pi`) session starts and when it ends, for example to tell your terminal that Claude runs in this tab. It gets the event in `ZDEV_AGENT_EVENT` (`SessionStart` or `SessionEnd`), the agent in `ZDEV_AGENT` (`claude` or `pi`), the PID of the `zdev claude` process in `ZDEV_AGENT_PID`, the project in `ZDEV_PROJECT`, and on stdin JSON in the shape of Claude Code's hook input: `session_id`, `cwd` (the project directory on your machine) and `hook_event_name`. A replaced sandbox doesn't count as a new session. The hook gets 5 seconds, its output is discarded, and a failure only prints a warning. `SessionEnd` is skipped when `zdev claude` is killed or crashes, so watch `ZDEV_AGENT_PID` if something must not outlive the session. Ignore events you don't know: later versions may send more. For [cmux](https://cmux.com), which then shows the Claude icon on the tab (it clears it when that PID exits):
+`host_hook` is a command run with `sh` on your machine when a `zdev claude` (or `zdev pi`) session starts and when it ends, for example to tell your terminal that Claude runs in this tab. It gets the event in `ZDEV_AGENT_EVENT` (`SessionStart` or `SessionEnd`), the agent in `ZDEV_AGENT` (`claude` or `pi`), the PID of the `zdev claude` process in `ZDEV_AGENT_PID`, the project in `ZDEV_PROJECT`, and on stdin JSON in the shape of Claude Code's hook input: `session_id`, `cwd` (the project directory on your machine) and `hook_event_name`. A replaced sandbox doesn't count as a new session. The hook gets 5 seconds, its output is discarded, and a failure only prints a warning. `SessionEnd` is skipped when `zdev claude` is killed or crashes, so watch `ZDEV_AGENT_PID` if something must not outlive the session. Ignore events you don't know: later versions may send more.
 
-```sh
-#!/bin/sh
-[ "$ZDEV_AGENT" = claude ] || exit 0
-case "$ZDEV_AGENT_EVENT" in
-  SessionStart) sub=session-start ;;
-  SessionEnd)   sub=session-end ;;
-  *) exit 0 ;;
-esac
-CMUX_CLAUDE_PID=$ZDEV_AGENT_PID exec cmux claude-hook "$sub"
-```
-
-Outside a cmux tab `cmux claude-hook` does nothing.
+`host_hook: cmux` is the built-in integration with [cmux](https://cmux.com), not a command: zdev reports the session through cmux's own hooks (`cmux claude-hook`, `cmux hooks pi`) with the `zdev claude` PID, and cmux marks the tab with the agent's icon while that process runs. `zdev agent setup` offers to turn it on when it runs in a cmux terminal (and to replace a hook of yours only if you say so). Outside cmux it does nothing, so one global config serves every terminal. A pi tab keeps its icon; cmux keeps one Claude icon per workspace, so a sandboxed Claude's tab loses it to the next Claude session started in the same workspace, sandboxed or not (put sessions in separate workspaces to keep each icon). cmux doesn't offer to resume a sandboxed session after a restart: its resume command would start the agent on your Mac, outside the sandbox, so zdev leaves the session unregistered for that on purpose.
 
 What your own `zdev start`, `update` and `restart` applied is recorded in `~/.zdev/agent/approved/<project>.json`; config changes from a sandbox that reach beyond it are refused ([Agents](agents.md)). `zdev down` and `zdev rename` remove the file.
 

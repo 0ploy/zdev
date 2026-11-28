@@ -2,7 +2,7 @@
 
 ### Features
 
-- **`zdev claude` can tell your terminal about the session.** `agent.host_hook` in `~/.zdev/global-config.yaml` runs a command of yours on your machine when a session starts and ends, with the event, the `zdev claude` PID and Claude-hook-shaped JSON (session id, project directory). Nothing from the sandbox reaches it. With the recipe for [cmux](https://cmux.com), a sandboxed Claude gets the Claude icon on its tab, as Claude on your Mac does. See [docs/configuration.md](docs/configuration.md#agent-sandboxes-agent).
+- **`zdev claude` can tell your terminal about the session.** `agent.host_hook` in `~/.zdev/global-config.yaml` runs a command of yours on your machine when a session starts and ends, with the event, the `zdev claude` PID and Claude-hook-shaped JSON (session id, project directory). Nothing from the sandbox reaches it. `host_hook: cmux` is built in: in [cmux](https://cmux.com), a sandboxed Claude or pi gets the agent's icon on its tab, as agents on your Mac do, and `zdev agent setup` offers to turn it on when it runs in cmux. See [docs/configuration.md](docs/configuration.md#agent-sandboxes-agent).
 
 ### Features
 
