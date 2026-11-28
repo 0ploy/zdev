@@ -240,6 +240,11 @@ type ProjectConfig struct {
 	Environment     map[string]string        `yaml:"environment"`
 	Services        map[string]ServiceConfig `yaml:"services"`
 	Mutagen         ProjectMutagenConfig     `yaml:"mutagen"`
+
+	// HostEnv lists the host environment variables the config reads through
+	// ${VAR} (set by LoadProject). An agent request substitutes only those the
+	// agent baseline approved.
+	HostEnv []string `yaml:"-"`
 }
 
 // ProjectMutagenConfig defines project-level Mutagen settings

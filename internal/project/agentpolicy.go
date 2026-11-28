@@ -31,7 +31,19 @@ import (
 // AgentRequestEnv marks a zdev process the relay runs for an agent sandbox;
 // its value is the session's project. Set by the host only: a request's
 // environment never reaches the host process.
-const AgentRequestEnv = "ZDEV_AGENT_REQUEST"
+const AgentRequestEnv = config.AgentRequestEnv
+
+// An agent request substitutes only the host environment variables the
+// developer's own runs read (config.SetAgentHostEnv).
+func init() {
+	config.SetAgentHostEnv(func(project string) map[string]bool {
+		allowed := map[string]bool{}
+		for _, name := range loadAgentBaseline(project).EnvNames {
+			allowed[name] = true
+		}
+		return allowed
+	})
+}
 
 // AgentRequest returns the session's project when this process runs a
 // request from an agent sandbox.
@@ -80,6 +92,9 @@ type AgentBaseline struct {
 	Services  map[string]serviceFootprint `json:"services"`
 	Hosts     []string                    `json:"hosts,omitempty"`
 	HostPorts []string                    `json:"host_ports,omitempty"` // "tcp/5432"
+	// EnvNames are the host environment variables the config reads through
+	// ${VAR}; an agent request substitutes only these.
+	EnvNames []string `json:"env_names,omitempty"`
 }
 
 // PolicyViolation is one thing an agent-initiated apply would add.
@@ -293,6 +308,7 @@ func (p *Project) RecordAgentBaseline(ctx context.Context) error {
 	}
 	b.Hosts = p.resolvableHosts()
 	b.HostPorts = p.hostPorts()
+	b.EnvNames = p.Config.HostEnv
 	data, err := json.MarshalIndent(b, "", "  ")
 	if err != nil {
 		return err
@@ -357,6 +373,11 @@ func (p *Project) CheckAgentPolicy(domain string) []PolicyViolation {
 		}
 	}
 
+	for _, name := range p.Config.HostEnv {
+		if !contains(b.EnvNames, name) {
+			out = append(out, PolicyViolation{"", "${" + name + "} reads this machine's environment"})
+		}
+	}
 	for _, port := range p.hostPorts() {
 		if !contains(b.HostPorts, port) {
 			out = append(out, PolicyViolation{"", "host port " + port + " (published on every interface of this machine)"})

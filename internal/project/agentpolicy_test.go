@@ -337,3 +337,54 @@ func TestApplyAgentGitGuards(t *testing.T) {
 		t.Errorf("worker with other drift was recreated: %v", got)
 	}
 }
+
+// A config that newly reads the host's environment is beyond the baseline;
+// the developer's own run approves the names it reads (review C1).
+func TestAgentPolicyHostEnv(t *testing.T) {
+	p, mock := policyTestProject(t)
+	runCurrent(p, mock, "app")
+	p.Config.HostEnv = []string{"DB_HOST"}
+	if err := p.RecordAgentBaseline(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if v := violations(p); v != "" {
+		t.Fatalf("the applied config itself: %s", v)
+	}
+	p.Config.HostEnv = []string{"DB_HOST", "GH_TOKEN"}
+	if v := violations(p); v != "${GH_TOKEN} reads this machine's environment" {
+		t.Errorf("violations = %q", v)
+	}
+}
+
+// End to end: a request loads the config with only the approved names.
+func TestAgentRequestLoadsApprovedHostEnvOnly(t *testing.T) {
+	t.Setenv("ZDEV_HOME", t.TempDir())
+	t.Setenv("DB_HOST", "db.local")
+	t.Setenv("FAKE_HOST_TOKEN", "ghp_REALSECRET")
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".zdev"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".zdev", "config.yaml"),
+		[]byte("name: shop\ninfo: \"${DB_HOST} ${FAKE_HOST_TOKEN}\"\nservices:\n  app:\n    image: alpine\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	baseline := filepath.Join(config.GetZdevHome(), "agent", "approved", "shop.json")
+	if err := os.MkdirAll(filepath.Dir(baseline), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(baseline, []byte(`{"services":{},"env_names":["DB_HOST"]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(AgentRequestEnv, "shop")
+	p, err := LoadFromDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Config.Info != "db.local ${FAKE_HOST_TOKEN}" {
+		t.Errorf("info = %q", p.Config.Info)
+	}
+	if v := violations(p); v != "${FAKE_HOST_TOKEN} reads this machine's environment" {
+		t.Errorf("violations = %q", v)
+	}
+}

@@ -40,6 +40,7 @@ zdev checks every request from the sandbox on your machine, where the container 
 - 1Password Environments (`op-env`, `op-env://`) the service doesn't use yet
 - router labels (`traefik.*`), host ports (`routing.host_port`, published on every interface), hostnames outside the zdev domain or of another project
 - a Dockerfile outside the project, and the project's `name:` (never from the sandbox)
+- `${VAR}` from your machine's environment that your own runs didn't read. From the sandbox those stay unsubstituted, so a config can't hand Claude your tokens through `zdev info` or a service's environment
 
 zdev records what your own `zdev start`, `update` and `restart` applied (in `~/.zdev/agent/approved/`), and refuses the rest from the sandbox; Claude then asks you to review `.zdev/` and run `zdev update`. That run approves it, and it lists what it applies that the sandbox couldn't. `zdev claude` asks the same before it starts a project whose config changed since. `zdev down` and `zdev rename` drop the recorded approvals.
 

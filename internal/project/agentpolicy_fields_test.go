@@ -23,7 +23,7 @@ var agentFieldClass = map[string]string{
 	"domain":             "checked", // routed hosts
 	"info":               "safe",
 	"auto_open_at_start": "safe", // not for sandbox requests (cmd/start.go)
-	"variables":          "safe", // substituted before the check sees the config
+	"variables":          "safe", // substituted before the check; host env reads are checked (HostEnv)
 	"environment":        "checked",
 	"shared.router":      "safe",
 	"shared.mail":        "safe",

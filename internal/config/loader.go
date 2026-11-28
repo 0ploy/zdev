@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -86,6 +87,7 @@ func LoadProject(projectDir string) (*ProjectConfig, error) {
 		}
 	}
 	content = substituteVariables(string(data), vars)
+	hostEnv := hostEnvRefs(string(data), firstPass.Variables)
 
 	// Re-parse with full variable substitution. Pre-initialize cfg.Shared
 	// with the default-true services so yaml.v3 only overrides fields the
@@ -99,6 +101,8 @@ func LoadProject(projectDir string) (*ProjectConfig, error) {
 	if err := decoder.Decode(&cfg); err != nil {
 		return nil, formatConfigError(configPath, data, err)
 	}
+
+	cfg.HostEnv = hostEnv
 
 	// Set defaults
 	if cfg.Name == "" {
@@ -300,9 +304,14 @@ func buildVariables(projectDir string) map[string]string {
 
 	// Include all environment variables, except PROJECTNAME: it is reserved for
 	// the parsed name, and `zdev run` exports the caller's, which would resolve
-	// this project's ${PROJECTNAME} to another project's name.
+	// this project's ${PROJECTNAME} to another project's name. A request from
+	// an agent sandbox gets only the ones the developer's own runs read.
+	allowed, restricted := agentHostEnvAllowed()
 	for _, env := range os.Environ() {
 		parts := strings.SplitN(env, "=", 2)
+		if restricted && !allowed[parts[0]] {
+			continue
+		}
 		if len(parts) == 2 && parts[0] != "PROJECTNAME" {
 			// Don't override built-in variables
 			if _, exists := vars[parts[0]]; !exists {
@@ -312,6 +321,69 @@ func buildVariables(projectDir string) map[string]string {
 	}
 
 	return vars
+}
+
+// AgentRequestEnv marks a zdev process the relay runs for an agent sandbox;
+// its value is the session's project. Set by the host only: a request's
+// environment never reaches the host process.
+const AgentRequestEnv = "ZDEV_AGENT_REQUEST"
+
+// agentHostEnv returns the host environment variables a project's config may
+// read in an agent request: those the developer's own runs read (the agent
+// baseline, which lives in internal/project and registers this).
+var agentHostEnv func(project string) map[string]bool
+
+// SetAgentHostEnv registers the lookup of the host environment variables an
+// agent request may substitute.
+func SetAgentHostEnv(f func(project string) map[string]bool) { agentHostEnv = f }
+
+// agentHostEnvAllowed reports whether this process runs an agent request and,
+// if so, which host environment variables its configs may read. The agent
+// edits .zdev/ and `zdev info` prints the substituted config, so with the
+// whole environment `info: ${GH_TOKEN}` would hand it the developer's
+// tokens. Fails closed: without a registered lookup, none.
+func agentHostEnvAllowed() (map[string]bool, bool) {
+	project := os.Getenv(AgentRequestEnv)
+	if project == "" {
+		return nil, false
+	}
+	if agentHostEnv == nil {
+		return nil, true
+	}
+	return agentHostEnv(project), true
+}
+
+// builtinVariables are set by zdev and win over the environment.
+var builtinVariables = map[string]bool{
+	"PROJECTDIR": true, "PROJECTPATH": true, "PROJECTNAME": true,
+	"ZDEV_HOME": true, "ZDEV_DOMAIN": true, "USER": true, "HOME": true,
+}
+
+var variableRef = regexp.MustCompile(`\$\{([^}]+)\}`)
+
+// hostEnvRefs lists the ${VAR} names in raw config content that resolve from
+// the host environment: everything but the built-ins and the config's own
+// variables (unless the environment has one of those too: the environment
+// wins). Names unset on the host count as well, so the list doesn't depend on
+// (and give away) what the host's environment holds.
+func hostEnvRefs(content string, variables map[string]string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, m := range variableRef.FindAllStringSubmatch(content, -1) {
+		name := m[1]
+		if seen[name] || builtinVariables[name] {
+			continue
+		}
+		seen[name] = true
+		if _, own := variables[name]; own {
+			if _, set := os.LookupEnv(name); !set {
+				continue
+			}
+		}
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // substituteVariables replaces ${VAR} patterns with their values
