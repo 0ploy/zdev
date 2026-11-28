@@ -16,7 +16,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var cleanupForce bool
+var (
+	cleanupForce        bool
+	cleanupPurgeMissing bool
+)
 
 var cleanupCmd = &cobra.Command{
 	Use:   "cleanup",
@@ -28,6 +31,10 @@ var cleanupCmd = &cobra.Command{
   - Orphaned Docker networks (no live project or link owns them)
   - Stale state entries whose project directory no longer exists on disk
 
+A project whose directory is missing keeps its volumes (its databases) and its
+registration: the directory may only be absent for now (an unmounted drive, a
+moved checkout). Use --purge-missing to remove those as well.
+
 Resources used by the current configuration of registered projects are retained.
 Stale resources left behind by removed services are included in the confirmation
 list before deletion.
@@ -38,6 +45,7 @@ Use --force to skip the confirmation prompt.`,
 
 func init() {
 	cleanupCmd.Flags().BoolVarP(&cleanupForce, "force", "f", false, "skip confirmation prompt")
+	cleanupCmd.Flags().BoolVar(&cleanupPurgeMissing, "purge-missing", false, "also remove the volumes and registrations of projects whose directory is missing")
 	rootCmd.AddCommand(cleanupCmd)
 }
 
@@ -134,6 +142,27 @@ func runCleanup(cmd *cobra.Command, args []string) error {
 				orphanVolumes = append(orphanVolumes, vol.Name)
 			}
 		}
+		// A missing directory may be back tomorrow: its volumes stay, and so
+		// does its registration, or the next run would no longer know whose
+		// they are and delete them as orphans.
+		staleNames := make([]string, 0, len(staleProjects))
+		for _, p := range staleProjects {
+			staleNames = append(staleNames, p.name)
+		}
+		var keptVolumes map[string][]string
+		if !cleanupPurgeMissing {
+			orphanVolumes, keptVolumes = splitStaleVolumes(orphanVolumes, staleNames)
+		}
+		var keptStale []staleProject
+		unregister := staleProjects[:0:0]
+		for _, p := range staleProjects {
+			if len(keptVolumes[p.name]) > 0 {
+				keptStale = append(keptStale, p)
+			} else {
+				unregister = append(unregister, p)
+			}
+		}
+		staleProjects = unregister
 
 		// Networks are the scarcest resource zdev consumes - Docker's default
 		// address pool is exhausted after ~31 of them - and until now the only
@@ -163,6 +192,16 @@ func runCleanup(cmd *cobra.Command, args []string) error {
 		sort.Strings(orphanContainers)
 		sort.Strings(orphanVolumes)
 		sort.Strings(orphanNetworks)
+		sort.Slice(keptStale, func(i, j int) bool { return keptStale[i].name < keptStale[j].name })
+
+		if len(keptStale) > 0 {
+			fmt.Printf("Projects whose directory is missing (%d) - kept with their volumes, the directory may be back later:\n", len(keptStale))
+			for _, p := range keptStale {
+				fmt.Printf("  - %s (%s): %s\n", p.name, p.path, strings.Join(keptVolumes[p.name], ", "))
+			}
+			fmt.Println("  Gone for good? `zdev cleanup --purge-missing` removes them.")
+			fmt.Println()
+		}
 
 		if len(staleProjects) == 0 && len(orphanContainers) == 0 && len(orphanVolumes) == 0 && len(orphanNetworks) == 0 {
 			fmt.Println("Nothing to clean up.")
@@ -320,6 +359,27 @@ func isZdevNetwork(name string) bool {
 // name of one of the given projects, using zdev's <name>.<project>.zdev
 // convention. Used to preserve everything belonging to a project whose config
 // could not be read.
+// splitStaleVolumes takes the volumes of projects whose directory is missing
+// out of the orphans, per project.
+func splitStaleVolumes(orphans, staleProjects []string) (remove []string, kept map[string][]string) {
+	kept = map[string][]string{}
+	for _, vol := range orphans {
+		owner := ""
+		for _, p := range staleProjects {
+			if strings.HasSuffix(vol, "."+p+".zdev") {
+				owner = p
+				break
+			}
+		}
+		if owner == "" {
+			remove = append(remove, vol)
+			continue
+		}
+		kept[owner] = append(kept[owner], vol)
+	}
+	return remove, kept
+}
+
 func belongsToAnyProject(resourceName string, projects map[string]bool) bool {
 	for projectName := range projects {
 		if strings.HasSuffix(resourceName, "."+projectName+".zdev") {

@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -123,5 +124,20 @@ func TestBelongsToAnyProject(t *testing.T) {
 		if got := belongsToAnyProject(tt.resource, unreadable); got != tt.want {
 			t.Errorf("belongsToAnyProject(%q) = %v, want %v", tt.resource, got, tt.want)
 		}
+	}
+}
+
+// The volumes of a project whose directory is missing (an unmounted drive)
+// are its databases: kept, per project, and never offered as orphans
+// (review 2026-11-28, M4).
+func TestSplitStaleVolumes(t *testing.T) {
+	remove, kept := splitStaleVolumes(
+		[]string{"db_data.shop.zdev", "sync.app.shop.zdev", "old.blog.zdev", "cache.other.zdev"},
+		[]string{"shop", "gone"})
+	if strings.Join(remove, ",") != "old.blog.zdev,cache.other.zdev" {
+		t.Errorf("remove = %v", remove)
+	}
+	if strings.Join(kept["shop"], ",") != "db_data.shop.zdev,sync.app.shop.zdev" || len(kept["gone"]) != 0 {
+		t.Errorf("kept = %v", kept)
 	}
 }

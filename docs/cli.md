@@ -94,8 +94,9 @@ zdev mutagen repair-git  # Resolve .git sync conflicts with an agent sandbox
 ```bash
 zdev cleanup         # Prune resources no live project owns
 zdev cleanup --force # ...without the confirmation prompt
+zdev cleanup --purge-missing # ...including projects whose directory is missing, with their volumes
 ```
 
-`zdev cleanup` lists what it would delete and asks before touching anything. It covers containers and volumes that no registered project's current config references, networks that no project or link owns, and state entries whose project directory is gone from disk.
+`zdev cleanup` lists what it would delete and asks before touching anything. It covers containers and volumes that no registered project's current config references, networks that no project or link owns, and state entries whose project directory is gone from disk. A project whose directory is missing keeps its volumes (its databases) and its registration, since the directory may only be away for now (an unmounted drive, a moved checkout); cleanup lists them, and `--purge-missing` removes them once they are gone for good.
 
 Networks matter more than their size suggests: Docker's default address pool runs out after roughly 31 of them, and every project that was started and then deleted without `zdev down` leaves one behind. A network is kept whenever any container still references it, stopped ones included, because a container pins its network by ID and would otherwise refuse to start. A project whose config cannot be read is skipped with a warning and everything belonging to it is preserved.
