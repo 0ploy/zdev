@@ -153,9 +153,37 @@ func (p *Project) URL(scheme string) string {
 // Colima's sockets all end in docker.sock.
 var dockerSocketPath = regexp.MustCompile(`(^|/)docker\.sock$`)
 
-// DockerSocketServices lists services that mount the Docker socket. Whoever
+// dockerSocketPaths lists where Docker sockets live: the active engine's
+// (whatever its name, a Podman socket too), the daemon's default paths (on
+// Docker Desktop, OrbStack and Colima a path outside the shared folders,
+// such as /var/run, names the engine VM's, so these count even when this
+// machine has no such file), and the engines' per-user sockets that exist,
+// each also resolved through symlinks. Replaceable in tests.
+var dockerSocketPaths = func() []string {
+	paths := []string{runtime.HostDockerSocketPath(), runtime.DefaultDockerSocket, "/run/docker.sock"}
+	if home, err := os.UserHomeDir(); err == nil {
+		for _, rel := range []string{".docker/run/docker.sock", ".orbstack/run/docker.sock", ".colima/default/docker.sock", ".rd/docker.sock"} {
+			// Only where they exist: a bind of the home directory on a
+			// machine without that engine holds no socket.
+			if _, err := os.Lstat(filepath.Join(home, rel)); err == nil {
+				paths = append(paths, filepath.Join(home, rel))
+			}
+		}
+	}
+	out := append([]string(nil), paths...)
+	for _, p := range paths {
+		if r, err := filepath.EvalSymlinks(p); err == nil {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// DockerSocketServices lists services that mount the Docker socket, also
+// through a directory that holds it (/var/run, ~/.docker, /). Whoever
 // reaches such a service is root on the host.
 func (p *Project) DockerSocketServices() []string {
+	sockets := dockerSocketPaths()
 	var out []string
 	for name, svc := range p.Config.Services {
 		for _, vol := range svc.Volumes {
@@ -163,11 +191,7 @@ func (p *Project) DockerSocketServices() []string {
 			if isNamed {
 				continue
 			}
-			if dockerSocketPath.MatchString(source) {
-				out = append(out, name)
-				break
-			}
-			if resolved, err := filepath.EvalSymlinks(source); err == nil && dockerSocketPath.MatchString(resolved) {
+			if p.holdsDockerSocket(source, sockets) {
 				out = append(out, name)
 				break
 			}
@@ -175,6 +199,27 @@ func (p *Project) DockerSocketServices() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// holdsDockerSocket reports whether a bind source is a Docker socket or a
+// directory above one: as written (relative to the project), and resolved
+// through symlinks like Docker resolves it.
+func (p *Project) holdsDockerSocket(source string, sockets []string) bool {
+	literal := source
+	if !filepath.IsAbs(literal) {
+		literal = filepath.Join(p.Dir, literal)
+	}
+	literal = filepath.Clean(literal)
+	resolved := resolveHostPath(p.Dir, source)
+	if dockerSocketPath.MatchString(literal) || dockerSocketPath.MatchString(resolved) {
+		return true
+	}
+	for _, s := range sockets {
+		if s != "" && (within(s, literal) || within(s, resolved)) {
+			return true
+		}
+	}
+	return false
 }
 
 var numericID = regexp.MustCompile(`^[0-9]+$`)

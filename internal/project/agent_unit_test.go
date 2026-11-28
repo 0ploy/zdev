@@ -29,12 +29,48 @@ func TestAgentSourceAndDefaultService(t *testing.T) {
 }
 
 func TestDockerSocketServices(t *testing.T) {
+	home := t.TempDir()
+	sock := filepath.Join(home, ".docker", "run", "docker.sock")
+	if err := os.MkdirAll(filepath.Dir(sock), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sock, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	orig := dockerSocketPaths
+	dockerSocketPaths = func() []string { return []string{"/var/run/docker.sock", "/run/docker.sock", sock} }
+	t.Cleanup(func() { dockerSocketPaths = orig })
+
 	p := newSyncTestProject(t, runtime.NewMockRuntime(), nil, []string{".:/app"})
-	p.Config.Services["docker1"] = config.ServiceConfig{Image: "x", Volumes: []string{"/var/run/docker.sock:/var/run/docker.sock"}}
-	p.Config.Services["orb"] = config.ServiceConfig{Image: "x", Volumes: []string{"/Users/me/.orbstack/run/docker.sock:/var/run/docker.sock:ro"}}
-	p.Config.Services["db"] = config.ServiceConfig{Image: "x", Volumes: []string{"db_data:/var/lib/mysql"}}
-	if got := strings.Join(p.DockerSocketServices(), ","); got != "docker1,orb" {
-		t.Errorf("DockerSocketServices = %s", got)
+	// A link inside the project to the socket's directory: resolved against
+	// the project, not the process's working directory.
+	if err := os.Symlink(filepath.Dir(sock), filepath.Join(p.Dir, "engine")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, "projects"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bind := map[string]string{
+		"docker1":  "/var/run/docker.sock:/var/run/docker.sock",
+		"orb":      "/Users/me/.orbstack/run/docker.sock:/var/run/docker.sock:ro",
+		"varrun":   "/var/run:/host-run",
+		"run":      "/run:/host-run",
+		"root":     "/:/host:ro",
+		"dotdock":  filepath.Join(home, ".docker") + ":/root/.docker",
+		"rundir":   filepath.Dir(sock) + ":/x",
+		"home":     home + ":/home/me",
+		"linked":   "./engine:/x",
+		"db":       "db_data:/var/lib/mysql",
+		"src":      "./src:/src",
+		"projects": filepath.Join(home, "projects") + ":/p",
+		"varlib":   "/var/lib:/x",
+	}
+	for name, vol := range bind {
+		p.Config.Services[name] = config.ServiceConfig{Image: "x", Volumes: []string{vol}}
+	}
+	want := "docker1,dotdock,home,linked,orb,root,run,rundir,varrun"
+	if got := strings.Join(p.DockerSocketServices(), ","); got != want {
+		t.Errorf("DockerSocketServices = %s, want %s", got, want)
 	}
 }
 

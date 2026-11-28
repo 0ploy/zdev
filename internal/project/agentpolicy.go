@@ -149,6 +149,9 @@ func resolveHostPath(dir, src string) string {
 }
 
 func within(path, root string) bool {
+	if root == string(os.PathSeparator) {
+		return strings.HasPrefix(path, root)
+	}
 	return path == root || strings.HasPrefix(path, root+string(os.PathSeparator))
 }
 
