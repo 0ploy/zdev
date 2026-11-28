@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strings"
@@ -60,250 +61,297 @@ func runCleanup(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("failed to list projects: %w", err)
 		}
-
-		type staleProject struct {
-			name string
-			path string
-		}
-		var staleProjects []staleProject
-		knownContainers := make(map[string]bool)
-		knownVolumes := make(map[string]bool)
-		knownNetworks := make(map[string]bool)
-		unreadable := make(map[string]bool)
-
-		for name, entry := range projects {
-			if _, err := os.Stat(entry.Path); err != nil {
-				if os.IsNotExist(err) {
-					staleProjects = append(staleProjects, staleProject{name: name, path: entry.Path})
-					continue
-				}
-				return fmt.Errorf("failed to inspect project %s at %s: %w", name, entry.Path, err)
-			}
-
-			cfg, err := config.LoadProject(entry.Path)
-			if err != nil {
-				// One unreadable config - an unreleased field, a syntax error,
-				// a half-finished edit - must not take the whole cleanup down
-				// with it. But its resources cannot be judged either, so every
-				// resource carrying its name is preserved.
-				fmt.Printf("Warning: not inspecting %s (%s): %v\n", name, entry.Path, err)
-				fmt.Printf("         its containers, volumes and network are kept.\n\n")
-				unreadable[name] = true
-				continue
-			}
-			loaded := &project.Project{Config: cfg, Dir: entry.Path}
-			for serviceName := range cfg.Services {
-				knownContainers[project.ContainerNameFor(serviceName, cfg.Name)] = true
-				// Kept for services whose sync volume predates per-mount
-				// naming, or whose bind source is temporarily absent: an
-				// in-use sync volume must never be offered for pruning.
-				knownVolumes[project.MutagenVolumeNameFor(serviceName, cfg.Name)] = true
-			}
-			// Services with several directory binds have one sync volume per
-			// mount, none of which carries the bare per-service name.
-			for _, mount := range loaded.GetMutagenSyncMounts() {
-				knownVolumes[mount.VolumeName] = true
-			}
-			for _, volumeName := range loaded.NamedVolumes() {
-				knownVolumes[project.VolumeNameFor(volumeName, cfg.Name)] = true
-			}
-			knownNetworks[loaded.NetworkName()] = true
-		}
-
-		// Link networks belong to the links in state, not to any one project.
-		if links, err := stateMgr.ListLinks(); err == nil {
-			for _, link := range links {
-				knownNetworks[link.Network] = true
-			}
+		links, err := stateMgr.ListLinks()
+		if err != nil {
+			links = nil // without them link networks look orphaned only if nothing uses them
 		}
 
 		docker := runtime.NewDockerCLI()
-
-		containers, err := docker.ListContainers(ctx, "label=zdev.project")
-		if err != nil {
-			return fmt.Errorf("failed to list Docker containers: %w", err)
-		}
-
-		var orphanContainers []string
-		for _, name := range containers {
-			if !knownContainers[name] && !belongsToAnyProject(name, unreadable) {
-				orphanContainers = append(orphanContainers, name)
-			}
-		}
-
-		dockerVolumes, err := docker.ListVolumes(ctx, "name=.zdev")
-		if err != nil {
-			return fmt.Errorf("failed to list Docker volumes: %w", err)
-		}
-
-		var orphanVolumes []string
-		for _, vol := range dockerVolumes {
-			if !knownVolumes[vol.Name] && !belongsToAnyProject(vol.Name, unreadable) {
-				orphanVolumes = append(orphanVolumes, vol.Name)
-			}
-		}
-		// A missing directory may be back tomorrow: its volumes stay, and so
-		// does its registration, or the next run would no longer know whose
-		// they are and delete them as orphans.
-		staleNames := make([]string, 0, len(staleProjects))
-		for _, p := range staleProjects {
-			staleNames = append(staleNames, p.name)
-		}
-		var keptVolumes map[string][]string
-		if !cleanupPurgeMissing {
-			orphanVolumes, keptVolumes = splitStaleVolumes(orphanVolumes, staleNames)
-		}
-		var keptStale []staleProject
-		unregister := staleProjects[:0:0]
-		for _, p := range staleProjects {
-			if len(keptVolumes[p.name]) > 0 {
-				keptStale = append(keptStale, p)
-			} else {
-				unregister = append(unregister, p)
-			}
-		}
-		staleProjects = unregister
-
-		// Networks are the scarcest resource zdev consumes - Docker's default
-		// address pool is exhausted after ~31 of them - and until now the only
-		// one nothing reclaimed. `zdev down` removes a project's network, but a
-		// project directory that is simply deleted leaves its network behind
-		// forever.
-		dockerNetworks, err := docker.ListNetworks(ctx, "")
-		if err != nil {
-			return fmt.Errorf("failed to list Docker networks: %w", err)
-		}
-
-		removingContainer := make(map[string]bool, len(orphanContainers))
-		for _, name := range orphanContainers {
-			removingContainer[name] = true
-		}
-
-		for name := range unreadable {
-			knownNetworks[name+".zdev"] = true
-		}
-
-		orphanNetworks, err := selectOrphanNetworks(ctx, docker, dockerNetworks, knownNetworks, removingContainer)
+		plan, err := planCleanup(ctx, projects, links, docker, cleanupPurgeMissing)
 		if err != nil {
 			return err
 		}
 
-		sort.Slice(staleProjects, func(i, j int) bool { return staleProjects[i].name < staleProjects[j].name })
-		sort.Strings(orphanContainers)
-		sort.Strings(orphanVolumes)
-		sort.Strings(orphanNetworks)
-		sort.Slice(keptStale, func(i, j int) bool { return keptStale[i].name < keptStale[j].name })
-
-		if len(keptStale) > 0 {
-			fmt.Printf("Projects whose directory is missing (%d) - kept with their volumes, the directory may be back later:\n", len(keptStale))
-			for _, p := range keptStale {
-				fmt.Printf("  - %s (%s): %s\n", p.name, p.path, strings.Join(keptVolumes[p.name], ", "))
-			}
-			fmt.Println("  Gone for good? `zdev cleanup --purge-missing` removes them.")
-			fmt.Println()
-		}
-
-		if len(staleProjects) == 0 && len(orphanContainers) == 0 && len(orphanVolumes) == 0 && len(orphanNetworks) == 0 {
-			fmt.Println("Nothing to clean up.")
+		if !plan.print(os.Stdout) {
 			return nil
 		}
-
-		if len(staleProjects) > 0 {
-			fmt.Printf("Stale project registrations (%d) - directory missing on disk:\n", len(staleProjects))
-			for _, p := range staleProjects {
-				fmt.Printf("  - %s (%s)\n", p.name, p.path)
-			}
-			fmt.Println()
-		}
-
-		if len(orphanContainers) > 0 {
-			fmt.Printf("Orphaned containers (%d) - absent from live project configs:\n", len(orphanContainers))
-			for _, name := range orphanContainers {
-				fmt.Printf("  - %s\n", name)
-			}
-			fmt.Println()
-		}
-
-		if len(orphanVolumes) > 0 {
-			fmt.Printf("Orphaned volumes (%d) - absent from live project configs:\n", len(orphanVolumes))
-			for _, name := range orphanVolumes {
-				fmt.Printf("  - %s\n", name)
-			}
-			fmt.Println()
-		}
-
-		if len(orphanNetworks) > 0 {
-			fmt.Printf("Orphaned networks (%d) - no live project or link owns them:\n", len(orphanNetworks))
-			for _, name := range orphanNetworks {
-				fmt.Printf("  - %s\n", name)
-			}
-			fmt.Println()
-		}
-
 		if !cleanupForce {
 			if !confirm("Delete the items above? [y/N]: ") {
 				fmt.Println("Aborted.")
 				return nil
 			}
 		}
-
-		for _, p := range staleProjects {
-			fmt.Printf("Unregistering %s... ", p.name)
-			if err := stateMgr.UnregisterProject(p.name); err != nil {
-				fmt.Printf("failed: %v\n", err)
-			} else {
-				fmt.Println("done")
-				if err := stateMgr.RemoveProjectFromLinks(p.name); err != nil {
-					fmt.Printf("Warning: failed to remove %s from its links: %v\n", p.name, err)
-				}
-				if err := ssl.RemoveProjectCert(p.name); err != nil {
-					fmt.Printf("Warning: failed to remove certificate for %s: %v\n", p.name, err)
-				}
-			}
-		}
-
-		for _, name := range orphanContainers {
-			fmt.Printf("Removing container %s... ", name)
-			if err := docker.ForceRemoveContainer(ctx, name); err != nil {
-				fmt.Printf("failed: %v\n", err)
-			} else {
-				fmt.Println("done")
-			}
-		}
-
-		// After the containers, so a network whose only attachments were just
-		// removed can go too.
-		for _, name := range orphanNetworks {
-			fmt.Printf("Removing network %s... ", name)
-			if err := docker.RemoveNetwork(ctx, name); err != nil {
-				fmt.Printf("failed: %v\n", err)
-			} else {
-				fmt.Println("done")
-			}
-		}
-
-		var deleted, failed int
-		for _, name := range orphanVolumes {
-			fmt.Printf("Removing volume %s... ", name)
-			if err := docker.RemoveVolume(ctx, name); err != nil {
-				fmt.Printf("failed: %v\n", err)
-				failed++
-			} else {
-				fmt.Println("done")
-				deleted++
-			}
-		}
-
-		if len(orphanVolumes) > 0 {
-			fmt.Printf("\nRemoved %d volume(s)", deleted)
-			if failed > 0 {
-				fmt.Printf(", %d failed", failed)
-			}
-			fmt.Println()
-		}
-
+		plan.apply(ctx, os.Stdout, stateMgr, docker)
 		return nil
 	})
+}
+
+// cleanupProject is a registered project cleanup reports on.
+type cleanupProject struct {
+	name, path string
+	err        error // why its config couldn't be read (unreadable only)
+}
+
+// cleanupPlan is what a cleanup removes, and what it keeps on purpose. Built
+// by planCleanup without touching anything, shown by print, carried out by
+// apply.
+type cleanupPlan struct {
+	// unreadable projects are skipped with everything carrying their name.
+	unreadable []cleanupProject
+	// keptMissing projects have a missing directory but volumes: both their
+	// registration and the volumes (keptVolumes) stay.
+	keptMissing []cleanupProject
+	keptVolumes map[string][]string
+	// unregister: missing directory and nothing worth keeping.
+	unregister []cleanupProject
+
+	containers, volumes, networks []string
+}
+
+// cleanupLister is the slice of the runtime planCleanup reads.
+type cleanupLister interface {
+	containerLister
+	ListVolumes(ctx context.Context, filter string) ([]runtime.Volume, error)
+	ListNetworks(ctx context.Context, filter string) ([]string, error)
+}
+
+// planCleanup collects what a cleanup would remove: containers and volumes
+// no registered project's current config references, networks no project or
+// link owns, and registrations whose directory is missing. It reads state,
+// configs and Docker, and changes nothing.
+func planCleanup(ctx context.Context, projects map[string]state.ProjectEntry, links map[string]state.LinkEntry, docker cleanupLister, purgeMissing bool) (cleanupPlan, error) {
+	var plan cleanupPlan
+	var stale []cleanupProject
+	knownContainers := make(map[string]bool)
+	knownVolumes := make(map[string]bool)
+	knownNetworks := make(map[string]bool)
+	unreadable := make(map[string]bool)
+
+	for name, entry := range projects {
+		if _, err := os.Stat(entry.Path); err != nil {
+			if os.IsNotExist(err) {
+				stale = append(stale, cleanupProject{name: name, path: entry.Path})
+				continue
+			}
+			return plan, fmt.Errorf("failed to inspect project %s at %s: %w", name, entry.Path, err)
+		}
+
+		cfg, err := config.LoadProject(entry.Path)
+		if err != nil {
+			// One unreadable config - an unreleased field, a syntax error,
+			// a half-finished edit - must not take the whole cleanup down
+			// with it. But its resources cannot be judged either, so every
+			// resource carrying its name is preserved.
+			plan.unreadable = append(plan.unreadable, cleanupProject{name: name, path: entry.Path, err: err})
+			unreadable[name] = true
+			continue
+		}
+		loaded := &project.Project{Config: cfg, Dir: entry.Path}
+		for serviceName := range cfg.Services {
+			knownContainers[project.ContainerNameFor(serviceName, cfg.Name)] = true
+			// Kept for services whose sync volume predates per-mount
+			// naming, or whose bind source is temporarily absent: an
+			// in-use sync volume must never be offered for pruning.
+			knownVolumes[project.MutagenVolumeNameFor(serviceName, cfg.Name)] = true
+		}
+		// Services with several directory binds have one sync volume per
+		// mount, none of which carries the bare per-service name.
+		for _, mount := range loaded.GetMutagenSyncMounts() {
+			knownVolumes[mount.VolumeName] = true
+		}
+		for _, volumeName := range loaded.NamedVolumes() {
+			knownVolumes[project.VolumeNameFor(volumeName, cfg.Name)] = true
+		}
+		knownNetworks[loaded.NetworkName()] = true
+	}
+
+	// Link networks belong to the links in state, not to any one project.
+	for _, link := range links {
+		knownNetworks[link.Network] = true
+	}
+
+	containers, err := docker.ListContainers(ctx, "label=zdev.project")
+	if err != nil {
+		return plan, fmt.Errorf("failed to list Docker containers: %w", err)
+	}
+	for _, name := range containers {
+		if !knownContainers[name] && !belongsToAnyProject(name, unreadable) {
+			plan.containers = append(plan.containers, name)
+		}
+	}
+
+	dockerVolumes, err := docker.ListVolumes(ctx, "name=.zdev")
+	if err != nil {
+		return plan, fmt.Errorf("failed to list Docker volumes: %w", err)
+	}
+	for _, vol := range dockerVolumes {
+		if !knownVolumes[vol.Name] && !belongsToAnyProject(vol.Name, unreadable) {
+			plan.volumes = append(plan.volumes, vol.Name)
+		}
+	}
+	// A missing directory may be back tomorrow: its volumes stay, and so
+	// does its registration, or the next run would no longer know whose
+	// they are and delete them as orphans.
+	staleNames := make([]string, 0, len(stale))
+	for _, p := range stale {
+		staleNames = append(staleNames, p.name)
+	}
+	if !purgeMissing {
+		plan.volumes, plan.keptVolumes = splitStaleVolumes(plan.volumes, staleNames)
+	}
+	for _, p := range stale {
+		if len(plan.keptVolumes[p.name]) > 0 {
+			plan.keptMissing = append(plan.keptMissing, p)
+		} else {
+			plan.unregister = append(plan.unregister, p)
+		}
+	}
+
+	// Networks are the scarcest resource zdev consumes - Docker's default
+	// address pool is exhausted after ~31 of them - and until now the only
+	// one nothing reclaimed. `zdev down` removes a project's network, but a
+	// project directory that is simply deleted leaves its network behind
+	// forever.
+	dockerNetworks, err := docker.ListNetworks(ctx, "")
+	if err != nil {
+		return plan, fmt.Errorf("failed to list Docker networks: %w", err)
+	}
+	removingContainer := make(map[string]bool, len(plan.containers))
+	for _, name := range plan.containers {
+		removingContainer[name] = true
+	}
+	for name := range unreadable {
+		knownNetworks[name+".zdev"] = true
+	}
+	if plan.networks, err = selectOrphanNetworks(ctx, docker, dockerNetworks, knownNetworks, removingContainer); err != nil {
+		return plan, err
+	}
+
+	byName := func(ps []cleanupProject) {
+		sort.Slice(ps, func(i, j int) bool { return ps[i].name < ps[j].name })
+	}
+	byName(plan.unreadable)
+	byName(plan.unregister)
+	byName(plan.keptMissing)
+	sort.Strings(plan.containers)
+	sort.Strings(plan.volumes)
+	sort.Strings(plan.networks)
+	return plan, nil
+}
+
+// empty reports whether the plan removes nothing.
+func (p cleanupPlan) empty() bool {
+	return len(p.unregister) == 0 && len(p.containers) == 0 && len(p.volumes) == 0 && len(p.networks) == 0
+}
+
+// print shows the plan: what is kept and why, then what would be removed.
+// Reports whether there is anything to remove.
+func (p cleanupPlan) print(w io.Writer) bool {
+	for _, u := range p.unreadable {
+		fmt.Fprintf(w, "Warning: not inspecting %s (%s): %v\n", u.name, u.path, u.err)
+		fmt.Fprintf(w, "         its containers, volumes and network are kept.\n\n")
+	}
+
+	if len(p.keptMissing) > 0 {
+		fmt.Fprintf(w, "Projects whose directory is missing (%d) - kept with their volumes, the directory may be back later:\n", len(p.keptMissing))
+		for _, m := range p.keptMissing {
+			fmt.Fprintf(w, "  - %s (%s): %s\n", m.name, m.path, strings.Join(p.keptVolumes[m.name], ", "))
+		}
+		fmt.Fprintln(w, "  Gone for good? `zdev cleanup --purge-missing` removes them.")
+		fmt.Fprintln(w)
+	}
+
+	if p.empty() {
+		fmt.Fprintln(w, "Nothing to clean up.")
+		return false
+	}
+
+	if len(p.unregister) > 0 {
+		fmt.Fprintf(w, "Stale project registrations (%d) - directory missing on disk:\n", len(p.unregister))
+		for _, s := range p.unregister {
+			fmt.Fprintf(w, "  - %s (%s)\n", s.name, s.path)
+		}
+		fmt.Fprintln(w)
+	}
+	list := func(title string, names []string) {
+		if len(names) == 0 {
+			return
+		}
+		fmt.Fprintf(w, title+":\n", len(names))
+		for _, name := range names {
+			fmt.Fprintf(w, "  - %s\n", name)
+		}
+		fmt.Fprintln(w)
+	}
+	list("Orphaned containers (%d) - absent from live project configs", p.containers)
+	list("Orphaned volumes (%d) - absent from live project configs", p.volumes)
+	list("Orphaned networks (%d) - no live project or link owns them", p.networks)
+	return true
+}
+
+// cleanupRegistry is the slice of the state manager apply changes.
+type cleanupRegistry interface {
+	UnregisterProject(name string) error
+	RemoveProjectFromLinks(name string) error
+}
+
+// cleanupRemover is the slice of the runtime apply removes with.
+type cleanupRemover interface {
+	ForceRemoveContainer(ctx context.Context, nameOrID string) error
+	RemoveNetwork(ctx context.Context, name string) error
+	RemoveVolume(ctx context.Context, name string) error
+}
+
+// apply carries out the plan, reporting each step; a failed step doesn't
+// stop the others.
+func (p cleanupPlan) apply(ctx context.Context, w io.Writer, reg cleanupRegistry, docker cleanupRemover) {
+	for _, s := range p.unregister {
+		fmt.Fprintf(w, "Unregistering %s... ", s.name)
+		if err := reg.UnregisterProject(s.name); err != nil {
+			fmt.Fprintf(w, "failed: %v\n", err)
+			continue
+		}
+		fmt.Fprintln(w, "done")
+		if err := reg.RemoveProjectFromLinks(s.name); err != nil {
+			fmt.Fprintf(w, "Warning: failed to remove %s from its links: %v\n", s.name, err)
+		}
+		if err := ssl.RemoveProjectCert(s.name); err != nil {
+			fmt.Fprintf(w, "Warning: failed to remove certificate for %s: %v\n", s.name, err)
+		}
+	}
+
+	step := func(kind, name string, remove func(context.Context, string) error) bool {
+		fmt.Fprintf(w, "Removing %s %s... ", kind, name)
+		if err := remove(ctx, name); err != nil {
+			fmt.Fprintf(w, "failed: %v\n", err)
+			return false
+		}
+		fmt.Fprintln(w, "done")
+		return true
+	}
+	for _, name := range p.containers {
+		step("container", name, docker.ForceRemoveContainer)
+	}
+	// After the containers, so a network whose only attachments were just
+	// removed can go too.
+	for _, name := range p.networks {
+		step("network", name, docker.RemoveNetwork)
+	}
+	var deleted, failed int
+	for _, name := range p.volumes {
+		if step("volume", name, docker.RemoveVolume) {
+			deleted++
+		} else {
+			failed++
+		}
+	}
+	if len(p.volumes) > 0 {
+		fmt.Fprintf(w, "\nRemoved %d volume(s)", deleted)
+		if failed > 0 {
+			fmt.Fprintf(w, ", %d failed", failed)
+		}
+		fmt.Fprintln(w)
+	}
 }
 
 // containerLister is the slice of the runtime selectOrphanNetworks needs.
