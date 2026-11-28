@@ -62,6 +62,7 @@ zdev link create|join|leave|ls|status|delete    # cross-project networks (refere
 zdev dns enable|disable|status  # only if the router blocks the wildcard (references/debugging.md)
 zdev mutagen status|flush|reset # macOS file sync
 zdev rename <new-name> / cleanup
+zdev agent setup|credentials|update   # agent sandboxes (zdev claude): references/agent-sandbox.md
 ```
 
 ## Project commands (`zdev run`)

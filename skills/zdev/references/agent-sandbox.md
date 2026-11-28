@@ -1,6 +1,6 @@
 # Agent sandbox (`zdev claude`)
 
-`zdev claude` runs Claude Code in a container of the project, built from a service's image (default `app`). Inside, `ZDEV_SANDBOX` is set. The session's system prompt describes the specifics; these are the rules that matter.
+`zdev claude` (the shortcut for `zdev agent run claude`) runs Claude Code in a container of the project, built from a service's image (default `app`). Inside, `ZDEV_SANDBOX` is set. The session's system prompt describes the specifics; these are the rules that matter.
 
 ## When you run in a sandbox
 
@@ -23,7 +23,8 @@ The sandbox runs zdev's small bootstrap image; zdev commands are refused. Write 
 
 - Needs `bash` + `git` in the service's image.
 - Set `services.<name>.mutagen.user` to the app's user, or the agent runs as root (without capabilities).
-- Settings live only in `~/.zdev/global-config.yaml` under `agent:` (service per project, connectors, `host_access`, `disable_plugins`, `docker_socket: accept`), never in the project config.
+- Commands, all on the host: `zdev agent setup` (login check + a GitHub/GitLab token for the project), `zdev agent credentials` (list/add/grant/revoke/test/remove other tokens), `zdev agent update` (newest Claude Code now), `zdev claude [service] [args]` (a session; every argument goes to Claude, `--help` included).
+- Settings live only in `~/.zdev/global-config.yaml` under `agent:`, never in the project config: for every agent `defaults` / `projects.<name>` (`service`, `host_access`, `limits`, `egress`, `allow_hosts`, `credentials`, `docker_socket: accept`) and `host_hook`; Claude-only under `agent.claude` (`channel`, `disable_plugins`) and `agent.projects.<name>.claude.connectors`.
 - Terminal integration (e.g. cmux tab icon): `agent.host_hook`, a host command run at session start/end with `ZDEV_AGENT_EVENT` (`SessionStart`/`SessionEnd`), `ZDEV_AGENT_PID` (the `zdev claude` PID, outlives sandbox replacements) and Claude-hook JSON on stdin. cmux: `CMUX_CLAUDE_PID=$ZDEV_AGENT_PID cmux claude-hook session-start|session-end`. Recipe in docs/configuration.md.
 - A service that mounts the Docker socket makes `zdev claude` refuse the project unless `agent.projects.<name>.docker_socket: accept`.
 - Git sync conflict reported by `zdev status`: `zdev mutagen repair-git`.
