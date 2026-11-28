@@ -71,8 +71,12 @@ func PiProjectDir(agentDir, hostProjectDir string) string {
 }
 
 // PiSessionKey is pi's directory name for a working directory's sessions.
+// Like pi, it drops one leading separator only.
 func PiSessionKey(cwd string) string {
-	return "--" + strings.NewReplacer("/", "-", "\\", "-", ":", "-").Replace(strings.TrimLeft(cwd, "/\\")) + "--"
+	if strings.HasPrefix(cwd, "/") || strings.HasPrefix(cwd, "\\") {
+		cwd = cwd[1:]
+	}
+	return "--" + strings.NewReplacer("/", "-", "\\", "-", ":", "-").Replace(cwd) + "--"
 }
 
 // ResolvePi returns pi's newest release, from the cache in dir when it is
@@ -148,8 +152,8 @@ func resolvePi(ctx context.Context, client *http.Client, api, web string) (*PiRe
 }
 
 // piFetch runs in Alpine: the source archive and Bun into the cache, checked
-// against their SHA-256, and the C++ runtime musl builds need into the musl
-// volume (lib/, used only when the image has none).
+// against their SHA-256, and (when the musl build is made) the C++ runtime
+// it needs into its volume (lib/, used only when the image has none).
 const piFetch = `set -eu
 apk add -q --no-cache curl unzip libstdc++ libgcc >/dev/null
 cd /cache
@@ -168,11 +172,13 @@ if [ ! -x "bun-$BUN_VERSION/bun" ]; then
   unzip -q -j -d "bun-$BUN_VERSION.tmp" "$t" '*/bun' && rm -f "$t"
   rm -rf "bun-$BUN_VERSION" && mv "bun-$BUN_VERSION.tmp" "bun-$BUN_VERSION"
 fi
-rm -f /musl/.ok && mkdir -p /musl/lib
-cp -L /usr/lib/libstdc++.so.6 /usr/lib/libgcc_s.so.1 /musl/lib/`
+if [ -d /musl ]; then
+  rm -f /musl/.ok && mkdir -p /musl/lib
+  cp -L /usr/lib/libstdc++.so.6 /usr/lib/libgcc_s.so.1 /musl/lib/
+fi`
 
 // piBuild runs in Node: builds pi like its release workflow (bundled model
-// catalog) and compiles it for both libc variants into /glibc and /musl,
+// catalog) and compiles it for the libc variants in $LIBCS into /<libc>,
 // with the files pi expects next to its binary and the bin/pi launcher.
 const piBuild = `set -eu
 export PATH="/cache/bun-$BUN_VERSION:$PATH" npm_config_cache=/cache/npm
@@ -184,7 +190,7 @@ cd "$(find . -mindepth 1 -maxdepth 1 -type d | head -1)"
 run npm ci --ignore-scripts --no-audit --no-fund
 run npm run build:offline
 cd packages/coding-agent
-for libc in glibc musl; do
+for libc in $LIBCS; do
   out=/$libc
   rm -f "$out/.ok"
   target="bun-linux-$BUN_ARCH"
@@ -218,9 +224,8 @@ SH
   fi
   chmod 755 "$out/bin/pi"
 done
-/glibc/pi --version >/dev/null
-echo "$PI_VERSION" >/glibc/.ok
-echo "$PI_VERSION" >/musl/.ok`
+[ -d /glibc ] && /glibc/pi --version >/dev/null
+for libc in $LIBCS; do echo "$PI_VERSION" >"/$libc/.ok"; done`
 
 // bunArch is Bun's name for a Docker architecture.
 func bunArch(arch string) string {
@@ -236,7 +241,7 @@ func PiBuilt(ctx context.Context, d Docker, version, arch string) bool {
 }
 
 // BuildPi builds the release for arch into its glibc and musl volumes unless
-// they are complete. One build at a time per machine (a file lock in dir):
+// they are complete (only the missing ones). One build at a time per machine (a file lock in dir):
 // a second caller waits for the first (waiting is called first) and then
 // finds the volumes complete. log gets the steps' output. Whatever the
 // outcome, only complete build volumes stay.
@@ -257,15 +262,29 @@ func BuildPi(ctx context.Context, d Docker, dir string, rel *PiRelease, arch str
 	}
 	// Cleanup runs even when ctx was cancelled (Ctrl-C during the build).
 	bg := context.WithoutCancel(ctx)
-	glibc, musl := PiVolumeName(rel.Version, LibcGlibc, arch), PiVolumeName(rel.Version, LibcMusl, arch)
-	for _, v := range []string{glibc, musl} {
-		if err := d.CreateVolume(ctx, v, map[string]string{volumeLabel: "pi", "zdev.agent.pi": rel.Version}); err != nil {
-			return err
+	// Only what is missing is built: a complete variant may be mounted by
+	// running sessions and stays untouched (the other one can be missing
+	// after the sweep removed it as unused).
+	var libcs, vols []string
+	for _, libc := range []string{LibcGlibc, LibcMusl} {
+		if v := PiVolumeName(rel.Version, libc, arch); !complete(ctx, d, v) {
+			libcs, vols = append(libcs, libc), append(vols, v)
 		}
+	}
+	// Created (with their label) right before each step that mounts them:
+	// mounting a volume that is gone would make Docker create it without
+	// the label, invisible to InstalledPi and to the sweep.
+	createVols := func() error {
+		for _, v := range vols {
+			if err := d.CreateVolume(ctx, v, map[string]string{volumeLabel: "pi", "zdev.agent.pi": rel.Version}); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 	defer func() {
 		if err != nil {
-			_, _ = d.Output(bg, "volume", "rm", "-f", glibc, musl)
+			_, _ = d.Output(bg, append([]string{"volume", "rm", "-f"}, vols...)...)
 		}
 	}()
 	cacheVol := "zdev-pi-build-" + rel.Version + "-" + arch
@@ -283,17 +302,25 @@ func BuildPi(ctx context.Context, d Docker, dir string, rel *PiRelease, arch str
 	}
 	env := []string{"-e", "PI_VERSION=" + rel.Version, "-e", "PI_SHA256=" + rel.SourceSHA256,
 		"-e", "BUN_VERSION=" + bun.Version, "-e", "BUN_SHA256=" + bunSHA, "-e", "BUN_URL=" + bun.DownloadURL("linux", arch),
-		"-e", "BUN_ARCH=" + bunArch(arch)}
-	cache := []string{"--mount", "type=volume,src=" + cacheVol + ",dst=/cache"}
-	fetch := append(append([]string{"run", "--rm", "-i", "--user", "0", "--label", volumeLabel + "=pi-build"}, env...), cache...)
-	fetch = append(fetch, "--mount", "type=volume,src="+musl+",dst=/musl", "--entrypoint", "sh", FillImage, "-s")
-	if err := d.Stream(ctx, strings.NewReader(piFetch), log, log, fetch...); err != nil {
+		"-e", "BUN_ARCH=" + bunArch(arch), "-e", "LIBCS=" + strings.Join(libcs, " ")}
+	mounts := []string{"--mount", "type=volume,src=" + cacheVol + ",dst=/cache"}
+	for i, libc := range libcs {
+		mounts = append(mounts, "--mount", "type=volume,src="+vols[i]+",dst=/"+libc)
+	}
+	run := func(image string) []string {
+		args := append(append([]string{"run", "--rm", "-i", "--user", "0", "--label", volumeLabel + "=pi-build"}, env...), mounts...)
+		return append(args, "--entrypoint", "sh", image, "-s")
+	}
+	if err := createVols(); err != nil {
+		return err
+	}
+	if err := d.Stream(ctx, strings.NewReader(piFetch), log, log, run(FillImage)...); err != nil {
 		return fmt.Errorf("downloading pi %s's source: %w", rel.Version, err)
 	}
-	build := append(append([]string{"run", "--rm", "-i", "--user", "0", "--label", volumeLabel + "=pi-build"}, env...), cache...)
-	build = append(build, "--mount", "type=volume,src="+glibc+",dst=/glibc", "--mount", "type=volume,src="+musl+",dst=/musl",
-		"--entrypoint", "sh", config.PiBuildImage, "-s")
-	if err := d.Stream(ctx, strings.NewReader(piBuild), log, log, build...); err != nil {
+	if err := createVols(); err != nil {
+		return err
+	}
+	if err := d.Stream(ctx, strings.NewReader(piBuild), log, log, run(config.PiBuildImage)...); err != nil {
 		return fmt.Errorf("building pi %s: %w", rel.Version, err)
 	}
 	return nil
@@ -393,7 +420,7 @@ func PiMounts(hostHome, sessionDir, containerWorkdir string) ([]string, error) {
 // (the sandbox's own, where pi saves /model choices and the changelog it
 // showed, then the host's on top, then projects trusted: the container is
 // the boundary; jq from the sandbox tools, the container has no network),
-// AGENTS.md and models, the shared login as a symlink (pi locks the file it points to, so
+// AGENTS.md, models.json without keys (PiModels), the shared login as a symlink (pi locks the file it points to, so
 // sandboxes running at once take turns refreshing it), the session mount
 // point, and everything handed to the agent's user.
 const PiPrepareScript = `set -eu
@@ -409,15 +436,88 @@ if ! /tools/jq -s '(.[0] // {}) * (.[1] // {}) * {"defaultProjectTrust": "always
     echo '{"defaultProjectTrust": "always"}' > "$S.tmp"
 fi
 mv "$S.tmp" "$S"
-for f in AGENTS.md models.json keybindings.json; do
+for f in AGENTS.md keybindings.json; do
   if [ -f "/src/$f" ]; then cp "/src/$f" "$A/$f"; else rm -f "$A/$f"; fi
 done
+if [ -n "${MODELS:-}" ]; then printf '%s' "$MODELS" > "$A/models.json"; else rm -f "$A/models.json"; fi
 ln -sfn ` + PiAuthMount + `/auth.json "$A/auth.json"
 if [ "$(stat -c %u:%g "$H")" != "$OWNER" ]; then chown -R "$OWNER" "$H"; else chown -h "$OWNER" "$H/.pi" "$A" "$A"/* "$A/sessions" "$A/sessions/$KEY" 2>/dev/null || true; fi`
 
-// PiPrepareEnv returns the variables for PiPrepareScript.
-func PiPrepareEnv(home, workdir, owner string) []string {
-	return []string{"H=" + home, "KEY=" + PiSessionKey(workdir), "OWNER=" + owner}
+// PiPrepareEnv returns the variables for PiPrepareScript; models is
+// PiModels' content ("" for none).
+func PiPrepareEnv(home, workdir, owner, models string) []string {
+	return []string{"H=" + home, "KEY=" + PiSessionKey(workdir), "OWNER=" + owner, "MODELS=" + models}
+}
+
+// PiModels is the host's ~/.pi/agent/models.json for the sandbox: every
+// apiKey and header value that isn't a "$NAME" environment reference is
+// dropped, since a literal key would enter the sandbox and a "!command"
+// would run there. stripped lists the providers that lost one (their keys
+// go in as zdev credentials: a placeholder in the variable, swapped in by
+// the proxy). "" when there is no file; an error when it doesn't parse.
+func PiModels(hostPiAgent string) (content string, stripped []string, err error) {
+	b, err := os.ReadFile(filepath.Join(hostPiAgent, "models.json"))
+	if os.IsNotExist(err) {
+		return "", nil, nil
+	}
+	if err != nil {
+		return "", nil, err
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(b, &doc); err != nil {
+		return "", nil, fmt.Errorf("~/.pi/agent/models.json: %w", err)
+	}
+	keep := func(v any) bool {
+		s, ok := v.(string)
+		return ok && strings.HasPrefix(s, "$")
+	}
+	var strip func(v any) bool
+	strip = func(v any) (changed bool) {
+		switch x := v.(type) {
+		case map[string]any:
+			for k, val := range x {
+				switch {
+				case k == "apiKey" && !keep(val):
+					delete(x, k)
+					changed = true
+				case k == "headers":
+					if h, ok := val.(map[string]any); ok {
+						for hk, hv := range h {
+							if !keep(hv) {
+								delete(h, hk)
+								changed = true
+							}
+						}
+					}
+				default:
+					if strip(val) {
+						changed = true
+					}
+				}
+			}
+		case []any:
+			for _, e := range x {
+				if strip(e) {
+					changed = true
+				}
+			}
+		}
+		return changed
+	}
+	if providers, ok := doc["providers"].(map[string]any); ok {
+		for name, p := range providers {
+			if strip(p) {
+				stripped = append(stripped, name)
+			}
+		}
+	}
+	strip(doc)
+	sort.Strings(stripped)
+	out, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return "", nil, err
+	}
+	return string(out) + "\n", stripped, nil
 }
 
 // PiExtension is zdev's extension, loaded with -e: it keeps the musl

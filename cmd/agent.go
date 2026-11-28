@@ -67,15 +67,14 @@ var agentUpdateCmd = &cobra.Command{
 	Args:  agentArg,
 	RunE: func(_ *cobra.Command, args []string) error {
 		return withDocker(noTimeout, func(ctx context.Context) error {
+			var errs []error
 			if len(args) == 0 || args[0] == "claude" {
-				if err := runClaudeUpdate(ctx); err != nil {
-					return err
-				}
+				errs = append(errs, runClaudeUpdate(ctx))
 			}
 			if len(args) == 0 || args[0] == "pi" {
-				return runPiUpdate(ctx)
+				errs = append(errs, runPiUpdate(ctx, len(args) == 1))
 			}
-			return nil
+			return errors.Join(errs...)
 		})
 	},
 }

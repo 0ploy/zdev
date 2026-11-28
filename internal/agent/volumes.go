@@ -357,7 +357,8 @@ func sweepHelperImages(ctx context.Context, d Docker, dir string) {
 
 // sweepable lists recorded volumes to remove: unused for volumeUnusedTTL, or
 // superseded more than supersededGrace ago by one in use of the same kind
-// (buildKey: an agent build of the same libc and architecture, zdev's tools).
+// (buildKey: an agent build of the same libc and architecture, zdev's tools)
+// and not used since.
 func sweepable(uses map[string]volumeUse, inUse []string, now time.Time) []string {
 	current := map[string]bool{}
 	supersededBy := map[string]time.Time{} // prefix + "-libc-arch" -> first use of the current version
@@ -376,7 +377,11 @@ func sweepable(uses map[string]volumeUse, inUse []string, now time.Time) []strin
 			out = append(out, v)
 			continue
 		}
-		if first, ok := supersededBy[buildKey(v)]; ok && buildKey(v) != "" && now.Sub(first) > supersededGrace {
+		// Superseded: not used since the current one was first used, and that
+		// was long enough ago. A volume nobody used yet (a newer build that
+		// just finished, or is being filled) was recorded later than that, so
+		// it never counts as replaced by an older one.
+		if first, ok := supersededBy[buildKey(v)]; ok && buildKey(v) != "" && u.Last.Before(first) && now.Sub(first) > supersededGrace {
 			out = append(out, v)
 		}
 	}

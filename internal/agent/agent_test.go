@@ -97,7 +97,7 @@ func TestSweepable(t *testing.T) {
 	day := 24 * time.Hour
 	uses := map[string]volumeUse{
 		"zdev-claude-2.1.330-musl-arm64":  {First: now.Add(-2 * day), Last: now},               // current
-		"zdev-claude-2.1.320-musl-arm64":  {First: now.Add(-9 * day), Last: now.Add(-2 * day)}, // superseded >1 day ago
+		"zdev-claude-2.1.320-musl-arm64":  {First: now.Add(-9 * day), Last: now.Add(-3 * day)}, // superseded >1 day ago
 		"zdev-claude-2.1.320-glibc-arm64": {First: now.Add(-9 * day), Last: now.Add(-1 * day)}, // other variant, recently used
 		"zdev-tools-0.14.0-arm64":         {First: now.Add(-30 * day), Last: now.Add(-15 * day)},
 	}
@@ -106,10 +106,10 @@ func TestSweepable(t *testing.T) {
 	defer func() {
 		// zdev's tools: a newer build in use for over a day supersedes the others.
 		tools := map[string]volumeUse{
-			"zdev-tools-dev-aaaaaaaaaaaa-arm64":     {First: now.Add(-3 * day), Last: now.Add(-2 * day)},
+			"zdev-tools-dev-aaaaaaaaaaaa-arm64":     {First: now.Add(-4 * day), Last: now.Add(-3 * day)},
 			"zdev-tools-dev-bbbbbbbbbbbb-arm64":     {First: now.Add(-2 * day), Last: now},
-			"zdev-tools-0.14.0-amd64":               {First: now.Add(-3 * day), Last: now.Add(-2 * day)},
-			"zdev-sandbox-tools-cccccccccccc-arm64": {First: now.Add(-3 * day), Last: now.Add(-2 * day)},
+			"zdev-tools-0.14.0-amd64":               {First: now.Add(-4 * day), Last: now.Add(-3 * day)},
+			"zdev-sandbox-tools-cccccccccccc-arm64": {First: now.Add(-4 * day), Last: now.Add(-3 * day)},
 			"zdev-sandbox-tools-dddddddddddd-arm64": {First: now.Add(-2 * day), Last: now},
 		}
 		got := sweepable(tools, []string{"zdev-tools-dev-bbbbbbbbbbbb-arm64", "zdev-sandbox-tools-dddddddddddd-arm64"}, now)

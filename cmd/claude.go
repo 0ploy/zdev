@@ -77,8 +77,9 @@ argument:
 
 Log in once with /login inside pi; every sandbox shares that login. zdev
 builds pi itself from its newest release (checked once a day), for glibc and
-musl images alike: the first session waits a few minutes for that, later
-releases build in the background for the next session.`,
+musl images alike, in the background: a session never waits for it. The
+first build comes with zdev agent setup pi (which waits for it); a session
+that finds none starts it in the background and asks you to come back.`,
 	DisableFlagParsing: true,
 	RunE:               func(_ *cobra.Command, args []string) error { return runAgent(piAgent, args) },
 }
@@ -803,11 +804,16 @@ func runClaudeUpdate(ctx context.Context) error {
 	return nil
 }
 
-// runPiUpdate is `zdev agent update pi`: asks for pi's newest release now and
-// builds it for every architecture that already has a build on this engine
-// (the engine's own when none has). Sessions run it in the background when
-// a new release is out or nothing is built yet.
-func runPiUpdate(ctx context.Context) error {
+// runPiUpdate is `zdev agent update [pi]`: asks for pi's newest release now
+// and builds it for every architecture that already has a build on this
+// engine. Named explicitly (`zdev agent update pi`, which is also what a
+// session runs in the background), it builds for the engine's own
+// architecture when nothing is built yet; without an agent named it leaves
+// a machine that never used pi alone. The background run takes the release
+// a session just resolved (it would not get another answer from GitHub, and
+// may be rate limited) and records a failure in the build log, where the
+// next session finds it.
+func runPiUpdate(ctx context.Context, explicit bool) error {
 	gcfg, err := config.LoadGlobalConfig()
 	if err != nil {
 		return err
@@ -815,11 +821,19 @@ func runPiUpdate(ctx context.Context) error {
 	plain := ui.PlainMode(gcfg.Terminal.Plain)
 	d := agent.NewDocker()
 	agentDir := filepath.Join(config.GetZdevHome(), "agent")
-	rel, err := agent.ResolvePi(ctx, agentDir, 0)
+	archs := agent.InstalledPiArchs(ctx, d)
+	if len(archs) == 0 && !explicit {
+		return nil
+	}
+	maxAge := time.Duration(0)
+	if os.Getenv(piBackgroundEnv) != "" {
+		maxAge = agent.PiCheckEvery
+	}
+	rel, err := agent.ResolvePi(ctx, agentDir, maxAge)
 	if err != nil {
+		recordPiBuildFailure(agentDir, err)
 		return err
 	}
-	archs := agent.InstalledPiArchs(ctx, d)
 	if len(archs) == 0 {
 		arch, err := d.ServerArch(ctx)
 		if err != nil {
@@ -829,7 +843,7 @@ func runPiUpdate(ctx context.Context) error {
 	}
 	for _, arch := range archs {
 		if !agent.PiBuilt(ctx, d, rel.Version, arch) {
-			ui.StatusStep(fmt.Sprintf("Building pi %s for linux/%s (glibc and musl; a few minutes)", rel.Version, arch), plain)
+			ui.StatusStep(fmt.Sprintf("Building pi %s for linux/%s (a few minutes)", rel.Version, arch), plain)
 		}
 		if err := buildPiLogged(ctx, d, agentDir, rel, arch, func() { fmt.Println("Waiting for the pi build that's already running...") }); err != nil {
 			return err

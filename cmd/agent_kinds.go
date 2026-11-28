@@ -333,6 +333,19 @@ type writerFunc func([]byte) (int, error)
 
 func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
 
+// piBackgroundEnv marks the detached `zdev agent update pi` a session starts.
+const piBackgroundEnv = "ZDEV_PI_BACKGROUND_BUILD"
+
+// recordPiBuildFailure writes a failure that happened before a build could
+// start (the release lookup) to the build log, so the next session reports
+// it instead of announcing another background build.
+func recordPiBuildFailure(agentDir string, err error) {
+	if os.MkdirAll(filepath.Join(agentDir, "pi"), 0o700) != nil {
+		return
+	}
+	_ = os.WriteFile(piBuildLog(agentDir), []byte(fmt.Sprintf("pi build, %s\n\n%s%v\n", time.Now().Format(time.RFC3339), piBuildFailed, err)), 0o600)
+}
+
 // lastPiBuildFailed is why the last build failed, "" when it didn't.
 func lastPiBuildFailed(agentDir string) string {
 	b, err := os.ReadFile(piBuildLog(agentDir))
@@ -357,6 +370,7 @@ func startPiBuild(agentDir string) bool {
 		return false
 	}
 	c := exec.Command(self, "agent", "update", "pi")
+	c.Env = append(os.Environ(), piBackgroundEnv+"=1")
 	c.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if devnull, err := os.Open(os.DevNull); err == nil {
 		c.Stdin = devnull
@@ -370,7 +384,14 @@ func startPiBuild(agentDir string) bool {
 
 func (piKind) prepare(ctx context.Context, d agent.Docker, p agentPrep) (*agentSetup, error) {
 	hostPi := filepath.Join(p.HostHome, ".pi", "agent")
-	if err := prepareHome(ctx, d, p, hostPi, agent.PiPrepareScript, agent.PiPrepareEnv(p.HostHome, p.Workdir, p.Owner)); err != nil {
+	models, stripped, err := agent.PiModels(hostPi)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: %v; the sandbox gets no models.json\n", err)
+	}
+	if len(stripped) > 0 {
+		fmt.Fprintf(os.Stderr, "Note: ~/.pi/agent/models.json holds keys for %s, which stay out of the sandbox (only \"$NAME\" references come along). Give pi those keys as zdev credentials: zdev agent credentials add (with the provider's host and a variable), then \"apiKey\": \"$THAT_VARIABLE\" in models.json.\n", strings.Join(stripped, ", "))
+	}
+	if err := prepareHome(ctx, d, p, hostPi, agent.PiPrepareScript, agent.PiPrepareEnv(p.HostHome, p.Workdir, p.Owner, models)); err != nil {
 		return nil, err
 	}
 	sessions := agent.PiProjectDir(p.AgentDir, p.HostDir)

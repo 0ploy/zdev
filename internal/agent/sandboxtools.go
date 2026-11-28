@@ -2,8 +2,9 @@ package agent
 
 // Static third-party CLIs added to every agent container, for images that
 // lack them: jq (status line and hook scripts in the developer's Claude
-// settings read their JSON input with it) and gh/glab (the GitHub and GitLab
-// credentials the egress proxy swaps in are for them). They sit in their own
+// settings read their JSON input with it), gh/glab (the GitHub and GitLab
+// credentials the egress proxy swaps in are for them) and fd/rg (pi's file
+// search; without them it would download its own). They sit in their own
 // read-only volume at /opt/zdev/tools, last on PATH, so an image's own copy
 // wins. The volume is named by a hash of the pins, so a dev build of zdev
 // reuses it and a changed pin gets a fresh one. The pins are
