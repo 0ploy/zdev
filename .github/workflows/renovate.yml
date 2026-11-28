@@ -3,9 +3,10 @@ name: Renovate
 # Self-hosted Renovate (renovate.json has what it tracks). Self-hosted
 # because only a self-hosted Renovate runs postUpgradeTasks: after it bumps a
 # downloaded tool, scripts/pinsums writes the new release's checksums into
-# the same PR. It acts as a GitHub App of our own (vars.RENOVATE_APP_ID,
-# secrets.RENOVATE_APP_PRIVATE_KEY): its PRs trigger CI, which PRs opened
-# with GITHUB_TOKEN wouldn't, and no third party gets write access.
+# the same PR. It acts as a GitHub App of our own, zdev-renovate
+# (vars.RENOVATE_APP_CLIENT_ID, secrets.RENOVATE_APP_PRIVATE_KEY): its PRs
+# trigger CI, which PRs opened with GITHUB_TOKEN wouldn't, and no third party
+# gets write access.
 
 on:
   schedule:
@@ -27,7 +28,7 @@ jobs:
       - id: token
         uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
         with:
-          app-id: ${{ vars.RENOVATE_APP_ID }}
+          client-id: ${{ vars.RENOVATE_APP_CLIENT_ID }}
           private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
 
       - uses: renovatebot/github-action@1376d90bcd3a4d4e7393ae762eea56ac684aee38 # v48.0.0
