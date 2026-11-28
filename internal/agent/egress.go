@@ -67,7 +67,7 @@ type Egress struct {
 	// localNets lists the networks of this machine's interfaces (hostNets
 	// when nil), replaceable in tests.
 	localNets func() []netip.Prefix
-	dial    func(ctx context.Context, addr string) (net.Conn, error)
+	dial      func(ctx context.Context, addr string) (net.Conn, error)
 	// upstreamTLS is the client TLS config towards credential hosts in tests.
 	upstreamTLS *tls.Config
 }

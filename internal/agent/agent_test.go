@@ -73,13 +73,20 @@ func TestProjectKey(t *testing.T) {
 // host before the project subnet is accepted, granted host ports before the
 // host is rejected, private ranges after the subnet.
 func TestFenceScriptOrder(t *testing.T) {
-	s := Fence{AllowSubnets: []string{"172.29.0.0/16"}, HostPorts: []int{11434}, BlockIPs: []string{"172.29.0.5"}}.Script()
+	s := Fence{AllowSubnets: []string{"172.29.0.0/16"}, HostPorts: []int{11434}, BlockIPs: []string{"172.29.0.5"},
+		HostIPs: []string{"172.29.0.1", "1.2.3.4; reboot", "fd00::1"}}.Script()
 	pos := func(sub string) int {
 		i := strings.Index(s, sub)
 		if i < 0 {
 			t.Fatalf("script lacks %q:\n%s", sub, s)
 		}
 		return i
+	}
+	if !(pos(`ips="172.29.0.1"`) < pos("r -d 172.29.0.0/16 -j ACCEPT") && pos("r -d $ip -j REJECT") < pos("r -d 172.29.0.0/16 -j ACCEPT")) {
+		t.Error("the gateway (the host on Linux) must be rejected before the project subnet is accepted")
+	}
+	if strings.Contains(s, "reboot") || strings.Contains(s, "fd00::1") {
+		t.Error("only literal IPv4 host addresses may reach the script")
 	}
 	if !(pos("r -d 172.29.0.5 -j REJECT") < pos("r -d 172.29.0.0/16 -j ACCEPT")) {
 		t.Error("a socket service must be rejected before the project subnet is accepted")

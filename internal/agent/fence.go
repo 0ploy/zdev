@@ -12,6 +12,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"net/netip"
 	"strings"
 
 	"github.com/0ploy/zdev/internal/config"
@@ -43,6 +44,11 @@ type Fence struct {
 	AllowSubnets []string // the project's networks
 	HostPorts    []int    // host ports the agent may reach (agent.host_access)
 	BlockIPs     []string // services holding the Docker socket
+	// HostIPs are addresses of the host besides what the host names resolve
+	// to: the project network's gateway, which on Linux is the host's bridge
+	// (every host service bound to all interfaces) and inside AllowSubnets.
+	// Treated like the host names: HostPorts open, the rest rejected.
+	HostIPs []string
 	// ProxyOnly rejects everything not allowed above: the internet only
 	// through the egress proxy (loopback stays open for it and Docker's DNS).
 	ProxyOnly bool
@@ -65,12 +71,23 @@ func (f Fence) Script() string {
 	for _, ip := range f.BlockIPs {
 		fmt.Fprintf(&b, "r -d %s -j REJECT\n", ip)
 	}
-	b.WriteString("for h in host.docker.internal gateway.docker.internal host.orb.internal host.lima.internal; do\n")
-	b.WriteString("  for ip in $(getent ahostsv4 $h 2>/dev/null | awk '{print $1}' | sort -u); do\n")
-	for _, p := range f.HostPorts {
-		fmt.Fprintf(&b, "    r -d $ip -p tcp --dport %d -j ACCEPT\n", p)
+	// The host: what its names resolve to, plus HostIPs (only literal IPv4
+	// addresses reach the script).
+	var ips []string
+	for _, ip := range f.HostIPs {
+		if a, err := netip.ParseAddr(ip); err == nil && a.Is4() {
+			ips = append(ips, a.String())
+		}
 	}
-	b.WriteString("    r -d $ip -j REJECT\n  done\ndone\n")
+	fmt.Fprintf(&b, "ips=%q\n", strings.Join(ips, " "))
+	b.WriteString("for h in host.docker.internal gateway.docker.internal host.orb.internal host.lima.internal; do\n")
+	b.WriteString("  ips=\"$ips $(getent ahostsv4 $h 2>/dev/null | awk '{print $1}')\"\n")
+	b.WriteString("done\n")
+	b.WriteString("for ip in $(printf '%s\\n' $ips | sort -u); do\n")
+	for _, p := range f.HostPorts {
+		fmt.Fprintf(&b, "  r -d $ip -p tcp --dport %d -j ACCEPT\n", p)
+	}
+	b.WriteString("  r -d $ip -j REJECT\ndone\n")
 	for _, s := range f.AllowSubnets {
 		fmt.Fprintf(&b, "r -d %s -j ACCEPT\n", s)
 	}

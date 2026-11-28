@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/netip"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -628,8 +629,8 @@ func withoutTargets(mounts []string, vols []runtime.VolumeMount) []string {
 // Docker socket.
 func agentFence(ctx context.Context, d agent.Docker, proj *project.Project, hostAccess []int, socketServices []string) agent.Fence {
 	fence := agent.Fence{HostPorts: hostAccess, ProxyOnly: true}
-	if subnets, err := d.Output(ctx, "network", "inspect", "--format", "{{range .IPAM.Config}}{{.Subnet}} {{end}}", proj.NetworkName()); err == nil {
-		fence.AllowSubnets = strings.Fields(subnets)
+	if out, err := d.Output(ctx, "network", "inspect", "--format", "{{range .IPAM.Config}}{{.Subnet}}={{.Gateway}} {{end}}", proj.NetworkName()); err == nil {
+		fence.AllowSubnets, fence.HostIPs = subnetsAndGateways(out)
 	}
 	for _, s := range socketServices {
 		if ip, err := d.Output(ctx, "inspect", "--format", "{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}", proj.ContainerName(s)); err == nil {
@@ -637,6 +638,27 @@ func agentFence(ctx context.Context, d agent.Docker, proj *project.Project, host
 		}
 	}
 	return fence
+}
+
+// subnetsAndGateways parses `{{.Subnet}}={{.Gateway}} ...` of a network's
+// IPAM config. The gateway is the host's side of the network (on Linux an
+// address of the host itself, inside the subnet the fence accepts); when the
+// config doesn't name it, Docker took the subnet's first address.
+func subnetsAndGateways(out string) (subnets, gateways []string) {
+	for _, f := range strings.Fields(out) {
+		subnet, gw, _ := strings.Cut(f, "=")
+		p, err := netip.ParsePrefix(subnet)
+		if err != nil {
+			continue
+		}
+		subnets = append(subnets, p.String())
+		if a, err := netip.ParseAddr(gw); err == nil {
+			gateways = append(gateways, a.String())
+		} else if p.Addr().Is4() {
+			gateways = append(gateways, p.Masked().Addr().Next().String())
+		}
+	}
+	return subnets, gateways
 }
 
 // serviceSnapshot identifies what a service container was created from: its
@@ -1221,10 +1243,13 @@ func relayHandler(proj *project.Project, offLimits []string, after func(ctx cont
 				return 0
 			}
 			mark := agent.NewExecMark()
-			env := map[string]string{agent.ExecMarkEnv: mark}
+			env := map[string]string{}
 			for k, v := range req.Env {
 				env[k] = v
 			}
+			// After the request's own: it can't pick its marker (or another
+			// exec's, to have that one killed with it).
+			env[agent.ExecMarkEnv] = mark
 			cctx, cancel := context.WithCancel(ctx)
 			defer cancel()
 			interrupted := make(chan struct{})
