@@ -423,6 +423,48 @@ func contains(list []string, s string) bool {
 	return false
 }
 
+// EscapingBinds lists, in a project in agent mode, bind mounts written inside
+// the project whose source leads outside it through a symlink. Containers
+// write the project directory (directly on Linux and with mutagen.no_sync,
+// through the sync otherwise), so such a link may have been placed by one:
+// replacing ./storage with a link to the home directory would mount the home
+// directory at the next start, by whoever runs it, and that start would
+// record it as approved (review 2026-11-28, H1). Synced binds count too:
+// the sync would then copy the link's target both ways.
+func (p *Project) EscapingBinds() []PolicyViolation {
+	if AgentSyncService(p.Config.Name) == "" {
+		return nil
+	}
+	dir := filepath.Clean(p.Dir)
+	root := resolveHostPath(p.Dir, ".")
+	names := make([]string, 0, len(p.Config.Services))
+	for name := range p.Config.Services {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var out []PolicyViolation
+	for _, name := range names {
+		for _, vol := range p.Config.Services[name].Volumes {
+			source, _, isNamed := parseVolumeMount(vol)
+			if isNamed {
+				continue
+			}
+			written := source
+			if !filepath.IsAbs(written) {
+				written = filepath.Join(dir, written)
+			}
+			written = filepath.Clean(written)
+			if !within(written, dir) && !within(written, root) {
+				continue // written outside the project: the policy's grants cover it
+			}
+			if resolved := resolveHostPath(p.Dir, source); !within(resolved, root) {
+				out = append(out, PolicyViolation{name, source + " leads to " + resolved + " through a symlink"})
+			}
+		}
+	}
+	return out
+}
+
 // HasAgentBaseline reports whether a baseline was recorded for the project.
 func (p *Project) HasAgentBaseline() bool {
 	_, err := os.Stat(agentBaselinePath(p.Config.Name))

@@ -30,12 +30,15 @@ func runRestart(cmd *cobra.Command, args []string) error {
 	return withProject(5*time.Minute, func(ctx context.Context, proj *project.Project) error {
 		if len(args) == 1 {
 			// A bounce applies no config, but Docker resolves bind sources
-			// again on every start: from a sandbox that writes the host
-			// directory (Linux), a source swapped for a symlink since the
-			// last check would mount whatever it points at. The policy
-			// resolves symlinks, so check it here too (review 2026-11-28, H1).
+			// again on every start: a source swapped for a symlink since the
+			// last check would mount whatever it points at. So a bind that
+			// leaves the project is refused here too, for everyone, and a
+			// sandbox's request gets the full policy check (review
+			// 2026-11-28, H1).
 			if _, ok := project.AgentRequest(); ok {
 				agentGate(proj)
+			} else {
+				refuseEscapingBinds(proj)
 			}
 			service := args[0]
 			fmt.Printf("Restarting service %s...\n", service)

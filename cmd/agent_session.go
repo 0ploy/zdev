@@ -436,6 +436,9 @@ func serviceSnapshot(ctx context.Context, d agent.Docker, container string) stri
 // apply beyond what was applied before (changes an agent may have written to
 // .zdev/ in an earlier session) and asks before `zdev claude` applies them.
 func approveAgentChanges(proj *project.Project, domain string) error {
+	if err := escapingBindsError(proj); err != nil {
+		return err
+	}
 	if !proj.HasAgentBaseline() {
 		return nil
 	}

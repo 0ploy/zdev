@@ -28,6 +28,7 @@ func zdevDomain() string {
 // baseline; for the developer in a project with agent mode it lists those
 // changes, since running the command approves them.
 func agentGate(proj *project.Project) {
+	refuseEscapingBinds(proj)
 	if _, ok := project.AgentRequest(); ok {
 		v := proj.CheckAgentPolicy(zdevDomain())
 		if len(v) == 0 {
@@ -49,6 +50,38 @@ func agentGate(proj *project.Project) {
 			fmt.Println("  - " + x.String())
 		}
 	}
+}
+
+// escapingBindsError explains binds that leave the project through a
+// symlink (Project.EscapingBinds), nil when there are none.
+func escapingBindsError(proj *project.Project) error {
+	v := proj.EscapingBinds()
+	if len(v) == 0 {
+		return nil
+	}
+	msg := "in a project you use an agent sandbox with, a bind mount written inside the project can't lead outside it through a symlink:"
+	for _, x := range v {
+		msg += "\n  - " + x.String()
+	}
+	msg += "\na container may have placed that link: remove it, or if it is yours, bind its target path itself in .zdev/config.yaml"
+	return errors.New(msg)
+}
+
+// refuseEscapingBinds stops a command that would start containers with
+// such a bind, for the developer too (their start would mount the link's
+// target and record it as approved): exit 126 for a sandbox's request, 1
+// otherwise.
+func refuseEscapingBinds(proj *project.Project) {
+	err := escapingBindsError(proj)
+	if err == nil {
+		return
+	}
+	if _, ok := project.AgentRequest(); ok {
+		fmt.Fprintln(os.Stderr, "zdev: refused (symlink): "+err.Error())
+		os.Exit(126)
+	}
+	fmt.Fprintln(os.Stderr, "Error: "+err.Error())
+	os.Exit(1)
 }
 
 // recordAgentBaseline records what the developer's command applied, in a

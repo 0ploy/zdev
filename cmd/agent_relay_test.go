@@ -322,3 +322,25 @@ func TestOpenBrowserRefusedForAgentRequests(t *testing.T) {
 		t.Errorf("err = %v, want a refusal naming the URL", err)
 	}
 }
+
+// `zdev claude` refuses to start a project whose bind leaves it through a
+// symlink, before anything starts (review 2026-11-28, H1).
+func TestApproveAgentChangesRefusesEscapingBinds(t *testing.T) {
+	p, _ := relayTestProject(t)
+	if err := os.Symlink(t.TempDir(), filepath.Join(p.Dir, "storage")); err != nil {
+		t.Fatal(err)
+	}
+	svc := p.Config.Services["app"]
+	svc.Volumes = []string{"./storage:/app/storage"}
+	p.Config.Services["app"] = svc
+	if err := approveAgentChanges(p, "0ploy.dev"); err != nil {
+		t.Fatalf("not in agent mode yet: %v", err)
+	}
+	if _, err := project.SetAgentSyncService("shop", "app"); err != nil {
+		t.Fatal(err)
+	}
+	err := approveAgentChanges(p, "0ploy.dev")
+	if err == nil || !strings.Contains(err.Error(), "./storage leads to") || !strings.Contains(err.Error(), "bind its target path itself") {
+		t.Errorf("err = %v", err)
+	}
+}

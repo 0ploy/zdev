@@ -388,3 +388,39 @@ func TestAgentRequestLoadsApprovedHostEnvOnly(t *testing.T) {
 		t.Errorf("violations = %q", v)
 	}
 }
+
+// A bind written inside the project must stay inside it: a container may
+// have replaced the directory with a link to the home directory, which the
+// next start would mount, by whoever runs it (review 2026-11-28, H1).
+func TestEscapingBinds(t *testing.T) {
+	p, _ := policyTestProject(t)
+	outside := t.TempDir()
+	for _, l := range []struct{ name, target string }{
+		{"storage", outside},                     // escapes
+		{"current", filepath.Join(p.Dir, "src")}, // stays inside
+	} {
+		if err := os.Symlink(l.target, filepath.Join(p.Dir, l.name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setApp(p, func(s *config.ServiceConfig) {
+		s.Volumes = []string{".:/app", "./storage:/app/storage", "./current:/srv", filepath.Join(p.Dir, "storage") + ":/abs", outside + ":/data"}
+	})
+	if v := p.EscapingBinds(); len(v) != 0 {
+		t.Fatalf("not in agent mode: %v", v)
+	}
+	if _, err := SetAgentSyncService("shop", "app"); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, v := range p.EscapingBinds() {
+		got = append(got, v.String())
+	}
+	want := []string{
+		"service app: ./storage leads to " + resolveHostPath(outside, ".") + " through a symlink",
+		"service app: " + filepath.Join(p.Dir, "storage") + " leads to " + resolveHostPath(outside, ".") + " through a symlink",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("EscapingBinds =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
