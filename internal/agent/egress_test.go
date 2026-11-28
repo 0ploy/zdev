@@ -38,6 +38,41 @@ func TestPublicAddr(t *testing.T) {
 	}
 }
 
+// A public address can still be this machine's own (every global IPv6
+// address, a server's public IPv4) or a neighbour on its LAN, which the
+// proxy would reach from inside the router's firewall (review 2026-11-28, M1).
+func TestEgressRefusesHostNets(t *testing.T) {
+	nets := []netip.Prefix{
+		netip.MustParsePrefix("2001:db8:1:2::/64"), // the Mac's SLAAC prefix
+		netip.MustParsePrefix("203.0.113.0/24"),    // a server's public IPv4
+		netip.MustParsePrefix("2001:db8:9::7/128"), // an address without its prefix
+	}
+	e := &Egress{
+		resolve: func(_ context.Context, h string) ([]netip.Addr, error) {
+			return []netip.Addr{netip.MustParseAddr(h)}, nil
+		},
+		localNets: func() []netip.Prefix { return nets },
+	}
+	for _, h := range []string{"2001:db8:1:2::abcd", "2001:db8:1:2:aaaa:bbbb:cccc:dddd", "203.0.113.7", "2001:db8:9::7", "::ffff:203.0.113.9"} {
+		_, err := e.destination(context.Background(), h, 443)
+		if r, ok := err.(*refusal); !ok || r.code != "private-address" {
+			t.Errorf("%s: err = %v, want a private-address refusal", h, err)
+		}
+	}
+	for _, h := range []string{"2001:db8:1:3::1", "203.0.114.1", "2001:db8:9::8"} {
+		if _, err := e.destination(context.Background(), h, 443); err != nil {
+			t.Errorf("%s: %v", h, err)
+		}
+	}
+}
+
+// hostNets reads the real interfaces, with their prefixes.
+func TestHostNets(t *testing.T) {
+	if !onHostNet(netip.MustParseAddr("127.0.0.1"), hostNets()) {
+		t.Errorf("hostNets() = %v, want loopback among them", hostNets())
+	}
+}
+
 // testEgress resolves every name to the given address and dials target
 // instead of the real address (recording what it was asked to dial).
 func testEgress(t *testing.T, resolveTo, target string) (*Egress, *[]EgressEntry, *string) {
@@ -55,6 +90,7 @@ func testEgress(t *testing.T, resolveTo, target string) (*Egress, *[]EgressEntry
 		resolve: func(context.Context, string) ([]netip.Addr, error) {
 			return []netip.Addr{netip.MustParseAddr(resolveTo)}, nil
 		},
+		localNets: func() []netip.Prefix { return nil },
 		dial: func(ctx context.Context, addr string) (net.Conn, error) {
 			*dialed = addr
 			return (&net.Dialer{}).DialContext(ctx, "tcp", target)

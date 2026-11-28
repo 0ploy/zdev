@@ -18,6 +18,7 @@ import (
 	"net/netip"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -63,6 +64,9 @@ type Egress struct {
 
 	// resolve and dial, replaceable in tests.
 	resolve func(ctx context.Context, host string) ([]netip.Addr, error)
+	// localNets lists the networks of this machine's interfaces (hostNets
+	// when nil), replaceable in tests.
+	localNets func() []netip.Prefix
 	dial    func(ctx context.Context, addr string) (net.Conn, error)
 	// upstreamTLS is the client TLS config towards credential hosts in tests.
 	upstreamTLS *tls.Config
@@ -83,6 +87,62 @@ var blockedPrefixes = []netip.Prefix{
 	netip.MustParsePrefix("198.18.0.0/15"),
 	netip.MustParsePrefix("240.0.0.0/4"),
 	netip.MustParsePrefix("64:ff9b:1::/48"),
+}
+
+// hostNets are the networks this machine's interfaces sit on, each with its
+// on-link prefix: a public address of the machine itself (any global IPv6
+// address, a server's public IPv4) reaches every service bound to all
+// interfaces, and its prefix the other machines on the LAN, past the
+// router's firewall. publicAddr can't know these. Cached for a few seconds:
+// they change when the machine changes networks.
+func hostNets() []netip.Prefix {
+	hostNetsCache.Lock()
+	defer hostNetsCache.Unlock()
+	if hostNetsCache.nets != nil && time.Since(hostNetsCache.at) < hostNetsTTL {
+		return hostNetsCache.nets
+	}
+	nets := []netip.Prefix{}
+	if addrs, err := net.InterfaceAddrs(); err == nil {
+		for _, a := range addrs {
+			ipn, ok := a.(*net.IPNet)
+			if !ok {
+				continue
+			}
+			ip, ok := netip.AddrFromSlice(ipn.IP)
+			if !ok {
+				continue
+			}
+			ip = ip.Unmap()
+			bits, _ := ipn.Mask.Size()
+			if ip.Is4() && bits > 32 {
+				bits -= 96
+			}
+			if p, err := ip.Prefix(bits); err == nil {
+				nets = append(nets, p)
+			}
+		}
+	}
+	hostNetsCache.nets, hostNetsCache.at = nets, time.Now()
+	return nets
+}
+
+const hostNetsTTL = 5 * time.Second
+
+var hostNetsCache struct {
+	sync.Mutex
+	nets []netip.Prefix
+	at   time.Time
+}
+
+// onHostNet reports whether ip is on one of nets: this machine or its LAN.
+func onHostNet(ip netip.Addr, nets []netip.Prefix) bool {
+	ip = ip.Unmap()
+	for _, p := range nets {
+		if p.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 // publicAddr reports whether the proxy may connect to ip.
@@ -141,9 +201,17 @@ func (e *Egress) destination(ctx context.Context, host string, port int) (string
 			return "", &refusal{"dns", "can't resolve " + host}
 		}
 	}
+	localNets := e.localNets
+	if localNets == nil {
+		localNets = hostNets
+	}
+	nets := localNets()
 	for _, ip := range addrs {
 		if !publicAddr(ip) {
 			return "", &refusal{"private-address", host + " resolves to " + ip.String() + ", a loopback, private or link-local address of this machine's networks"}
+		}
+		if onHostNet(ip, nets) {
+			return "", &refusal{"private-address", host + " resolves to " + ip.String() + ", an address of this machine or of its local network"}
 		}
 	}
 	return net.JoinHostPort(addrs[0].Unmap().String(), strconv.Itoa(port)), nil
