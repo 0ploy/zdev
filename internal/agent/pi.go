@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -449,9 +450,20 @@ func PiPrepareEnv(home, workdir, owner, models string) []string {
 	return []string{"H=" + home, "KEY=" + PiSessionKey(workdir), "OWNER=" + owner, "MODELS=" + models}
 }
 
+// withoutUserinfo drops the user:key@ of a URL (a baseUrl can carry the key
+// that way). Reports whether it had one.
+func withoutUserinfo(s string) (string, bool) {
+	u, err := url.Parse(s)
+	if err != nil || u.User == nil || u.Host == "" {
+		return s, false
+	}
+	u.User = nil
+	return u.String(), true
+}
+
 // PiModels is the host's ~/.pi/agent/models.json for the sandbox: every
 // apiKey and header value that isn't a "$NAME" environment reference is
-// dropped, since a literal key would enter the sandbox and a "!command"
+// dropped, and so is the user:key@ of any URL (baseUrl), since a literal key would enter the sandbox and a "!command"
 // would run there. stripped lists the providers that lost one (their keys
 // go in as zdev credentials: a placeholder in the variable, swapped in by
 // the proxy). "" when there is no file; an error when it doesn't parse.
@@ -490,6 +502,13 @@ func PiModels(hostPiAgent string) (content string, stripped []string, err error)
 						}
 					}
 				default:
+					if s, ok := val.(string); ok {
+						if clean, had := withoutUserinfo(s); had {
+							x[k] = clean
+							changed = true
+						}
+						continue
+					}
 					if strip(val) {
 						changed = true
 					}

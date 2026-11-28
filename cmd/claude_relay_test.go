@@ -313,3 +313,12 @@ func TestRelayHandlerTurnEnd(t *testing.T) {
 		t.Errorf("turnEnd got %q", got)
 	}
 }
+
+// A request from a sandbox never opens a browser on the developer's machine
+// (zdev logs --open, or any later caller).
+func TestOpenBrowserRefusedForAgentRequests(t *testing.T) {
+	t.Setenv(project.AgentRequestEnv, "shop")
+	if err := openBrowser("https://logs.shared.0ploy.dev"); err == nil || !strings.Contains(err.Error(), "logs.shared.0ploy.dev") {
+		t.Errorf("err = %v, want a refusal naming the URL", err)
+	}
+}

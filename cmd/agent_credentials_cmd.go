@@ -54,7 +54,8 @@ var agentCredentialsCmd = &cobra.Command{
 A credential is a token from a command, 1Password or a file only you can read,
 for a list of hosts. The sandbox sees a placeholder in the credential's
 variables; the egress proxy on this machine swaps in the real token for those
-hosts only, in request headers (Authorization, Basic auth, API key headers).
+hosts only, in auth request headers (Authorization incl. Basic auth, Private-Token,
+X-Api-Key, Api-Key, X-Goog-Api-Key, X-Auth-Token).
 Tokens a tool sends in the URL or the request body, or uses to sign requests
 (AWS), are not swapped.
 
@@ -376,7 +377,7 @@ func askCredential(ctx context.Context, in *bufio.Reader, name string, cred *con
 				cred.PlaceholderPrefix = p.Prefix
 			}
 		} else {
-			fmt.Println(`The proxy swaps the token in only for these hosts, and only in request headers.`)
+			fmt.Println(`The proxy swaps the token in only for these hosts, and only in auth request headers (Authorization, X-Api-Key, ...).`)
 			for len(cred.Hosts) == 0 {
 				cred.Hosts = splitList(ask(in, "Hosts (comma-separated, *.example.com for subdomains): "))
 			}

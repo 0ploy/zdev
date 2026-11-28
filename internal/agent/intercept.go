@@ -142,11 +142,29 @@ func (c *SessionCA) leaf(host string) (*tls.Certificate, error) {
 	return l, nil
 }
 
+// authHeaders are the request headers a placeholder is swapped in: the
+// ones services take tokens in. Never any header: a server that echoes a
+// request header back (custom APIs added as credential hosts) would hand the
+// agent the real token.
+var authHeaders = []string{"Authorization", "Private-Token", "X-Api-Key", "Api-Key", "X-Goog-Api-Key", "X-Auth-Token"}
+
+func isAuthHeader(name string) bool {
+	for _, h := range authHeaders {
+		if strings.EqualFold(name, h) {
+			return true
+		}
+	}
+	return false
+}
+
 // swapCredential replaces the placeholder with the token in the request's
-// headers (Basic auth decoded and encoded again). Returns whether it did.
+// auth headers (Basic auth decoded and encoded again). Returns whether it did.
 func swapCredential(h http.Header, cred *Credential) bool {
 	swapped := false
 	for k, vs := range h {
+		if !isAuthHeader(k) {
+			continue
+		}
 		for i, v := range vs {
 			if strings.EqualFold(k, "Authorization") && len(v) > 6 && strings.EqualFold(v[:6], "basic ") {
 				if raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(v[6:])); err == nil && strings.Contains(string(raw), cred.Placeholder) {

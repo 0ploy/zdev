@@ -301,6 +301,49 @@ func TestEgressRefusesSSH(t *testing.T) {
 	}
 }
 
+// The placeholder is swapped only in the headers services take tokens in: a
+// server that echoes another request header back would hand over the token.
+func TestSwapCredentialOnlyInAuthHeaders(t *testing.T) {
+	cred := &Credential{Name: "api", Placeholder: NewPlaceholder("api"), Value: "REALTOKEN"}
+	h := http.Header{
+		"X-Api-Key":     {cred.Placeholder},
+		"Private-Token": {cred.Placeholder},
+		"X-Echo":        {"please echo " + cred.Placeholder},
+		"User-Agent":    {cred.Placeholder},
+	}
+	if !swapCredential(h, cred) {
+		t.Fatal("not swapped")
+	}
+	if h.Get("X-Api-Key") != "REALTOKEN" || h.Get("Private-Token") != "REALTOKEN" {
+		t.Errorf("auth headers: %v", h)
+	}
+	if strings.Contains(h.Get("X-Echo"), "REALTOKEN") || strings.Contains(h.Get("User-Agent"), "REALTOKEN") {
+		t.Errorf("swapped outside the auth headers: %v", h)
+	}
+	if swapCredential(http.Header{"Cookie": {cred.Placeholder}}, cred) {
+		t.Error("swapped in a cookie")
+	}
+}
+
+// NAT64 (RFC 6052) addresses are judged by the IPv4 address they embed: on
+// an IPv6-only network every IPv4-only host has one, so the prefix itself
+// can't be refused.
+func TestPublicAddrNAT64(t *testing.T) {
+	for s, want := range map[string]bool{
+		"64:ff9b::8c52:7904": true,  // 140.82.121.4 (github.com)
+		"64:ff9b::7f00:1":    false, // 127.0.0.1
+		"64:ff9b::a00:1":     false, // 10.0.0.1
+		"64:ff9b::a9fe:a9fe": false, // 169.254.169.254
+	} {
+		if got := publicAddr(netip.MustParseAddr(s)); got != want {
+			t.Errorf("publicAddr(%s) = %v, want %v", s, got, want)
+		}
+	}
+	if !onHostNet(netip.MustParseAddr("64:ff9b::cb00:7107"), []netip.Prefix{netip.MustParsePrefix("203.0.113.0/24")}) {
+		t.Error("a NAT64 address of this machine's public IPv4 network must count as its own")
+	}
+}
+
 // A placeholder with a prefix (pi's Anthropic subscription token must look
 // like sk-ant-oat...) is swapped whole: the header gets the real token once,
 // not prefix + token.

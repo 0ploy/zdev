@@ -123,22 +123,23 @@ func TestPiModels(t *testing.T) {
   "providers": {
     "gateway": {"baseUrl": "https://llm.example.com/v1", "apiKey": "sk-literal", "headers": {"X-Team": "$TEAM", "X-Secret": "!op read x"}},
     "env": {"baseUrl": "https://other.example.com", "apiKey": "$OTHER_KEY"},
-    "cmd": {"apiKey": "!op read op://v/i/k", "models": [{"id": "m", "headers": {"X-K": "lit"}}]}
+    "cmd": {"apiKey": "!op read op://v/i/k", "models": [{"id": "m", "headers": {"X-K": "lit"}}]},
+    "inurl": {"baseUrl": "https://user:sk-inurl@proxy.example.com/v1", "apiKey": "$INURL_KEY"}
   }
 }`), 0o600)
 	c, stripped, err := PiModels(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(stripped, ",") != "cmd,gateway" {
+	if strings.Join(stripped, ",") != "cmd,gateway,inurl" {
 		t.Errorf("stripped = %v", stripped)
 	}
-	for _, gone := range []string{"sk-literal", "!op read", `"lit"`} {
+	for _, gone := range []string{"sk-literal", "!op read", `"lit"`, "sk-inurl"} {
 		if strings.Contains(c, gone) {
 			t.Errorf("%s still in:\n%s", gone, c)
 		}
 	}
-	for _, kept := range []string{"$TEAM", "$OTHER_KEY", "https://llm.example.com/v1"} {
+	for _, kept := range []string{"$TEAM", "$OTHER_KEY", "https://llm.example.com/v1", "https://proxy.example.com/v1"} {
 		if !strings.Contains(c, kept) {
 			t.Errorf("%s missing in:\n%s", kept, c)
 		}

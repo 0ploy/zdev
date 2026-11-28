@@ -161,8 +161,12 @@ func completeProjectNames(cmd *cobra.Command, args []string, toComplete string) 
 	return names, cobra.ShellCompDirectiveNoFileComp
 }
 
-// openBrowser opens the given URL in the default browser
+// openBrowser opens the given URL in the default browser. Never for a
+// request from an agent sandbox: that browser is the developer's.
 func openBrowser(url string) error {
+	if _, ok := project.AgentRequest(); ok {
+		return fmt.Errorf("zdev doesn't open a browser on the developer's machine for an agent sandbox; the URL is %s", url)
+	}
 	var cmd *exec.Cmd
 
 	switch runtime.GOOS {

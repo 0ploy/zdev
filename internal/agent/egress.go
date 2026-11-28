@@ -134,9 +134,26 @@ var hostNetsCache struct {
 	at   time.Time
 }
 
+// nat64 is the well-known NAT64 prefix (RFC 6052): on an IPv6-only network
+// DNS64 answers 64:ff9b::a.b.c.d for every IPv4-only host (github.com among
+// them), and the translator connects to a.b.c.d. So it can't be refused as a
+// whole; the embedded address is what gets judged.
+var nat64 = netip.MustParsePrefix("64:ff9b::/96")
+
+// effectiveAddr is the address a connection to ip ends up at: the embedded
+// IPv4 address for NAT64, ip itself otherwise.
+func effectiveAddr(ip netip.Addr) netip.Addr {
+	ip = ip.Unmap()
+	if nat64.Contains(ip) {
+		b := ip.As16()
+		return netip.AddrFrom4([4]byte{b[12], b[13], b[14], b[15]})
+	}
+	return ip
+}
+
 // onHostNet reports whether ip is on one of nets: this machine or its LAN.
 func onHostNet(ip netip.Addr, nets []netip.Prefix) bool {
-	ip = ip.Unmap()
+	ip = effectiveAddr(ip)
 	for _, p := range nets {
 		if p.Contains(ip) {
 			return true
@@ -147,7 +164,7 @@ func onHostNet(ip netip.Addr, nets []netip.Prefix) bool {
 
 // publicAddr reports whether the proxy may connect to ip.
 func publicAddr(ip netip.Addr) bool {
-	ip = ip.Unmap()
+	ip = effectiveAddr(ip)
 	if !ip.IsValid() || ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
 		ip.IsMulticast() || ip.IsUnspecified() || ip.IsInterfaceLocalMulticast() {
 		return false
