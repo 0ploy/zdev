@@ -77,6 +77,7 @@ const (
 	StatiqPluginModule = "github.com/hhftechnology/statiq"
 
 	// StatiqPluginVersion is the version of the Statiq plugin
+	// renovate: datasource=github-tags depName=hhftechnology/statiq
 	StatiqPluginVersion = "v1.0.1"
 )
 
@@ -181,4 +182,8 @@ var (
 
 	// SandboxTools are added to every agent sandbox, in this order.
 	SandboxTools = []ToolRelease{Jq, Gh, Glab, Fd, Rg}
+
+	// ToolReleases are all of the above: scripts/pinsums refreshes their
+	// checksums after Renovate bumped a version.
+	ToolReleases = []ToolRelease{Mkcert, Just, Mutagen, Jq, Gh, Glab, Fd, Rg, Bun}
 )

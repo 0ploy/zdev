@@ -1,16 +1,19 @@
 package config
 
 import (
+	"encoding/json"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
 
-// The two shapes Renovate's regex managers match in defaults.go. Keep them
-// in sync with renovate.json.
+// The shapes Renovate's regex managers match in defaults.go
+// (customManagers in renovate.json; TestRenovateConfigMatchesDefaults keeps
+// the two in sync).
 //
 // renovatePin: a "renovate: datasource=docker" comment directly above
 // `Name = "repo:tag"`.
@@ -19,6 +22,10 @@ var renovatePin = regexp.MustCompile(`// renovate: datasource=docker\n\s*(\w+Ima
 // renovateToolPin: a "renovate:" comment with datasource, depName and
 // extractVersion directly above `X = ToolRelease{Name: "x", Version: "v",`.
 var renovateToolPin = regexp.MustCompile(`// renovate: datasource=(github-releases|gitlab-releases) depName=\S+ extractVersion=\S+\n\s*(\w+) = ToolRelease\{Name: "[^"]+", Version: "([^"]+)",`)
+
+// renovateVersionPin: a "renovate:" comment with datasource and depName
+// directly above `X = "version"`.
+var renovateVersionPin = regexp.MustCompile(`// renovate: datasource=\S+ depName=\S+\n\s*(\w+) = "([^"]+)"`)
 
 // fullVersion is a tag Renovate can compare and that never moves: v1.2.3,
 // 1.2.3 or 2.93 (dnsmasq has two parts), optionally with -variant suffixes
@@ -107,7 +114,8 @@ func TestRenovateMarkersOnlyInDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	markers := strings.Count(string(src), "// renovate:")
-	matched := len(renovatePin.FindAllString(string(src), -1)) + len(renovateToolPin.FindAllString(string(src), -1))
+	matched := len(renovatePin.FindAllString(string(src), -1)) + len(renovateToolPin.FindAllString(string(src), -1)) +
+		len(renovateVersionPin.FindAllString(string(src), -1))
 	if markers != matched {
 		t.Errorf("defaults.go has %d \"// renovate:\" markers, but only %d match a known shape", markers, matched)
 	}
@@ -132,4 +140,52 @@ func TestRenovateMarkersOnlyInDefaults(t *testing.T) {
 		}
 		return nil
 	})
+}
+
+// renovate.json's regex managers for defaults.go find every marker there: a
+// shape the config doesn't know would be skipped by Renovate without a word.
+func TestRenovateConfigMatchesDefaults(t *testing.T) {
+	src, err := os.ReadFile("defaults.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join("..", "..", "renovate.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg struct {
+		CustomManagers []struct {
+			ManagerFilePatterns []string `json:"managerFilePatterns"`
+			MatchStrings        []string `json:"matchStrings"`
+		} `json:"customManagers"`
+	}
+	if err := json.Unmarshal(b, &cfg); err != nil {
+		t.Fatalf("renovate.json: %v", err)
+	}
+	found := 0
+	for _, m := range cfg.CustomManagers {
+		if !slices.ContainsFunc(m.ManagerFilePatterns, func(p string) bool { return strings.Contains(p, "defaults") }) {
+			continue
+		}
+		for _, ms := range m.MatchStrings {
+			// JavaScript's named groups (?<x>...) are (?P<x>...) in Go.
+			re, err := regexp.Compile(strings.ReplaceAll(ms, "(?<", "(?P<"))
+			if err != nil {
+				t.Fatalf("renovate.json matchString %q: %v", ms, err)
+			}
+			for _, match := range re.FindAllStringSubmatch(string(src), -1) {
+				if v := match[re.SubexpIndex("currentValue")]; v == "" {
+					t.Errorf("renovate.json matches %q without a version", match[0])
+				}
+				found++
+			}
+		}
+	}
+	if markers := strings.Count(string(src), "// renovate:"); found != markers {
+		t.Errorf("renovate.json's regex managers match %d pins in defaults.go, which has %d \"// renovate:\" markers", found, markers)
+	}
+	declared := len(regexp.MustCompile(`\n\t\w+ = ToolRelease\{Name:`).FindAllString(string(src), -1))
+	if len(ToolReleases) != declared {
+		t.Errorf("ToolReleases lists %d tools, defaults.go declares %d", len(ToolReleases), declared)
+	}
 }

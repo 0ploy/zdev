@@ -1,0 +1,83 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Self-hosted from .github/workflows/renovate.yml. Every pin zdev has: Go and its modules, the Dockerfile, the workflows' actions, and in internal/config/defaults.go the images and downloaded tools (keep the customManagers in sync with the shapes in defaults_test.go).",
+  "extends": ["config:recommended", "helpers:pinGitHubActionDigests"],
+  "timezone": "Europe/Berlin",
+  "labels": ["dependencies"],
+  "minimumReleaseAge": "3 days",
+  "postUpdateOptions": ["gomodTidy"],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Images in defaults.go: a `// renovate: datasource=docker` line above `XImage = \"repo:tag\"`",
+      "managerFilePatterns": ["/^internal/config/defaults\\.go$/"],
+      "matchStrings": [
+        "// renovate: datasource=docker\\n\\s*\\w+Image = \"(?<depName>[^\"]+):(?<currentValue>[^\"@]+)\""
+      ],
+      "datasourceTemplate": "docker",
+      "depTypeTemplate": "image"
+    },
+    {
+      "customType": "regex",
+      "description": "Downloaded tools in defaults.go: a renovate line above `X = ToolRelease{Name: \"x\", Version: \"v\",`",
+      "managerFilePatterns": ["/^internal/config/defaults\\.go$/"],
+      "matchStrings": [
+        "// renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+) extractVersion=(?<extractVersion>\\S+)\\n\\s*\\w+ = ToolRelease\\{Name: \"[^\"]+\", Version: \"(?<currentValue>[^\"]+)\","
+      ],
+      "depTypeTemplate": "tool"
+    },
+    {
+      "customType": "regex",
+      "description": "Plain versions in defaults.go: a renovate line above `X = \"version\"`",
+      "managerFilePatterns": ["/^internal/config/defaults\\.go$/"],
+      "matchStrings": [
+        "// renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\n\\s*\\w+ = \"(?<currentValue>[^\"]+)\""
+      ],
+      "depTypeTemplate": "version"
+    },
+    {
+      "customType": "regex",
+      "description": "go install in the dev Dockerfile: a `# renovate:` line above `go install module@version`",
+      "managerFilePatterns": ["/^\\.zdev/Dockerfile$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\n.*go install \\S+@(?<currentValue>v[^\\s]+)"
+      ]
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Go itself: the go directive (not bumped by default) and the dev image, in one PR",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["golang", "toolchain"],
+      "rangeStrategy": "bump"
+    },
+    {
+      "description": "Go itself in one PR",
+      "matchPackageNames": ["go", "golang"],
+      "groupName": "Go"
+    },
+    {
+      "description": "Go modules' minor and patch updates in one PR",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["require", "indirect"],
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "groupName": "Go modules"
+    },
+    {
+      "description": "The workflows' actions in one PR (SHA and version comment)",
+      "matchManagers": ["github-actions"],
+      "groupName": "GitHub Actions"
+    },
+    {
+      "description": "A downloaded tool's new version needs new checksums: Renovate can't compute them, scripts/pinsums downloads and writes them",
+      "matchManagers": ["custom.regex"],
+      "matchDepTypes": ["tool"],
+      "postUpgradeTasks": {
+        "commands": ["go run ./scripts/pinsums -w"],
+        "fileFilters": ["internal/config/defaults.go"],
+        "executionMode": "branch",
+        "installTools": { "golang": {} }
+      }
+    }
+  ]
+}

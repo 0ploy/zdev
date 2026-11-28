@@ -10,6 +10,7 @@ RUN useradd --create-home --uid 1000 --shell /bin/bash dev \
 USER dev
 # gopls for Claude's Go language server plugin in `zdev claude` sessions.
 # The module cache is dropped: the go_mod volume replaces /go/pkg/mod anyway.
+# renovate: datasource=go depName=golang.org/x/tools/gopls
 RUN go install golang.org/x/tools/gopls@v0.24.0 && go clean -modcache
 # Static binaries, like the release build.
 ENV CGO_ENABLED=0

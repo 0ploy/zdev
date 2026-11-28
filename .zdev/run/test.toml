@@ -13,7 +13,7 @@ description = "go vet and gofmt"
 service = "app"
 run = '''
 go vet ./...
-unformatted=$(gofmt -l cmd internal main.go)
+unformatted=$(gofmt -l cmd internal scripts main.go)
 [ -z "$unformatted" ] || fail "not gofmt'ed: $unformatted"
 '''
 

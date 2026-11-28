@@ -1,0 +1,41 @@
+name: CI
+
+# What `zdev run test all` runs (vet, gofmt, unit tests with the mock
+# runtime), for every PR (Renovate's too) and push to main. The integration
+# tests need a Docker engine and macOS's Mutagen setup: run them by hand
+# before a release (zdev run test integration).
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+
+      - name: Vet and format
+        run: |
+          go vet ./...
+          unformatted=$(gofmt -l cmd internal scripts main.go)
+          if [ -n "$unformatted" ]; then
+            echo "::error::not gofmt'ed: $unformatted"
+            exit 1
+          fi
+
+      - name: Unit tests
+        run: go test ./...
+
+      # Downloads every pinned tool and checks it against its pin, so a bump
+      # whose checksums weren't refreshed fails here, not on a user's machine.
+      - name: Pinned checksums
+        run: go run ./scripts/pinsums

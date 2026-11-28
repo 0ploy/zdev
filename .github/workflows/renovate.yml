@@ -1,0 +1,44 @@
+name: Renovate
+
+# Self-hosted Renovate (renovate.json has what it tracks). Self-hosted
+# because only a self-hosted Renovate runs postUpgradeTasks: after it bumps a
+# downloaded tool, scripts/pinsums writes the new release's checksums into
+# the same PR. It acts as a GitHub App of our own (vars.RENOVATE_APP_ID,
+# secrets.RENOVATE_APP_PRIVATE_KEY): its PRs trigger CI, which PRs opened
+# with GITHUB_TOKEN wouldn't, and no third party gets write access.
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: renovate
+
+jobs:
+  renovate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - id: token
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          app-id: ${{ vars.RENOVATE_APP_ID }}
+          private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
+
+      - uses: renovatebot/github-action@1376d90bcd3a4d4e7393ae762eea56ac684aee38 # v48.0.0
+        with:
+          token: ${{ steps.token.outputs.token }}
+        env:
+          RENOVATE_REPOSITORIES: ${{ github.repository }}
+          RENOVATE_ONBOARDING: 'false'
+          RENOVATE_REQUIRE_CONFIG: required
+          # Commits through GitHub's API: signed by the app.
+          RENOVATE_PLATFORM_COMMIT: enabled
+          # The only command a repository's config may run.
+          RENOVATE_ALLOWED_COMMANDS: '["^go run \\./scripts/pinsums -w$"]'
+          LOG_LEVEL: info

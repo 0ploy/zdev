@@ -250,6 +250,12 @@ Key patterns:
 - Top-level progress markers during multi-step flows (setup, start, sync): use `ui.StatusStep(msg, plainMode)` instead of plain `fmt.Println`. Adds two blank lines + cyan `▶` + bold text so framework messages stand out from verbose nested command output. Job scripts get the same styling from the `step "<msg>"` helper (`zdev step <msg>` for legacy justfiles, removed with just).
 - Commands return errors (Cobra handles display with `SilenceUsage: true`)
 
+## Dependencies (Renovate)
+
+Every version zdev pins is tracked by [Renovate](https://docs.renovatebot.com/), configured in `renovate.json` and run nightly by `.github/workflows/renovate.yml` (self-hosted, as a GitHub App of the project: `vars.RENOVATE_APP_ID`, `secrets.RENOVATE_APP_PRIVATE_KEY`). It opens PRs for Go and the Go modules (grouped), `.zdev/Dockerfile`, the workflows' actions (SHA and version comment), and the pins in `internal/config/defaults.go`: shared-service and build images, the tools zdev downloads, the Traefik plugin. A release has to be out 3 days before Renovate proposes it. Its "Dependency Dashboard" issue lists everything it tracks.
+
+A pin in `defaults.go` needs a `// renovate:` line above it in one of the shapes the tests know (`internal/config/defaults_test.go`); `TestRenovateConfigMatchesDefaults` fails when `renovate.json` wouldn't find it. A downloaded tool's checksums can't come from Renovate: after a bump it runs `go run ./scripts/pinsums -w`, which downloads every platform's release and writes the checksums, and CI runs `go run ./scripts/pinsums` to check them. Run the same by hand after editing a pin.
+
 ## Release Process
 
 1. Update `CHANGELOG.md` - add new `## vX.Y.Z` section at top
