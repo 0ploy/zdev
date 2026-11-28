@@ -21,8 +21,9 @@ var renovatePin = regexp.MustCompile(`// renovate: datasource=docker\n\s*(\w+Ima
 var renovateToolPin = regexp.MustCompile(`// renovate: datasource=(github-releases|gitlab-releases) depName=\S+ extractVersion=\S+\n\s*(\w+) = ToolRelease\{Name: "[^"]+", Version: "([^"]+)",`)
 
 // fullVersion is a tag Renovate can compare and that never moves: v1.2.3,
-// 1.2.3 or 2.93 (dnsmasq has two parts), optionally with a -variant suffix.
-var fullVersion = regexp.MustCompile(`^v?\d+\.\d+(\.\d+)?(-[a-z]+)?$`)
+// 1.2.3 or 2.93 (dnsmasq has two parts), optionally with -variant suffixes
+// (node's -bookworm-slim).
+var fullVersion = regexp.MustCompile(`^v?\d+\.\d+(\.\d+)?(-[a-z]+)*$`)
 
 func TestDefaultImagesPinned(t *testing.T) {
 	src, err := os.ReadFile("defaults.go")
@@ -42,6 +43,7 @@ func TestDefaultImagesPinned(t *testing.T) {
 		"LogsImage":          LogsImage,
 		"DNSImage":           DNSImage,
 		"AlpineImage":        AlpineImage,
+		"PiBuildImage":       PiBuildImage,
 	} {
 		tag, ok := pinned[name]
 		if !ok {
@@ -68,7 +70,7 @@ func TestToolsPinned(t *testing.T) {
 	}
 	plainVersion := regexp.MustCompile(`^\d+\.\d+(\.\d+)?$`)
 	for name, r := range map[string]ToolRelease{
-		"Mkcert": Mkcert, "Just": Just, "Mutagen": Mutagen, "Jq": Jq, "Gh": Gh, "Glab": Glab,
+		"Mkcert": Mkcert, "Just": Just, "Mutagen": Mutagen, "Jq": Jq, "Gh": Gh, "Glab": Glab, "Bun": Bun,
 	} {
 		if v, ok := pinned[name]; !ok || v != r.Version {
 			t.Errorf("%s: no \"// renovate: datasource=... depName=... extractVersion=...\" line directly above `%s = ToolRelease{Name: %q, Version: %q,`", name, name, r.Name, r.Version)

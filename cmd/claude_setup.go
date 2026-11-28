@@ -20,6 +20,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -41,7 +42,7 @@ var githubHosts = []string{"github.com", "api.github.com"}
 // githubAPI is the API base, replaceable in tests.
 var githubAPI = "https://api.github.com"
 
-func runClaudeSetup(ctx context.Context) error {
+func runAgentSetup(ctx context.Context, agentName string) error {
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
 		return errors.New("zdev agent setup asks questions: run it in a terminal")
 	}
@@ -52,11 +53,31 @@ func runClaudeSetup(ctx context.Context) error {
 	plain := ui.PlainMode(gcfg.Terminal.Plain)
 	in := bufio.NewReader(os.Stdin)
 
-	ui.StatusStep("Claude Code login", plain)
-	describeClaudeLogin(filepath.Join(config.GetZdevHome(), "agent"))
+	// The agents set up: the one named, else Claude, and pi once it was used.
+	agentDir := filepath.Join(config.GetZdevHome(), "agent")
+	var setupAgents []codingAgent
+	if agentName == "" || agentName == "claude" {
+		setupAgents = append(setupAgents, claudeAgent)
+	}
+	if _, err := os.Stat(agent.PiAuthDir(agentDir)); agentName == "pi" || (agentName == "" && err == nil) {
+		setupAgents = append(setupAgents, piAgent)
+	}
+	logins := func() {
+		for _, ag := range setupAgents {
+			ui.StatusStep(ag.title()+" login", plain)
+			if ag == claudeAgent {
+				describeClaudeLogin(agentDir)
+			} else {
+				describePiLogin(agentDir)
+			}
+		}
+	}
 
 	dir, err := config.FindProjectDir()
 	if err != nil {
+		// Outside a project sessions are bootstrap sessions (an Alpine image).
+		setupAgentBuilds(ctx, plain, gcfg, setupAgents, agent.LibcMusl)
+		logins()
 		fmt.Println("\nRun zdev agent setup in a project to give its sandbox a GitHub or GitLab token.")
 		return nil
 	}
@@ -64,9 +85,12 @@ func runClaudeSetup(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := setupSandboxService(ctx, in, plain, gcfg, &project.Project{Dir: dir, Config: pcfg}); err != nil {
+	proj := &project.Project{Dir: dir, Config: pcfg}
+	if err := setupSandboxService(ctx, in, plain, gcfg, proj); err != nil {
 		return err
 	}
+	setupAgentBuilds(ctx, plain, gcfg, setupAgents, sandboxLibc(ctx, proj))
+	logins()
 	host, path, ok := originRemote(dir)
 	if !ok {
 		ui.StatusStep("Git hosting for "+pcfg.Name, plain)
@@ -88,6 +112,47 @@ func runClaudeSetup(ctx context.Context) error {
 	fmt.Printf("origin is on %s, which zdev agent setup doesn't recognize (it sets up GitHub and GitLab).\n", host)
 	fmt.Println("A token can still be granted by hand: agent.credentials in ~/.zdev/global-config.yaml (docs/configuration.md).")
 	return nil
+}
+
+// setupAgentBuilds gets the agents' newest builds for libc, waiting for
+// them: sessions never wait (they start a missing download in the
+// background and are refused until it is there).
+func setupAgentBuilds(ctx context.Context, plain bool, gcfg *config.GlobalConfig, agents []codingAgent, libc string) {
+	d := agent.NewDocker()
+	arch, err := d.ServerArch(ctx)
+	for _, ag := range agents {
+		ui.StatusStep(ag.title()+" for the sandbox", plain)
+		if err != nil {
+			fmt.Println("Docker isn't running: the first session starts the download, or run zdev agent setup again.")
+			continue
+		}
+		if err := ag.ensure(ctx, d, filepath.Join(config.GetZdevHome(), "agent"), gcfg, libc, arch, plain); err != nil {
+			fmt.Println(ui.Color("Failed: "+err.Error(), "yellow", plain))
+		}
+	}
+}
+
+// sandboxLibc is the C library of the image sessions of proj run in, ""
+// when that can't be told (no service decides, the image isn't built yet).
+func sandboxLibc(ctx context.Context, proj *project.Project) string {
+	gcfg, err := config.LoadGlobalConfig() // setupSandboxService may have stored the service
+	if err != nil {
+		return ""
+	}
+	service, err := proj.AgentDefaultService(gcfg.AgentProject(proj.Config.Name).Service)
+	if err != nil {
+		return ""
+	}
+	d := agent.NewDocker()
+	image := proj.ServiceImage(service)
+	if _, err := d.ImageID(ctx, image); err != nil {
+		return ""
+	}
+	info, err := agent.ProbeImage(ctx, d, filepath.Join(config.GetZdevHome(), "agent"), image)
+	if err != nil {
+		return ""
+	}
+	return info.Libc
 }
 
 // setupSandboxService shows which service's image sessions run in, and when
@@ -581,6 +646,34 @@ func describeClaudeLogin(agentDir string) {
 	}
 	fmt.Printf("Logged in (%s), shared by every sandbox: %s\n", plan, path)
 	fmt.Println("Claude renews it in that file (only you can read it). To switch accounts, use /login in a sandbox.")
+}
+
+// describePiLogin reports which providers the shared pi login store holds,
+// without printing anything from it but their names.
+func describePiLogin(agentDir string) {
+	path := filepath.Join(agent.PiAuthDir(agentDir), "auth.json")
+	var store map[string]struct {
+		Type string `json:"type"`
+	}
+	b, err := os.ReadFile(path)
+	if err == nil {
+		err = json.Unmarshal(b, &store)
+	}
+	if err != nil || len(store) == 0 {
+		fmt.Println("Not logged in yet. Start `zdev pi` in a project and type /login: every sandbox shares that login.")
+		return
+	}
+	var names []string
+	for provider, c := range store {
+		kind := "API key"
+		if c.Type == "oauth" {
+			kind = "subscription login"
+		}
+		names = append(names, provider+" ("+kind+")")
+	}
+	sort.Strings(names)
+	fmt.Printf("Logged in to %s, shared by every sandbox: %s\n", strings.Join(names, ", "), path)
+	fmt.Println("pi renews logins in that file (only you can read it). To add or switch, use /login in a sandbox.")
 }
 
 func credentialSlug(s string) string {

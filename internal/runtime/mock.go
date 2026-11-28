@@ -596,6 +596,16 @@ func (m *MockRuntime) GetImageLabels(_ context.Context, image string) (map[strin
 }
 
 // BuildImage records the build and marks the tag as existing with its labels
+func (m *MockRuntime) PruneDanglingImages(_ context.Context, label string) error {
+	m.record("PruneDanglingImages", label, nil)
+	return m.err("PruneDanglingImages")
+}
+
+func (m *MockRuntime) RemoveImage(_ context.Context, image string) error {
+	m.record("RemoveImage", image, nil)
+	return m.err("RemoveImage")
+}
+
 func (m *MockRuntime) BuildImage(_ context.Context, cfg ImageBuildConfig) error {
 	m.record("BuildImage", cfg.Tag, cfg)
 	if err := m.err("BuildImage"); err != nil {

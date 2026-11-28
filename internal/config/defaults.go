@@ -61,6 +61,11 @@ const (
 	// renovate: datasource=docker
 	AlpineImage = "alpine:3.24.4"
 
+	// PiBuildImage builds pi for agent sandboxes (Node for its npm build, Bun
+	// from the Bun pin below for the binaries).
+	// renovate: datasource=docker
+	PiBuildImage = "node:24.22.3-bookworm-slim"
+
 	// TestImage is the lightweight image used for integration tests
 	// Keep in sync with testdata/projects/*/config.yaml fixtures
 	TestImage = "alpine:latest"
@@ -141,6 +146,16 @@ var (
 		SHA256: map[string]string{
 			"linux/amd64": "b17f858b8d700f1607f8ec02fe092a455da6a8dd18dac3eb6ccb09db1befd4bf",
 			"linux/arm64": "a529fd254824b0f3f8d2350080c9b46633b67ff3e2b11455836d7a680c498b09",
+		}}
+
+	// Bun compiles pi for agent sandboxes (glibc and musl from one build).
+	// renovate: datasource=github-releases depName=oven-sh/bun extractVersion=^bun-v(?<version>.+)$
+	Bun = ToolRelease{Name: "bun", Version: "1.4.5",
+		URL:       "https://github.com/oven-sh/bun/releases/download/bun-v{version}/bun-{os}-{arch}.zip",
+		ArchNames: map[string]string{"amd64": "x64", "arm64": "aarch64"},
+		SHA256: map[string]string{
+			"linux/amd64": "94559b3b528995a49452f9f2404cec74f2efd7d06e0a000a8cd214b02c3666eb",
+			"linux/arm64": "18656a3bf0ea5641f5796ae4213b75255579a70a0fded2f337933785568cdf84",
 		}}
 
 	// SandboxTools are added to every agent sandbox, in this order.

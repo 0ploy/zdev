@@ -11,9 +11,11 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
 const (
@@ -81,6 +83,31 @@ func SweepOrphans(ctx context.Context, d Docker) {
 			continue
 		}
 		_, _ = d.Output(ctx, "rm", "-f", name)
+	}
+}
+
+// SweepSessionDirs removes the generated files of sessions that ended
+// without removing them (a killed zdev claude): directories under
+// <dir>/sessions older than an hour whose session has no sandbox here.
+func SweepSessionDirs(ctx context.Context, d Docker, dir string) {
+	entries, err := os.ReadDir(filepath.Join(dir, "sessions"))
+	if err != nil || len(entries) == 0 {
+		return
+	}
+	all, err := Sandboxes(ctx, d, "")
+	if err != nil {
+		return
+	}
+	live := map[string]bool{}
+	for _, labels := range all {
+		live[labels[LabelSession]] = true
+	}
+	for _, e := range entries {
+		info, err := e.Info()
+		if err != nil || live[e.Name()] || time.Since(info.ModTime()) < time.Hour {
+			continue
+		}
+		_ = os.RemoveAll(filepath.Join(dir, "sessions", e.Name()))
 	}
 }
 

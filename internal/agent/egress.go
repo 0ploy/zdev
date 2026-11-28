@@ -53,7 +53,10 @@ type Egress struct {
 	Domain string   // the zdev domain: reached directly, never through here
 	Mode   string   // EgressLog (default) or EgressEnforce
 	Allow  []string // allowed hosts under enforce: exact, or *.example.com
-	Log    func(EgressEntry)
+	// AgentHosts are the agent's own (its API and login), allowed under
+	// enforce whatever Allow says.
+	AgentHosts []string
+	Log        func(EgressEntry)
 	// Credentials are swapped in for their hosts, with certificates from CA.
 	Credentials []Credential
 	CA          *SessionCA
@@ -97,13 +100,13 @@ func publicAddr(ip netip.Addr) bool {
 	return true
 }
 
-// ClaudeHosts are allowed under enforce whatever the list says: Claude Code
-// itself (API, login refresh, its own services) has to work.
+// ClaudeHosts are Claude Code's own hosts (API, login refresh, its own
+// services): its Egress.AgentHosts.
 var ClaudeHosts = []string{"*.anthropic.com", "claude.ai", "*.claude.ai", "claude.com", "*.claude.com"}
 
 // allowed reports whether host matches the enforce list.
 func (e *Egress) allowed(host string) bool {
-	return hostMatches(host, ClaudeHosts) || hostMatches(host, e.Allow) || e.credentialFor(host) != nil
+	return hostMatches(host, e.AgentHosts) || hostMatches(host, e.Allow) || e.credentialFor(host) != nil
 }
 
 // destination checks host and resolves it to the address to connect to. The

@@ -34,6 +34,7 @@ func EnsureFenceImage(ctx context.Context, d Docker) error {
 	if err := d.Stream(ctx, strings.NewReader(fenceDockerfile), nil, nil, "build", "-q", "-t", FenceImage(), "-"); err != nil {
 		return fmt.Errorf("building the fence helper image: %w", err)
 	}
+	removeOtherTags(ctx, d, FenceImage())
 	return nil
 }
 

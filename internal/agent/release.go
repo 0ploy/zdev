@@ -51,9 +51,9 @@ type ClaudeBuild struct {
 // IsPinnedClaude reports whether a channel names a fixed version.
 func IsPinnedClaude(channel string) bool { return claudeVersionRE.MatchString(channel) }
 
-// CompareClaudeVersions orders two versions (x.y.z, a pre-release suffix
-// sorts before the release): -1, 0 or 1.
-func CompareClaudeVersions(a, b string) int {
+// CompareVersions orders two versions (x.y.z, a pre-release suffix sorts
+// before the release): -1, 0 or 1.
+func CompareVersions(a, b string) int {
 	split := func(v string) ([3]int, string) {
 		var n [3]int
 		core, pre, _ := strings.Cut(v, "-")

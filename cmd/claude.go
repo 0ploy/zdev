@@ -61,11 +61,30 @@ zdev checks for a new Claude Code release once a day (agent.claude.channel in
 newest build already here, and the new one downloads in the background for the
 next session.`,
 	DisableFlagParsing: true,
-	RunE:               runClaude,
+	RunE:               func(_ *cobra.Command, args []string) error { return runAgent(claudeAgent, args) },
+}
+
+var piCmd = &cobra.Command{
+	Use:   "pi [service] [pi arguments...]",
+	Short: "Run pi in a sandbox of this project (zdev agent run pi)",
+	Long: `Run pi (pi.dev) in a sandbox container of this project; the shortcut for
+'zdev agent run pi'. Everything after it goes to pi, --help included. The
+sandbox is the same as zdev claude's, and so is the optional service as first
+argument:
+
+  zdev pi                    pi in the app service's image
+  zdev pi node --continue    in the node service's image, continue the last session
+
+Log in once with /login inside pi; every sandbox shares that login. zdev
+builds pi itself from its newest release (checked once a day), for glibc and
+musl images alike: the first session waits a few minutes for that, later
+releases build in the background for the next session.`,
+	DisableFlagParsing: true,
+	RunE:               func(_ *cobra.Command, args []string) error { return runAgent(piAgent, args) },
 }
 
 func init() {
-	rootCmd.AddCommand(claudeCmd)
+	rootCmd.AddCommand(claudeCmd, piCmd)
 }
 
 // splitClaudeArgs separates the optional service from Claude's arguments.
@@ -158,11 +177,11 @@ func hostTimeZone() string {
 	return ""
 }
 
-// runClaude runs a Claude Code session: zdev claude, zdev agent run claude.
-func runClaude(cmd *cobra.Command, args []string) error {
+// runAgent runs a session of an agent: zdev claude, zdev pi, zdev agent run.
+func runAgent(ag codingAgent, args []string) error {
 	var exitCode int
 	run := func(ctx context.Context, proj *project.Project) error {
-		code, err := claudeSession(ctx, proj, args)
+		code, err := agentSession(ctx, ag, proj, args)
 		exitCode = code
 		return err
 	}
@@ -170,7 +189,7 @@ func runClaude(cmd *cobra.Command, args []string) error {
 	if _, ferr := config.FindProjectDir(); ferr != nil {
 		// No .zdev/ here: bootstrap mode, to set the project up.
 		err = withDocker(noTimeout, func(ctx context.Context) error {
-			code, err := bootstrapSession(ctx, args)
+			code, err := bootstrapSession(ctx, ag, args)
 			exitCode = code
 			return err
 		})
@@ -186,6 +205,7 @@ func runClaude(cmd *cobra.Command, args []string) error {
 // sandboxSpec is what differs between a project session and a bootstrap
 // session; runSandbox does the rest.
 type sandboxSpec struct {
+	Agent     codingAgent
 	Name      string // project name (labels, home volume)
 	Service   string // service whose image it runs, "" for bootstrap
 	Image     string
@@ -204,12 +224,12 @@ type sandboxSpec struct {
 	Lacks      func(info *agent.ImageInfo, missing []string) string
 	Connectors bool
 	Limits     config.AgentLimits
-	Rest       []string // Claude's arguments
-	// SessionID is passed to Claude as --session-id (unless Rest picks a
+	Rest       []string // the agent's arguments
+	// SessionID is passed to the agent as --session-id (unless Rest picks a
 	// conversation); a replaced sandbox keeps it. Empty: a new one.
 	SessionID string
-	// TurnHook installs Claude's Stop hook, which reports the end of each
-	// turn to the relay handler (agent.OpTurnEnd).
+	// TurnHook reports the end of each turn to the relay handler
+	// (agent.OpTurnEnd): Claude's Stop hook, pi's agent_settled.
 	TurnHook bool
 	// Egress is the session's proxy (its Log is set from EgressLog), NoProxy
 	// what the agent reaches directly (project services and domains).
@@ -250,7 +270,7 @@ func gitReadOnlyMounts(hostDir, workdir string) ([]string, error) {
 	return mounts, nil
 }
 
-func claudeSession(ctx context.Context, proj *project.Project, args []string) (int, error) {
+func agentSession(ctx context.Context, ag codingAgent, proj *project.Project, args []string) (int, error) {
 	gcfg, err := config.LoadGlobalConfig()
 	if err != nil {
 		return 0, err
@@ -321,16 +341,17 @@ func claudeSession(ctx context.Context, proj *project.Project, args []string) (i
 		fmt.Println(ui.Color(fmt.Sprintf("Note: the agent runs as root (with no capabilities), because the files in the sync volume belong to root. Setting services.%s.mutagen.user to the app's user is the cleaner setup.", service), "yellow", plain))
 	}
 	url := proj.URL(schemeFor(gcfg))
-	interactive := !hasPrintFlag(rest)
+	interactive := ag.interactive(rest)
 
 	// A session can outlive its container: when the agent's own service
 	// changed (config, image, secrets), the sandbox is replaced at the end of
-	// Claude's turn (its Stop hook) and the conversation resumes.
+	// the agent's turn and the conversation resumes.
 	var (
 		mu       sync.Mutex // relay requests run concurrently
 		current  string     // the service as the running sandbox was built from it
 		notified string     // the version the agent was last told about
 		respawn  bool
+		reported string             // the session id the agent last reported (pi)
 		elog     *egressLog         // spans replaced sandboxes
 		creds    []agent.Credential // resolved once, kept across replaced sandboxes
 	)
@@ -344,7 +365,7 @@ func claudeSession(ctx context.Context, proj *project.Project, args []string) (i
 			return sandboxSpec{}, err
 		}
 		if cur.Config.Name != name {
-			return sandboxSpec{}, fmt.Errorf(".zdev/config.yaml now names project %q; start `zdev claude` again", cur.Config.Name)
+			return sandboxSpec{}, fmt.Errorf(".zdev/config.yaml now names project %q; start `zdev %s` again", cur.Config.Name, ag.name())
 		}
 		base, err := cur.AgentBaseConfig(ctx, service)
 		if err != nil {
@@ -379,7 +400,7 @@ func claudeSession(ctx context.Context, proj *project.Project, args []string) (i
 		notified = current
 		mu.Unlock()
 		return sandboxSpec{
-			Name: name, Service: service, Image: image, Base: base,
+			Agent: ag, Name: name, Service: service, Image: image, Base: base,
 			Workdir: src.ContainerPath, HostDir: proj.Dir, Owner: owner, GitMounts: gitMounts,
 			Env: mergeEnv(map[string]string{
 				"ZDEV_PROJECT":         name,
@@ -390,7 +411,7 @@ func claudeSession(ctx context.Context, proj *project.Project, args []string) (i
 			Credentials: creds,
 			GitConfig:   sandboxGitConfig(creds),
 			Fence:       fence,
-			Egress:      agent.Egress{Domain: gcfg.Domain, Mode: acfg.Egress, Allow: acfg.AllowHosts},
+			Egress:      agent.Egress{Domain: gcfg.Domain, Mode: acfg.Egress, Allow: acfg.AllowHosts, AgentHosts: ag.hosts()},
 			EgressLog:   elog,
 			NoProxy:     noProxy,
 			Handler: func(container string) agent.Handler {
@@ -412,20 +433,23 @@ func claudeSession(ctx context.Context, proj *project.Project, args []string) (i
 					}
 				}
 				// At the end of a turn: replace a stale sandbox. Removing the
-				// container ends Claude's exec; runSandbox then returns and
+				// container ends the agent's exec; runSandbox then returns and
 				// the loop below starts the next one.
-				turnEnd := func(ctx context.Context) {
+				turnEnd := func(ctx context.Context, id string) {
 					if !interactive {
 						return
 					}
 					mu.Lock()
 					defer mu.Unlock()
+					if id != "" {
+						reported = id
+					}
 					if respawn || !stale(ctx) {
 						return
 					}
 					respawn = true
 					go func() {
-						time.Sleep(time.Second) // let Claude finish writing the turn
+						time.Sleep(time.Second) // let the agent finish writing the turn
 						_, _ = d.Output(context.Background(), "rm", "-f", container)
 					}()
 				}
@@ -433,7 +457,7 @@ func claudeSession(ctx context.Context, proj *project.Project, args []string) (i
 			},
 			Prompt: func(info *agent.ImageInfo) string {
 				return agent.SystemPrompt(agent.PromptData{
-					Project: name, Service: service, Image: image, Workdir: src.ContainerPath,
+					Agent: ag.title(), AgentCmd: ag.name(), Project: name, Service: service, Image: image, Workdir: src.ContainerPath,
 					URL: url, Services: promptServices, Info: info,
 					Root: strings.HasPrefix(owner, "0:"), Fenced: true, HostAccess: acfg.HostAccess, Refused: socketServices,
 					EgressEnforce: acfg.Egress == agent.EgressEnforce, AllowHosts: acfg.AllowHosts,
@@ -465,7 +489,7 @@ func claudeSession(ctx context.Context, proj *project.Project, args []string) (i
 		return 0, err
 	}
 	s.SessionID = sessionID
-	defer startAgentHook(gcfg.Agent.HostHook, name, proj.Dir, sessionID, plain)()
+	defer startAgentHook(gcfg.Agent.HostHook, ag.name(), name, proj.Dir, sessionID, plain)()
 	for {
 		code, err := runSandbox(ctx, gcfg, s)
 		mu.Lock()
@@ -482,7 +506,10 @@ func claudeSession(ctx context.Context, proj *project.Project, args []string) (i
 			return 0, err
 		}
 		next.SessionID = sessionID
-		next.Rest = resumeArgs(rest, sessionID, proj.Dir, service)
+		mu.Lock()
+		last := reported
+		mu.Unlock()
+		next.Rest = ag.resume(rest, sessionID, last, proj.Dir, service)
 		s = next
 	}
 }
@@ -649,9 +676,10 @@ func approveAgentChanges(proj *project.Project, domain string) error {
 	return nil
 }
 
-// bootstrapSession is `zdev claude` in a repository without .zdev/: the
-// agent writes the setup in zdev's bootstrap image, without project network.
-func bootstrapSession(ctx context.Context, args []string) (int, error) {
+// bootstrapSession is `zdev claude` (or pi) in a repository without .zdev/:
+// the agent writes the setup in zdev's bootstrap image, without project
+// network.
+func bootstrapSession(ctx context.Context, ag codingAgent, args []string) (int, error) {
 	gcfg, err := config.LoadGlobalConfig()
 	if err != nil {
 		return 0, err
@@ -669,7 +697,7 @@ func bootstrapSession(ctx context.Context, args []string) (int, error) {
 		dir = strings.TrimSpace(string(out))
 	}
 	if home, _ := os.UserHomeDir(); dir == home || dir == "/" {
-		return 0, errors.New("no .zdev/ here, and this directory is too broad for a bootstrap sandbox: run zdev claude in the repository to set up")
+		return 0, fmt.Errorf("no .zdev/ here, and this directory is too broad for a bootstrap sandbox: run zdev %s in the repository to set up", ag.name())
 	}
 	name := "bootstrap-" + strings.ToLower(nonName.ReplaceAllString(filepath.Base(dir), "-"))
 	acfg := gcfg.AgentProject(name)
@@ -688,7 +716,7 @@ func bootstrapSession(ctx context.Context, args []string) (int, error) {
 	}
 	_, rest := splitClaudeArgs(args, func(string) bool { return false })
 	refusal := &agent.Refusal{Code: "bootstrap", Message: "this repository has no zdev project yet",
-		Next: "write .zdev/config.yaml, then ask the developer to run `zdev start` and `zdev claude --continue`"}
+		Next: "write .zdev/config.yaml, then ask the developer to run `zdev start` and `zdev " + ag.name() + " --continue`"}
 	sessionID := newSessionID()
 	elog := newEgressLog(name, sessionID)
 	defer func() {
@@ -697,10 +725,11 @@ func bootstrapSession(ctx context.Context, args []string) (int, error) {
 			fmt.Println(sum)
 		}
 	}()
-	defer startAgentHook(gcfg.Agent.HostHook, name, dir, sessionID, plain)()
+	defer startAgentHook(gcfg.Agent.HostHook, ag.name(), name, dir, sessionID, plain)()
 	return runSandbox(ctx, gcfg, sandboxSpec{
+		Agent:     ag,
 		SessionID: sessionID,
-		Egress:    agent.Egress{Domain: gcfg.Domain, Mode: acfg.Egress, Allow: acfg.AllowHosts},
+		Egress:    agent.Egress{Domain: gcfg.Domain, Mode: acfg.Egress, Allow: acfg.AllowHosts, AgentHosts: ag.hosts()},
 		EgressLog: elog,
 		NoProxy:   agentNoProxy(gcfg.Domain, nil),
 		Name:      name, Image: agent.BootstrapImage(),
@@ -718,7 +747,7 @@ func bootstrapSession(ctx context.Context, args []string) (int, error) {
 				return 126
 			}
 		},
-		Prompt:     func(info *agent.ImageInfo) string { return agent.BootstrapPrompt(dir, info) },
+		Prompt:     func(info *agent.ImageInfo) string { return agent.BootstrapPrompt(ag.title(), ag.name(), dir, info) },
 		Connectors: acfg.ConnectorsEnabled(), Limits: acfg.Limits, Rest: rest,
 	})
 }
@@ -762,7 +791,7 @@ func runClaudeUpdate(ctx context.Context) error {
 		}
 	}
 	if len(libcs) == 0 {
-		fmt.Printf("Claude Code %s is the current %s release. Nothing downloaded yet: `zdev claude` gets it at its first start.\n", rel.Version, channel)
+		fmt.Printf("Claude Code %s is the current %s release. Nothing downloaded yet: `zdev agent setup claude` gets it (in a project, for its image's C library).\n", rel.Version, channel)
 		return nil
 	}
 	for _, libc := range libcs {
@@ -774,14 +803,52 @@ func runClaudeUpdate(ctx context.Context) error {
 	return nil
 }
 
+// runPiUpdate is `zdev agent update pi`: asks for pi's newest release now and
+// builds it for every architecture that already has a build on this engine
+// (the engine's own when none has). Sessions run it in the background when
+// a new release is out or nothing is built yet.
+func runPiUpdate(ctx context.Context) error {
+	gcfg, err := config.LoadGlobalConfig()
+	if err != nil {
+		return err
+	}
+	plain := ui.PlainMode(gcfg.Terminal.Plain)
+	d := agent.NewDocker()
+	agentDir := filepath.Join(config.GetZdevHome(), "agent")
+	rel, err := agent.ResolvePi(ctx, agentDir, 0)
+	if err != nil {
+		return err
+	}
+	archs := agent.InstalledPiArchs(ctx, d)
+	if len(archs) == 0 {
+		arch, err := d.ServerArch(ctx)
+		if err != nil {
+			return err
+		}
+		archs = []string{arch}
+	}
+	for _, arch := range archs {
+		if !agent.PiBuilt(ctx, d, rel.Version, arch) {
+			ui.StatusStep(fmt.Sprintf("Building pi %s for linux/%s (glibc and musl; a few minutes)", rel.Version, arch), plain)
+		}
+		if err := buildPiLogged(ctx, d, agentDir, rel, arch, func() { fmt.Println("Waiting for the pi build that's already running...") }); err != nil {
+			return err
+		}
+	}
+	fmt.Printf("pi %s is ready; new sessions use it, running ones keep their version.\n", rel.Version)
+	return nil
+}
+
 // chooseClaude picks the Claude build a session runs. The channel's release
-// is checked at most once a day. A session never waits for a new release when
-// a build is already here: it starts with the newest one and the new release
-// downloads in the background for the next session. It waits only for the
-// first build, or for a pinned version that isn't here yet.
+// is checked at most once a day. A session never waits for a download: it
+// starts with the newest build here, and a new release downloads in the
+// background for the next session. Without a build for this libc (or of a
+// pinned version) the download starts in the background and the session is
+// refused until it is there (zdev agent setup waits for it).
 func chooseClaude(ctx context.Context, d agent.Docker, agentDir, channel, libc, arch string, plain bool) (version, vol string, err error) {
+	pinned := agent.IsPinnedClaude(channel)
 	haveVersion, haveVol := "", ""
-	if !agent.IsPinnedClaude(channel) {
+	if !pinned {
 		haveVersion, haveVol = agent.InstalledClaude(ctx, d, libc, arch)
 	}
 	rel, err := agent.ResolveClaude(ctx, agentDir, channel, agent.ClaudeCheckEvery)
@@ -791,12 +858,21 @@ func chooseClaude(ctx context.Context, d agent.Docker, agentDir, channel, libc, 
 		}
 		return "", "", err
 	}
-	if haveVol == "" || agent.CompareClaudeVersions(rel.Version, haveVersion) <= 0 {
-		vol, err := agent.EnsureClaude(ctx, d, rel, libc, arch, func(msg string) { ui.StatusStep(msg, plain) })
-		return rel.Version, vol, err
+	if pinned {
+		if v := agent.ClaudeVolumeName(rel.Version, libc, arch); agent.VolumeComplete(ctx, d, v) {
+			return rel.Version, v, nil
+		}
 	}
-	if started, err := agent.StartClaudeDownload(ctx, d, rel, libc, arch); err == nil && started {
-		fmt.Println(ui.Color(fmt.Sprintf("Claude Code %s is downloading in the background; this session runs %s, the next one the new version.", rel.Version, haveVersion), "yellow", plain))
+	if haveVol == "" {
+		if _, err := agent.StartClaudeDownload(ctx, d, rel, libc, arch); err != nil {
+			return "", "", err
+		}
+		return "", "", fmt.Errorf("Claude Code %s (%s build) isn't here yet: it's downloading in the background now.\nStart the session again in a minute, or run `zdev agent setup claude` to wait for it", rel.Version, libc)
+	}
+	if agent.CompareVersions(rel.Version, haveVersion) > 0 {
+		if started, err := agent.StartClaudeDownload(ctx, d, rel, libc, arch); err == nil && started {
+			fmt.Println(ui.Color(fmt.Sprintf("Claude Code %s is downloading in the background; this session runs %s, the next one the new version.", rel.Version, haveVersion), "yellow", plain))
+		}
 	}
 	return haveVersion, haveVol, nil
 }
@@ -810,6 +886,7 @@ func runSandbox(ctx context.Context, gcfg *config.GlobalConfig, s sandboxSpec) (
 	d := agent.NewDocker()
 	agentDir := filepath.Join(config.GetZdevHome(), "agent")
 	agent.SweepOrphans(ctx, d)
+	agent.SweepSessionDirs(ctx, d, agentDir)
 
 	info, err := agent.ProbeImage(ctx, d, agentDir, s.Image)
 	if err != nil {
@@ -825,11 +902,9 @@ func runSandbox(ctx context.Context, gcfg *config.GlobalConfig, s sandboxSpec) (
 	if err != nil {
 		return 0, err
 	}
-	claudeVersion, claudeVol, err := chooseClaude(ctx, d, agentDir, gcfg.Agent.Claude.Channel, info.Libc, arch, plain)
+	ag := s.Agent
+	agentVersion, agentVol, err := ag.install(ctx, d, agentDir, gcfg, s.Image, info, arch, plain)
 	if err != nil {
-		return 0, err
-	}
-	if err := agent.CheckClaude(ctx, d, agentDir, s.Image, info, claudeVersion, claudeVol); err != nil {
 		return 0, err
 	}
 	zbin, err := zdevLinuxBinary(arch)
@@ -844,45 +919,18 @@ func runSandbox(ctx context.Context, gcfg *config.GlobalConfig, s sandboxSpec) (
 	if err != nil {
 		return 0, err
 	}
-	agent.MarkUsed(ctx, d, agentDir, claudeVol, toolsVol, sandboxToolsVol)
+	agent.MarkUsed(ctx, d, agentDir, agentVol, toolsVol, sandboxToolsVol)
 
-	// The agent's home (at the host's home path) and Claude's configuration.
+	// The agent's home (at the host's home path), its state and the
+	// session's generated files.
 	hostHome, err := os.UserHomeDir()
 	if err != nil {
-		return 0, err
-	}
-	hostClaude := filepath.Join(hostHome, ".claude")
-	if err := os.MkdirAll(hostClaude, 0o700); err != nil {
 		return 0, err
 	}
 	homeVol := agent.HomeVolumeName(s.Name)
 	if err := d.CreateVolume(ctx, homeVol, map[string]string{"zdev.agent": "home", agent.LabelProject: s.Name}); err != nil {
 		return 0, err
 	}
-	prepArgs := []string{"run", "--rm", "-i", "--user", "0", "--network", "none",
-		"--mount", "type=volume,src=" + homeVol + ",dst=" + hostHome,
-		"--mount", "type=bind,src=" + hostClaude + ",dst=/src,readonly"}
-	for _, e := range agent.PrepareHomeEnv(hostHome, s.Workdir, s.Owner) {
-		prepArgs = append(prepArgs, "-e", e)
-	}
-	prepArgs = append(prepArgs, "--entrypoint", "sh", agent.FillImage, "-s")
-	if err := d.Stream(ctx, strings.NewReader(agent.PrepareHomeScript), nil, os.Stderr, prepArgs...); err != nil {
-		return 0, fmt.Errorf("preparing the agent's home: %w", err)
-	}
-	projectDir, err := agent.PrepareProjectDir(agentDir, hostClaude, s.HostDir, s.Workdir)
-	if err != nil {
-		return 0, fmt.Errorf("preparing the sandbox's Claude project directory: %w", err)
-	}
-	claudeMounts, err := agent.ClaudeMounts(hostClaude, projectDir, s.Workdir)
-	if err != nil {
-		return 0, err
-	}
-	authDir := agent.AuthDir(agentDir)
-	if err := os.MkdirAll(authDir, 0o700); err != nil {
-		return 0, err
-	}
-
-	// The session's generated files.
 	sessionID := s.SessionID
 	if sessionID == "" {
 		sessionID = newSessionID()
@@ -892,10 +940,12 @@ func runSandbox(ctx context.Context, gcfg *config.GlobalConfig, s sandboxSpec) (
 		return 0, err
 	}
 	defer os.RemoveAll(sessionDir)
-	if err := os.WriteFile(filepath.Join(sessionDir, "zdev-system-prompt.md"), []byte(s.Prompt(info)), 0o644); err != nil {
-		return 0, err
-	}
-	if err := os.WriteFile(filepath.Join(sessionDir, "managed-settings.json"), agent.ManagedSettings(s.Connectors, gcfg.Agent.Claude.DisablePlugins, s.TurnHook), 0o644); err != nil {
+	setup, err := ag.prepare(ctx, d, agentPrep{
+		AgentDir: agentDir, HostHome: hostHome, HomeVol: homeVol, Workdir: s.Workdir, HostDir: s.HostDir,
+		Owner: s.Owner, SessionDir: sessionDir, Prompt: s.Prompt(info), TurnHook: s.TurnHook,
+		Connectors: s.Connectors, Global: gcfg,
+	})
+	if err != nil {
 		return 0, err
 	}
 
@@ -915,7 +965,7 @@ func runSandbox(ctx context.Context, gcfg *config.GlobalConfig, s sandboxSpec) (
 		if ca, err = agent.NewSessionCA(); err != nil {
 			return 0, err
 		}
-		ok, err := trustSessionCA(&cfg, ca, sessionDir, agent.SessionMount)
+		ok, err := trustSessionCA(&cfg, ca, sessionDir, ag.sessionMount())
 		if err != nil {
 			return 0, err
 		}
@@ -939,12 +989,13 @@ func runSandbox(ctx context.Context, gcfg *config.GlobalConfig, s sandboxSpec) (
 		agent.LabelService: s.Service, agent.LabelPID: strconv.Itoa(os.Getpid()), agent.LabelHost: hostname,
 	}
 	env := map[string]string{
-		"HOME":                            hostHome,
-		"PATH":                            info.Path + ":/opt/zdev/bin:/opt/zdev/claude:" + agent.SandboxToolsMount,
-		"SHELL":                           "/bin/bash",
-		"DISABLE_AUTOUPDATER":             "1",
-		"CLAUDE_SECURESTORAGE_CONFIG_DIR": agent.AuthMount,
-		"ZDEV_SANDBOX":                    container,
+		"HOME":         hostHome,
+		"PATH":         info.Path + ":/opt/zdev/bin:" + filepath.Dir(ag.argv(nil, "")[0]) + ":" + agent.SandboxToolsMount,
+		"SHELL":        "/bin/bash",
+		"ZDEV_SANDBOX": container,
+	}
+	for k, v := range setup.Env {
+		env[k] = v
 	}
 	gitConfig := [][2]string{{"safe.directory", "*"}}
 	if gitName, gitEmail := hostGitIdentity(); gitName != "" || gitEmail != "" {
@@ -957,9 +1008,6 @@ func runSandbox(ctx context.Context, gcfg *config.GlobalConfig, s sandboxSpec) (
 	}
 	if tz := hostTimeZone(); tz != "" {
 		env["TZ"] = tz
-	}
-	if strings.HasPrefix(s.Owner, "0:") {
-		env["IS_SANDBOX"] = "1" // Claude Code accepts skipping permission prompts as root only with it
 	}
 	// The internet only through the egress proxy in the relay (the fence
 	// rejects the rest); project services and domains directly.
@@ -980,20 +1028,18 @@ func runSandbox(ctx context.Context, gcfg *config.GlobalConfig, s sandboxSpec) (
 	}
 	cfg.Mounts = append(append([]string(nil), cfg.Mounts...),
 		"type=volume,src="+toolsVol+",dst=/opt/zdev/bin,readonly",
-		"type=volume,src="+claudeVol+",dst=/opt/zdev/claude,readonly",
+		"type=volume,src="+agentVol+",dst="+ag.mount()+",readonly",
 		"type=volume,src="+sandboxToolsVol+",dst="+agent.SandboxToolsMount+",readonly",
 		"type=volume,src="+homeVol+",dst="+hostHome,
-		"type=bind,src="+authDir+",dst="+agent.AuthMount,
-		"type=bind,src="+sessionDir+",dst="+agent.SessionMount+",readonly",
 	)
-	cfg.Mounts = append(cfg.Mounts, claudeMounts...)
+	cfg.Mounts = append(cfg.Mounts, setup.Mounts...)
 	cfg.Mounts = append(cfg.Mounts, s.GitMounts...)
 
 	what := "image of service " + s.Service
 	if s.Service == "" {
 		what = "bootstrap image"
 	}
-	ui.StatusStep(fmt.Sprintf("Starting sandbox %s (%s, Claude Code %s)", container, what, claudeVersion), plain)
+	ui.StatusStep(fmt.Sprintf("Starting sandbox %s (%s, %s %s)", container, what, ag.title(), agentVersion), plain)
 	rt := runtime.NewDockerCLI()
 	if _, err := rt.CreateContainer(ctx, cfg); err != nil {
 		return 0, fmt.Errorf("creating the sandbox: %w", err)
@@ -1018,9 +1064,9 @@ func runSandbox(ctx context.Context, gcfg *config.GlobalConfig, s sandboxSpec) (
 		return 0, err
 	}
 
-	// Claude, in the terminal. Docker handles the TTY. Stdin only when it is
-	// a terminal or carries input: with -p and an attached but empty stdin,
-	// Claude waits for piped input first.
+	// The agent, in the terminal. Docker handles the TTY. Stdin only when it
+	// is a terminal or carries input: with -p and an attached but empty
+	// stdin, Claude waits for piped input first.
 	execArgs := []string{"exec"}
 	if stdinCarriesInput() {
 		execArgs = append(execArgs, "-i")
@@ -1033,9 +1079,8 @@ func runSandbox(ctx context.Context, gcfg *config.GlobalConfig, s sandboxSpec) (
 			execArgs = append(execArgs, "-e", k)
 		}
 	}
-	execArgs = append(execArgs, "-w", cfg.WorkingDir, container, "/opt/zdev/claude/claude",
-		"--append-system-prompt-file", agent.SystemPromptFile)
-	execArgs = append(execArgs, claudeSessionArgs(s.Rest, sessionID)...)
+	execArgs = append(execArgs, "-w", cfg.WorkingDir, container)
+	execArgs = append(execArgs, ag.argv(s.Rest, sessionID)...)
 
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGHUP)
@@ -1091,15 +1136,20 @@ func startRelay(ctx context.Context, container string, handler agent.Handler, eg
 	return errors.New("the relay in the sandbox didn't come up")
 }
 
+// reportedSessionID is what a session id from the sandbox (untrusted) may
+// look like before it becomes an argument of the next sandbox's agent.
+var reportedSessionID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
+
 // lifecycleCommands change what runs; after them the relay refreshes the
 // fence and checks whether the agent's own service changed.
 var lifecycleCommands = map[string]bool{"start": true, "stop": true, "restart": true, "update": true}
 
 // relayHandler checks and runs the sandbox's requests on the host. Every
 // check is here: the container side is untrusted. after runs once a
-// lifecycle command finished, turnEnd when Claude finished a turn (nil:
+// lifecycle command finished, turnEnd when the agent finished a turn, with
+// the session id it reported ("" when none; nil:
 // nothing to do).
-func relayHandler(proj *project.Project, offLimits []string, after func(ctx context.Context, stderr io.Writer), turnEnd func(ctx context.Context)) agent.Handler {
+func relayHandler(proj *project.Project, offLimits []string, after func(ctx context.Context, stderr io.Writer), turnEnd func(ctx context.Context, sessionID string)) agent.Handler {
 	self, _ := os.Executable()
 	// live is the project as its config reads now (the agent may have added
 	// a service), under the session's name: a renamed config never names
@@ -1125,7 +1175,11 @@ func relayHandler(proj *project.Project, offLimits []string, after func(ctx cont
 	return func(ctx context.Context, req agent.Request, stdin io.Reader, stdout, stderr io.Writer, sigs <-chan string) int {
 		if req.Op == agent.OpTurnEnd {
 			if turnEnd != nil {
-				turnEnd(ctx)
+				id := ""
+				if len(req.Args) == 1 && reportedSessionID.MatchString(req.Args[0]) {
+					id = req.Args[0]
+				}
+				turnEnd(ctx, id)
 			}
 			return 0
 		}

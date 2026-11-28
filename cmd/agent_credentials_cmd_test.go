@@ -35,7 +35,10 @@ func TestAgentArgs(t *testing.T) {
 	if err := agentArg(nil, []string{"claude"}); err != nil {
 		t.Errorf("claude: %v", err)
 	}
-	if err := agentArg(nil, []string{"pi"}); err == nil || !strings.Contains(err.Error(), "known: claude") {
+	if err := agentArg(nil, []string{"pi"}); err != nil {
+		t.Errorf("pi: %v", err)
+	}
+	if err := agentArg(nil, []string{"codex"}); err == nil || !strings.Contains(err.Error(), "known: claude, pi") {
 		t.Errorf("unknown agent: %v", err)
 	}
 	if err := agentArg(nil, []string{"claude", "claude"}); err == nil {

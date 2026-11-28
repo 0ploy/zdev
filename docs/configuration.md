@@ -217,7 +217,7 @@ agent:
       connectors: false        # claude.ai connectors (Drive, Slack, ...) of your login; off by default
     host_access: []            # ports on this machine the agent may reach (e.g. 11434 for Ollama)
     limits: {cpus: "4", memory: 8g, pids: 4096}
-    egress: log                # log (every public host, logged) | enforce (only allow_hosts, credential hosts and Claude's own hosts)
+    egress: log                # log (every public host, logged) | enforce (only allow_hosts, credential hosts and the agent's own: Anthropic's for Claude and pi)
     allow_hosts: []            # under enforce: "registry.npmjs.org", "*.github.com"
     credentials: []            # names from agent.credentials below
   projects:
@@ -240,10 +240,11 @@ agent:
 
 A project uses a credential when it lists it (`projects.<name>.credentials: [github]`, or in `defaults`). `zdev agent setup`, run in a project, writes both for the host of its `origin` remote: GitHub, or GitLab (gitlab.com or a self-hosted instance, recognized by its API). It walks you through a token for the project's repository (GitHub: a fine-grained token; GitLab: a project access token, role Developer, scope `api`), checks it, stores it in 1Password or a `file:` only you can read, and grants it in place of an earlier credential for the same host, editing this file in place (your comments and order stay). GitHub tokens set `GH_TOKEN`, GitLab tokens `GITLAB_TOKEN`. Prefer a token scoped to the project's repository over your own `gh`/`glab` login: the agent can use whatever the token allows while the session runs. Credentials need zdev's CA bundle in the containers (HTTPS set up, `zdev systemcheck`).
 
-`host_hook` is a command run with `sh` on your machine when a `zdev claude` session starts and when it ends, for example to tell your terminal that Claude runs in this tab. It gets the event in `ZDEV_AGENT_EVENT` (`SessionStart` or `SessionEnd`), the PID of the `zdev claude` process in `ZDEV_AGENT_PID`, the project in `ZDEV_PROJECT`, and on stdin JSON in the shape of Claude Code's hook input: `session_id`, `cwd` (the project directory on your machine) and `hook_event_name`. A replaced sandbox doesn't count as a new session. The hook gets 5 seconds, its output is discarded, and a failure only prints a warning. `SessionEnd` is skipped when `zdev claude` is killed or crashes, so watch `ZDEV_AGENT_PID` if something must not outlive the session. Ignore events you don't know: later versions may send more. For [cmux](https://cmux.com), which then shows the Claude icon on the tab (it clears it when that PID exits):
+`host_hook` is a command run with `sh` on your machine when a `zdev claude` (or `zdev pi`) session starts and when it ends, for example to tell your terminal that Claude runs in this tab. It gets the event in `ZDEV_AGENT_EVENT` (`SessionStart` or `SessionEnd`), the agent in `ZDEV_AGENT` (`claude` or `pi`), the PID of the `zdev claude` process in `ZDEV_AGENT_PID`, the project in `ZDEV_PROJECT`, and on stdin JSON in the shape of Claude Code's hook input: `session_id`, `cwd` (the project directory on your machine) and `hook_event_name`. A replaced sandbox doesn't count as a new session. The hook gets 5 seconds, its output is discarded, and a failure only prints a warning. `SessionEnd` is skipped when `zdev claude` is killed or crashes, so watch `ZDEV_AGENT_PID` if something must not outlive the session. Ignore events you don't know: later versions may send more. For [cmux](https://cmux.com), which then shows the Claude icon on the tab (it clears it when that PID exits):
 
 ```sh
 #!/bin/sh
+[ "$ZDEV_AGENT" = claude ] || exit 0
 case "$ZDEV_AGENT_EVENT" in
   SessionStart) sub=session-start ;;
   SessionEnd)   sub=session-end ;;

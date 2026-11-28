@@ -64,4 +64,10 @@ type Runtime interface {
 	// as Docker stores them) and its ID.
 	ImageEntrypoint(ctx context.Context, image string) (entrypoint, cmd []string, id string, err error)
 	BuildImage(ctx context.Context, cfg ImageBuildConfig) error
+	// PruneDanglingImages removes untagged images carrying label that no
+	// container uses (the previous builds of rebuilt images).
+	PruneDanglingImages(ctx context.Context, label string) error
+	// RemoveImage removes an image reference; it fails while a container
+	// uses the image.
+	RemoveImage(ctx context.Context, image string) error
 }

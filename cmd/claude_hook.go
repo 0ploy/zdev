@@ -33,12 +33,12 @@ type agentHookPayload struct {
 // runs it for SessionEnd. It spans the whole `zdev claude`, not each sandbox:
 // a replaced sandbox resumes the same session. A crash skips SessionEnd, so
 // the hook also gets this process's PID (ZDEV_AGENT_PID) to watch.
-func startAgentHook(command, project, dir, sessionID string, plain bool) (end func()) {
+func startAgentHook(command, agentName, project, dir, sessionID string, plain bool) (end func()) {
 	if strings.TrimSpace(command) == "" {
 		return func() {}
 	}
 	run := func(event string) {
-		if err := runAgentHook(command, event, project, agentHookPayload{SessionID: sessionID, Cwd: dir, HookEventName: event}); err != nil {
+		if err := runAgentHook(command, event, agentName, project, agentHookPayload{SessionID: sessionID, Cwd: dir, HookEventName: event}); err != nil {
 			fmt.Fprintln(os.Stderr, ui.Color(fmt.Sprintf("zdev: agent.host_hook (%s) failed: %v", event, err), "yellow", plain))
 		}
 	}
@@ -49,7 +49,7 @@ func startAgentHook(command, project, dir, sessionID string, plain bool) (end fu
 // runAgentHook runs the command with sh, the payload on stdin and the event in
 // the environment. It never holds up a session for long: after
 // agentHookTimeout its whole process group is killed.
-func runAgentHook(command, event, project string, p agentHookPayload) error {
+func runAgentHook(command, event, agentName, project string, p agentHookPayload) error {
 	payload, err := json.Marshal(p)
 	if err != nil {
 		return err
@@ -62,6 +62,7 @@ func runAgentHook(command, event, project string, p agentHookPayload) error {
 	c.Stderr = &stderr // stdout is discarded
 	c.Env = append(os.Environ(),
 		"ZDEV_AGENT_EVENT="+event,
+		"ZDEV_AGENT="+agentName,
 		fmt.Sprintf("ZDEV_AGENT_PID=%d", os.Getpid()),
 		"ZDEV_PROJECT="+project,
 	)

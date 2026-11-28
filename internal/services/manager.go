@@ -252,6 +252,7 @@ func (m *Manager) startService(ctx context.Context, containerName, displayName, 
 		}
 		if currentLabels[runtime.ConfigHashLabel] != expectedCfg.Labels[runtime.ConfigHashLabel] {
 			fmt.Printf("%s config drift detected, recreating...\n", displayName)
+			defer m.removeReplacedImage(ctx, containerName, container.Image, image)
 			// Pull first: a failed pull must leave the old container (and
 			// its project network attachments) in place.
 			if err := m.ensureImage(ctx, image, displayName); err != nil {
@@ -292,6 +293,19 @@ func (m *Manager) startService(ctx context.Context, containerName, displayName, 
 	}
 
 	return nil
+}
+
+// removeReplacedImage removes the image a recreated shared service ran on
+// before (a pin zdev moved on from), once the new container runs on the new
+// one. Best effort: an image another container uses stays.
+func (m *Manager) removeReplacedImage(ctx context.Context, containerName, old, image string) {
+	if old == "" || old == image {
+		return
+	}
+	if c, err := m.runtime.GetContainer(ctx, containerName); err != nil || c == nil || c.Image != image {
+		return
+	}
+	_ = m.runtime.RemoveImage(context.WithoutCancel(ctx), old)
 }
 
 // ensureImage pulls image when it is not present locally.
@@ -422,6 +436,7 @@ func (m *Manager) startRouter(ctx context.Context, carried map[string][]string) 
 
 		if currentLabels[runtime.ConfigHashLabel] != expectedCfg.Labels[runtime.ConfigHashLabel] {
 			fmt.Println("Router config drift detected, recreating...")
+			defer m.removeReplacedImage(ctx, RouterContainerName, container.Image, image)
 			// Pull first: a failed pull must leave the old router in place.
 			if err := m.ensureImage(ctx, image, "Router"); err != nil {
 				return err

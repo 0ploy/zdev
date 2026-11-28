@@ -176,30 +176,50 @@ var claudeShared = []string{"skills", "agents", "commands", "plugins"}
 // (PrepareProjectDir) read-write at the key of the container's working
 // directory.
 func ClaudeMounts(hostClaude, projectDir, containerWorkdir string) ([]string, error) {
-	var mounts []string
-	seen := map[string]bool{}
-	add := func(src, dst string, readOnly bool) error {
-		if strings.ContainsAny(src+dst, ",\"") {
-			return fmt.Errorf("path %q can't be mounted (contains a comma or quote)", src)
-		}
-		if seen[dst] {
-			return nil
-		}
-		seen[dst] = true
-		m := "type=bind,src=" + src + ",dst=" + dst
-		if readOnly {
-			m += ",readonly"
-		}
-		mounts = append(mounts, m)
+	m := newMountSet()
+	if err := m.sharedDirs(hostClaude, claudeShared); err != nil {
+		return nil, err
+	}
+	if err := m.add(projectDir, filepath.Join(hostClaude, "projects", ProjectKey(containerWorkdir)), false); err != nil {
+		return nil, err
+	}
+	return m.sorted(), nil
+}
+
+// mountSet collects --mount specs, one per destination.
+type mountSet struct {
+	mounts []string
+	seen   map[string]bool
+}
+
+func newMountSet() *mountSet { return &mountSet{seen: map[string]bool{}} }
+
+func (m *mountSet) add(src, dst string, readOnly bool) error {
+	if strings.ContainsAny(src+dst, ",\"") {
+		return fmt.Errorf("path %q can't be mounted (contains a comma or quote)", src)
+	}
+	if m.seen[dst] {
 		return nil
 	}
-	for _, name := range claudeShared {
-		dir := filepath.Join(hostClaude, name)
+	m.seen[dst] = true
+	spec := "type=bind,src=" + src + ",dst=" + dst
+	if readOnly {
+		spec += ",readonly"
+	}
+	m.mounts = append(m.mounts, spec)
+	return nil
+}
+
+// sharedDirs adds the directories names under hostDir and the targets of
+// symlinks inside them read-only, at their own paths, so the links resolve.
+func (m *mountSet) sharedDirs(hostDir string, names []string) error {
+	for _, name := range names {
+		dir := filepath.Join(hostDir, name)
 		if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
 			continue
 		}
-		if err := add(dir, dir, true); err != nil {
-			return nil, err
+		if err := m.add(dir, dir, true); err != nil {
+			return err
 		}
 		entries, _ := os.ReadDir(dir)
 		for _, e := range entries {
@@ -207,19 +227,20 @@ func ClaudeMounts(hostClaude, projectDir, containerWorkdir string) ([]string, er
 				continue
 			}
 			target, err := filepath.EvalSymlinks(filepath.Join(dir, e.Name()))
-			if err != nil || strings.HasPrefix(target, hostClaude+string(os.PathSeparator)) {
+			if err != nil || strings.HasPrefix(target, hostDir+string(os.PathSeparator)) {
 				continue
 			}
-			if err := add(target, target, true); err != nil {
-				return nil, err
+			if err := m.add(target, target, true); err != nil {
+				return err
 			}
 		}
 	}
-	if err := add(projectDir, filepath.Join(hostClaude, "projects", ProjectKey(containerWorkdir)), false); err != nil {
-		return nil, err
-	}
-	sort.Strings(mounts)
-	return mounts, nil
+	return nil
+}
+
+func (m *mountSet) sorted() []string {
+	sort.Strings(m.mounts)
+	return m.mounts
 }
 
 // firstStart answers Claude's first-start questions (onboarding, theme, trust

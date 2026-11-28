@@ -31,7 +31,7 @@ internal/
   firstrun/              # First-time setup (certs, shared network)
   ssl/                   # Certificate management
   ui/                    # Terminal output (colors, hyperlinks, markdown)
-  agent/                 # zdev claude: Claude volumes, image probe, system prompt, fence, relay
+  agent/                 # zdev claude / zdev pi: agent builds (Claude download, pi build), image probe, system prompt, fence, relay
 skills/zdev/            # AI agent skill (SKILL.md + references/)
 testdata/projects/       # Test fixtures (minimal, full, variables, mutagen)
 ```

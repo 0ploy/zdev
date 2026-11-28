@@ -103,6 +103,20 @@ func TestSweepable(t *testing.T) {
 	}
 	got := sweepable(uses, []string{"zdev-claude-2.1.330-musl-arm64"}, now)
 	want := []string{"zdev-claude-2.1.320-musl-arm64", "zdev-tools-0.14.0-arm64"}
+	defer func() {
+		// zdev's tools: a newer build in use for over a day supersedes the others.
+		tools := map[string]volumeUse{
+			"zdev-tools-dev-aaaaaaaaaaaa-arm64":     {First: now.Add(-3 * day), Last: now.Add(-2 * day)},
+			"zdev-tools-dev-bbbbbbbbbbbb-arm64":     {First: now.Add(-2 * day), Last: now},
+			"zdev-tools-0.14.0-amd64":               {First: now.Add(-3 * day), Last: now.Add(-2 * day)},
+			"zdev-sandbox-tools-cccccccccccc-arm64": {First: now.Add(-3 * day), Last: now.Add(-2 * day)},
+			"zdev-sandbox-tools-dddddddddddd-arm64": {First: now.Add(-2 * day), Last: now},
+		}
+		got := sweepable(tools, []string{"zdev-tools-dev-bbbbbbbbbbbb-arm64", "zdev-sandbox-tools-dddddddddddd-arm64"}, now)
+		if strings.Join(got, ",") != "zdev-sandbox-tools-cccccccccccc-arm64,zdev-tools-dev-aaaaaaaaaaaa-arm64" {
+			t.Errorf("superseded tools: %v", got)
+		}
+	}()
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("sweepable = %v, want %v", got, want)
 	}
@@ -186,7 +200,7 @@ func TestSystemPrompt(t *testing.T) {
 	}
 }
 
-func TestCompareClaudeVersions(t *testing.T) {
+func TestCompareVersions(t *testing.T) {
 	cases := []struct {
 		a, b string
 		want int
@@ -199,8 +213,8 @@ func TestCompareClaudeVersions(t *testing.T) {
 		{"2.1.0-beta.2", "2.1.0-beta.1", 1},
 	}
 	for _, c := range cases {
-		if got := CompareClaudeVersions(c.a, c.b); got != c.want {
-			t.Errorf("CompareClaudeVersions(%s, %s) = %d, want %d", c.a, c.b, got, c.want)
+		if got := CompareVersions(c.a, c.b); got != c.want {
+			t.Errorf("CompareVersions(%s, %s) = %d, want %d", c.a, c.b, got, c.want)
 		}
 	}
 	if !IsPinnedClaude("2.1.325") || IsPinnedClaude("stable") || IsPinnedClaude("latest") {

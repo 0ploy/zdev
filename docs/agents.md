@@ -18,7 +18,7 @@ zdev claude -- app               # pass "app" to Claude (a prompt that equals a 
 
 **Log in once** with `/login` inside Claude. Every sandbox shares that login (stored in `~/.zdev/agent/claude/auth/`); you log in again only when Claude asks.
 
-**Claude Code updates:** zdev looks for a new release once a day and downloads it in the background; the session after the download uses it (Claude's own updater is off in the sandbox). `zdev agent update` gets it right away. Pick the release line with `agent.claude.channel` ([Configuration](configuration.md#agent-sandboxes-agent)).
+**Claude Code updates:** a session never waits for a download. zdev looks for a new release once a day and downloads it in the background; the session after the download uses it (Claude's own updater is off in the sandbox). `zdev agent update` gets it right away. The very first download happens in `zdev agent setup`, which waits for it (for the C library of the project's image; outside a project for the bootstrap image). A session that finds no Claude for its image starts that download in the background and asks you to start again in a minute, or to run `zdev agent setup claude` to wait. Pick the release line with `agent.claude.channel` ([Configuration](configuration.md#agent-sandboxes-agent)). Superseded versions are removed a day after the new one was first used.
 
 **What Claude can do there:**
 
@@ -63,7 +63,27 @@ When the agent's own service changes (an update from Claude or from you: config,
 
 **Your terminal can know about the session:** `agent.host_hook` runs a command of yours on your machine when a session starts and ends, with nothing from the sandbox in it. The recipe for [cmux](https://cmux.com) gives the tab the Claude icon, as Claude on your Mac does ([Configuration](configuration.md#agent-sandboxes-agent)).
 
+**Nothing piles up:** sandboxes go with their session (also after a crash, at the next session start), and so do their generated files. Agent builds and zdev's own volumes for sandboxes go a day after a newer one took over, or after 14 days unused; images of zdev's helper pins go when the pin moves on. Proxy logs are kept 30 days. A project's agent home (`zdev-agent-home-<project>`, holding the agents' settings in the sandbox) goes with `zdev down`.
+
 **Settings** live only in `~/.zdev/global-config.yaml` (never in the project config, which the agent can edit): see [Configuration](configuration.md#agent-sandboxes-agent).
+
+## Run pi sandboxed: `zdev pi`
+
+`zdev pi` runs [pi](https://pi.dev) in the same sandbox as `zdev claude`: the same image choice, source, network, proxy, tokens, git rules and replacement of a stale sandbox (at the end of pi's turn, via a small zdev extension). Everything above applies; these are the differences.
+
+```bash
+zdev pi                        # pi in the app service's image
+zdev pi --continue             # continue the last session (arguments go to pi unchanged)
+zdev pi node -p "run the tests"  # in the node service's image, one prompt, then exit
+```
+
+**Log in once** with `/login` inside pi. Every sandbox shares that login (`~/.zdev/agent/pi/auth/auth.json`), and pi renews it there; several sandboxes at once take turns. pi's login waits for the browser to call back, which can't reach the container: paste the final redirect URL (or the code) into pi when it asks. To keep a token out of the sandbox altogether, use an API key or a Claude subscription token (`claude setup-token`) as a credential instead (`zdev agent credentials add --preset anthropic`). pi itself warns that a Claude subscription used through pi is billed as extra usage, per token, not from your plan's limits.
+
+**pi builds:** pi publishes Linux builds for glibc only, so zdev builds pi itself from the newest release's source archive (checksum checked), for glibc and musl images alike, so both always run the same version. A build takes a few minutes on your machine and never holds up a session: `zdev agent setup pi` does the first one and waits for it; a `zdev pi` with nothing built starts it in the background and asks you to come back. zdev looks for a new release once a day and builds it in the background for the next session; `zdev agent update pi` builds it right away. The output of the last build is in `~/.zdev/agent/pi/build.log`. Only the two builds (about 130 MB each) stay: the downloads and npm's cache live in a volume of that build alone, and the Node image (about 350 MB) is removed again if the build pulled it. On a musl image without the C++ runtime (bare Alpine), pi gets it from its own build, for pi alone.
+
+**Your pi setup comes along:** `skills`, `prompts`, `themes` and `extensions` from `~/.pi/agent` (read-only), and `AGENTS.md`, `models.json`, `keybindings.json` and `settings.json` copied in. Without a `settings.json` on your Mac the sandbox keeps its own, so a model picked with `/model` sticks. Projects are trusted in the sandbox (the container is the boundary). Sessions live in `~/.zdev/agent/pi/projects/`, apart from pi on your Mac. pi doesn't contact pi.dev from the sandbox: zdev chooses the version, and the build carries the model catalog.
+
+**`egress: enforce`:** pi's own hosts are Anthropic's (its default provider and login). Another provider's API host goes into `allow_hosts`.
 
 ## Install the zdev skill
 

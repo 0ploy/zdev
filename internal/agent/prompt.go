@@ -19,6 +19,8 @@ type PromptService struct {
 
 // PromptData is what the system prompt says about a session.
 type PromptData struct {
+	Agent    string // the agent's name ("Claude Code"; default)
+	AgentCmd string // its command on PATH ("claude"; default)
 	Project  string
 	Service  string // the agent runs in this service's image
 	Image    string
@@ -44,9 +46,12 @@ type PromptData struct {
 func SystemPrompt(d PromptData) string {
 	var b strings.Builder
 	w := func(f string, a ...any) { fmt.Fprintf(&b, f, a...) }
+	if d.Agent == "" {
+		d.Agent, d.AgentCmd = "Claude Code", "claude"
+	}
 
 	w("# Where you run\n\n")
-	w("You are the only Claude Code of this developer: there is none on their machine, and their machine is out of your reach. ")
+	w("You are the only %s of this developer: there is none on their machine, and their machine is out of your reach. ", d.Agent)
 	w("You run in a sandbox container of the zdev project %q, created from the image of its service `%s` (%s), ", d.Project, d.Service, d.Image)
 	w("with the same source, environment and network as the app. The project's source is at %s; ", d.Workdir)
 	w("changes there reach the running app and the developer's editor at once. The container is removed after this session; the source, your memory and this conversation stay.\n\n")
@@ -83,7 +88,7 @@ func SystemPrompt(d PromptData) string {
 			w("- These are BusyBox's, not GNU's (fewer options, e.g. no `grep -P`): %s.\n", strings.Join(d.Info.BusyBox, ", "))
 		}
 	}
-	w("- `zdev` and `claude` are added at the end of PATH, and so are `jq`, `gh` and `glab` (an image's own copy comes first).\n\n")
+	w("- `zdev` and `%s` are added at the end of PATH, and so are `jq`, `gh` and `glab` (an image's own copy comes first).\n\n", d.AgentCmd)
 
 	w("# The running app\n\n")
 	w("The app runs in a separate container, `%s`, so its processes are not visible here (`ps` shows only yours). ", d.Service)
@@ -145,7 +150,7 @@ func SystemPrompt(d PromptData) string {
 			w(", except ports %s on host.docker.internal", strings.Join(ports, ", "))
 		}
 		w(".\n\n")
-		w("The internet is reachable only through an HTTP proxy on the developer's machine (`HTTPS_PROXY`, already set; tools that honor it work: Claude, git over HTTPS, curl, npm, pip, composer, cargo, go, Node with `NODE_USE_ENV_PROXY=1`). Every connection is logged for the developer. ")
+		w("The internet is reachable only through an HTTP proxy on the developer's machine (`HTTPS_PROXY`, already set; tools that honor it work: %s, git over HTTPS, curl, npm, pip, composer, cargo, go, Node with `NODE_USE_ENV_PROXY=1`). Every connection is logged for the developer. ", d.Agent)
 		w("SSH, raw TCP and UDP to the internet don't work. git remotes on `git@` and `ssh://` URLs of GitHub, GitLab and Bitbucket are rewritten to HTTPS for you. Project services and project URLs are reached directly (`NO_PROXY`). ")
 		w("A refusal by the proxy is an HTTP 403 with the header `X-Zdev-Refused` and a `zdev: refused (<reason>)` body; for HTTPS tools report it as a failed CONNECT (curl: \"CONNECT tunnel failed, response 403\", Node: \"fetch failed\"). Don't treat that as a network outage.")
 		if d.EgressEnforce {
@@ -153,7 +158,7 @@ func SystemPrompt(d PromptData) string {
 			if len(d.AllowHosts) > 0 {
 				hosts = strings.Join(d.AllowHosts, ", ")
 			}
-			w(" Only these hosts are allowed for this project (besides Claude's own): %s. For another one, ask the developer to add it to `allow_hosts`.", hosts)
+			w(" Only these hosts are allowed for this project (besides %s's own): %s. For another one, ask the developer to add it to `allow_hosts`.", d.Agent, hosts)
 		}
 		w("\n")
 		if len(d.Credentials) > 0 {

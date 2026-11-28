@@ -157,7 +157,7 @@ func TestEgressRefusals(t *testing.T) {
 
 func TestEgressEnforceAllows(t *testing.T) {
 	e, _, _ := testEgress(t, "140.82.121.4", upstream(t, "ok"))
-	e.Mode, e.Allow = EgressEnforce, []string{"*.github.com", "registry.npmjs.org"}
+	e.Mode, e.Allow, e.AgentHosts = EgressEnforce, []string{"*.github.com", "registry.npmjs.org"}, ClaudeHosts
 	for _, host := range []string{"api.github.com", "github.com", "registry.npmjs.org", "api.anthropic.com", "claude.ai"} {
 		res, _ := roundTrip(t, e, "CONNECT "+host+":443 HTTP/1.1\r\n\r\nx\n")
 		if res.StatusCode != 200 {

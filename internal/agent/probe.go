@@ -42,7 +42,8 @@ type ImageInfo struct {
 	PackageManager string `json:"package_manager,omitempty"`
 	UID            string `json:"uid,omitempty"`
 	User           string `json:"user,omitempty"`
-	// ClaudeOK records Claude versions verified to start in this image.
+	// ClaudeOK records agent builds verified to start in this image: Claude
+	// versions, and "pi <version>".
 	ClaudeOK map[string]bool `json:"claude_ok,omitempty"`
 	ProbedAt time.Time       `json:"probed_at"`
 	// Version is probeVersion at probing time; older entries are probed again.
@@ -230,15 +231,26 @@ func (i *ImageInfo) ToolNames() []string {
 // CheckClaude runs `claude --version` once per image and Claude version, so an
 // incompatible build fails here with a clear message, not mid-session.
 func CheckClaude(ctx context.Context, d Docker, dir, image string, info *ImageInfo, version, claudeVolume string) error {
-	if info.ClaudeOK[version] {
+	return checkBuild(ctx, d, dir, image, info, version, func() error {
+		_, err := d.Output(ctx, "run", "--rm", "--network", "none", "--user", "65534:65534", "--cap-drop", "ALL",
+			"-e", "HOME=/tmp", "-e", "DISABLE_AUTOUPDATER=1",
+			"--mount", "type=volume,src="+claudeVolume+",dst=/opt/zdev/claude,readonly",
+			"--entrypoint", "/opt/zdev/claude/claude", image, "--version")
+		if err != nil {
+			return fmt.Errorf("Claude Code %s (%s build) doesn't run in image %s: %w", version, info.Libc, image, err)
+		}
+		return nil
+	})
+}
+
+// checkBuild runs check once per image and key (an agent build), recording
+// success in the probe cache.
+func checkBuild(ctx context.Context, d Docker, dir, image string, info *ImageInfo, key string, check func() error) error {
+	if info.ClaudeOK[key] {
 		return nil
 	}
-	_, err := d.Output(ctx, "run", "--rm", "--network", "none", "--user", "65534:65534", "--cap-drop", "ALL",
-		"-e", "HOME=/tmp", "-e", "DISABLE_AUTOUPDATER=1",
-		"--mount", "type=volume,src="+claudeVolume+",dst=/opt/zdev/claude,readonly",
-		"--entrypoint", "/opt/zdev/claude/claude", image, "--version")
-	if err != nil {
-		return fmt.Errorf("Claude Code %s (%s build) doesn't run in image %s: %w", version, info.Libc, image, err)
+	if err := check(); err != nil {
+		return err
 	}
 	cache := loadProbeCache(dir)
 	if c, ok := cache[info.ImageID]; ok {
@@ -247,7 +259,7 @@ func CheckClaude(ctx context.Context, d Docker, dir, image string, info *ImageIn
 	if info.ClaudeOK == nil {
 		info.ClaudeOK = map[string]bool{}
 	}
-	info.ClaudeOK[version] = true
+	info.ClaudeOK[key] = true
 	cache[info.ImageID] = info
 	saveProbeCache(dir, cache)
 	return nil

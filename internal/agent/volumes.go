@@ -15,6 +15,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -81,6 +82,10 @@ func EnsureClaude(ctx context.Context, d Docker, rel *ClaudeRelease, libc, arch 
 	if complete(ctx, d, vol) {
 		return vol, nil
 	}
+	// A background download (StartClaudeDownload) of it: wait for that one.
+	if _, err := d.Output(ctx, "wait", "zdev-fill-"+vol); err == nil && complete(ctx, d, vol) {
+		return vol, nil
+	}
 	if progress != nil {
 		progress(fmt.Sprintf("Downloading Claude Code %s (%s)", rel.Version, ClaudePlatform(arch, libc)))
 	}
@@ -121,38 +126,51 @@ func StartClaudeDownload(ctx context.Context, d Docker, rel *ClaudeRelease, libc
 // InstalledClaude returns the newest complete Claude build for libc and
 // architecture on this engine ("" when there is none).
 func InstalledClaude(ctx context.Context, d Docker, libc, arch string) (version, vol string) {
-	out, err := d.Output(ctx, "volume", "ls", "--filter", "label="+volumeLabel+"=claude", "--format", "{{.Name}}")
-	if err != nil {
-		return "", ""
-	}
-	suffix := "-" + libc + "-" + arch
-	var versions []string
-	for _, name := range strings.Fields(out) {
-		v, ok := strings.CutPrefix(name, claudeVolumePrefix)
-		if v, ok2 := strings.CutSuffix(v, suffix); ok && ok2 && claudeVersionRE.MatchString(v) {
-			versions = append(versions, v)
-		}
-	}
-	sort.Slice(versions, func(i, j int) bool { return CompareClaudeVersions(versions[i], versions[j]) > 0 })
-	for _, v := range versions {
-		if name := ClaudeVolumeName(v, libc, arch); complete(ctx, d, name) {
-			return v, name
-		}
-	}
-	return "", ""
+	return installedBuild(ctx, d, "claude", claudeVolumePrefix, libc, arch, func(v string) string {
+		return ClaudeVolumeName(v, libc, arch)
+	})
 }
 
 // InstalledClaudePlatforms lists the libc/architecture pairs that have a
 // Claude build on this engine, as "libc arch".
 func InstalledClaudePlatforms(ctx context.Context, d Docker) []string {
-	out, err := d.Output(ctx, "volume", "ls", "--filter", "label="+volumeLabel+"=claude", "--format", "{{.Name}}")
+	return installedPlatforms(ctx, d, "claude", claudeVolumePrefix)
+}
+
+// installedBuild returns the newest complete build among an agent's volumes
+// (label zdev.agent=<kind>, named <prefix><version>-<libc>-<arch>).
+func installedBuild(ctx context.Context, d Docker, kind, prefix, libc, arch string, name func(version string) string) (version, vol string) {
+	out, err := d.Output(ctx, "volume", "ls", "--filter", "label="+volumeLabel+"="+kind, "--format", "{{.Name}}")
+	if err != nil {
+		return "", ""
+	}
+	suffix := "-" + libc + "-" + arch
+	var versions []string
+	for _, n := range strings.Fields(out) {
+		v, ok := strings.CutPrefix(n, prefix)
+		if v, ok2 := strings.CutSuffix(v, suffix); ok && ok2 && claudeVersionRE.MatchString(v) {
+			versions = append(versions, v)
+		}
+	}
+	sort.Slice(versions, func(i, j int) bool { return CompareVersions(versions[i], versions[j]) > 0 })
+	for _, v := range versions {
+		if n := name(v); complete(ctx, d, n) {
+			return v, n
+		}
+	}
+	return "", ""
+}
+
+// installedPlatforms lists the "libc arch" pairs among an agent's volumes.
+func installedPlatforms(ctx context.Context, d Docker, kind, prefix string) []string {
+	out, err := d.Output(ctx, "volume", "ls", "--filter", "label="+volumeLabel+"="+kind, "--format", "{{.Name}}")
 	if err != nil {
 		return nil
 	}
 	seen := map[string]bool{}
 	var pairs []string
 	for _, name := range strings.Fields(out) {
-		parts := strings.Split(strings.TrimPrefix(name, claudeVolumePrefix), "-")
+		parts := strings.Split(strings.TrimPrefix(name, prefix), "-")
 		if len(parts) < 3 {
 			continue
 		}
@@ -165,6 +183,9 @@ func InstalledClaudePlatforms(ctx context.Context, d Docker) []string {
 	sort.Strings(pairs)
 	return pairs
 }
+
+// VolumeComplete reports whether a build volume's fill finished.
+func VolumeComplete(ctx context.Context, d Docker, vol string) bool { return complete(ctx, d, vol) }
 
 // complete reports whether a fill finished (its .ok marker exists).
 func complete(ctx context.Context, d Docker, vol string) bool {
@@ -254,7 +275,11 @@ type volumeUse struct {
 
 // MarkUsed records the use of volumes and removes superseded or long unused
 // agent volumes (best effort: Docker refuses to remove a volume a container
-// still mounts, so running sessions keep theirs).
+// still mounts, so running sessions keep theirs). Agent volumes it has no
+// record of (a download or build that failed or was killed) are recorded as
+// used now, so they are swept like any other once unused; records of
+// volumes that are gone are dropped. Home volumes (zdev.agent=home) belong
+// to their project and go with zdev down.
 func MarkUsed(ctx context.Context, d Docker, dir string, used ...string) {
 	path := filepath.Join(dir, "volumes.json")
 	uses := map[string]volumeUse{}
@@ -262,6 +287,24 @@ func MarkUsed(ctx context.Context, d Docker, dir string, used ...string) {
 		_ = json.Unmarshal(b, &uses)
 	}
 	now := time.Now()
+	if out, err := d.Output(ctx, "volume", "ls", "--filter", "label="+volumeLabel, "--format", `{{.Name}} {{.Label "`+volumeLabel+`"}}`); err == nil {
+		exists := map[string]bool{}
+		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+			name, kind, _ := strings.Cut(line, " ")
+			if name == "" || kind == "home" {
+				continue
+			}
+			exists[name] = true
+			if _, ok := uses[name]; !ok {
+				uses[name] = volumeUse{First: now, Last: now}
+			}
+		}
+		for v := range uses {
+			if !exists[v] {
+				delete(uses, v)
+			}
+		}
+	}
 	for _, v := range used {
 		u := uses[v]
 		if u.First.IsZero() {
@@ -279,18 +322,49 @@ func MarkUsed(ctx context.Context, d Docker, dir string, used ...string) {
 		_ = os.MkdirAll(dir, 0o700)
 		_ = os.WriteFile(path, b, 0o600)
 	}
+	sweepHelperImages(ctx, d, dir)
+}
+
+// helperImages are the pinned images agent mode pulls for itself (the
+// builds' own images go when the build ends).
+var helperImages = []string{config.AlpineImage}
+
+// sweepHelperImages removes helper images of earlier pins: zdev records the
+// pins it used in helper-images.json, and once a pin moved on, the old image
+// is removed (best effort: one a container uses stays, and is tried again).
+func sweepHelperImages(ctx context.Context, d Docker, dir string) {
+	path := filepath.Join(dir, "helper-images.json")
+	var recorded []string
+	if b, err := os.ReadFile(path); err == nil {
+		_ = json.Unmarshal(b, &recorded)
+	}
+	keep := append([]string(nil), helperImages...)
+	for _, img := range recorded {
+		if slices.Contains(helperImages, img) {
+			continue
+		}
+		if _, err := d.ImageID(ctx, img); err != nil {
+			continue // gone already
+		}
+		if _, err := d.Output(ctx, "image", "rm", img); err != nil {
+			keep = append(keep, img) // in use: next time
+		}
+	}
+	if b, err := json.Marshal(keep); err == nil {
+		_ = os.WriteFile(path, b, 0o600)
+	}
 }
 
 // sweepable lists recorded volumes to remove: unused for volumeUnusedTTL, or
-// a Claude volume of the same libc and architecture as one in use whose
-// version was superseded more than supersededGrace ago.
+// superseded more than supersededGrace ago by one in use of the same kind
+// (buildKey: an agent build of the same libc and architecture, zdev's tools).
 func sweepable(uses map[string]volumeUse, inUse []string, now time.Time) []string {
 	current := map[string]bool{}
-	supersededBy := map[string]time.Time{} // "-libc-arch" suffix -> first use of the current version
+	supersededBy := map[string]time.Time{} // prefix + "-libc-arch" -> first use of the current version
 	for _, v := range inUse {
 		current[v] = true
-		if strings.HasPrefix(v, claudeVolumePrefix) {
-			supersededBy[claudeSuffix(v)] = uses[v].First
+		if key := buildKey(v); key != "" {
+			supersededBy[key] = uses[v].First
 		}
 	}
 	var out []string
@@ -302,7 +376,7 @@ func sweepable(uses map[string]volumeUse, inUse []string, now time.Time) []strin
 			out = append(out, v)
 			continue
 		}
-		if first, ok := supersededBy[claudeSuffix(v)]; ok && strings.HasPrefix(v, claudeVolumePrefix) && now.Sub(first) > supersededGrace {
+		if first, ok := supersededBy[buildKey(v)]; ok && buildKey(v) != "" && now.Sub(first) > supersededGrace {
 			out = append(out, v)
 		}
 	}
@@ -310,11 +384,26 @@ func sweepable(uses map[string]volumeUse, inUse []string, now time.Time) []strin
 	return out
 }
 
-// claudeSuffix is "-<libc>-<arch>" of a Claude volume name.
-func claudeSuffix(v string) string {
-	parts := strings.Split(v, "-")
-	if len(parts) < 3 {
-		return ""
+// buildKey groups the volumes where a newer one supersedes the others: an
+// agent build's prefix and "-<libc>-<arch>", zdev's own tools (one per
+// release or dev build) and the sandbox tools (one per set of pins) by
+// prefix and architecture. "" for other volumes.
+func buildKey(v string) string {
+	for _, prefix := range []string{toolsVolumePrefix, sandboxToolsVolumePrefix} {
+		if strings.HasPrefix(v, prefix) {
+			parts := strings.Split(v, "-")
+			return prefix + parts[len(parts)-1]
+		}
 	}
-	return "-" + parts[len(parts)-2] + "-" + parts[len(parts)-1]
+	for _, prefix := range []string{claudeVolumePrefix, piVolumePrefix} {
+		if !strings.HasPrefix(v, prefix) {
+			continue
+		}
+		parts := strings.Split(v, "-")
+		if len(parts) < 3 {
+			return ""
+		}
+		return prefix + parts[len(parts)-2] + "-" + parts[len(parts)-1]
+	}
+	return ""
 }

@@ -25,11 +25,22 @@ type egressLog struct {
 	refused map[string]string // host -> reason code
 }
 
+// egressLogKeep is how long session logs are kept.
+const egressLogKeep = 30 * 24 * time.Hour
+
 // newEgressLog opens the session's log (best effort: without a file the
-// summary still works).
+// summary still works), after removing every project's logs older than
+// egressLogKeep.
 func newEgressLog(project, sessionID string) *egressLog {
 	l := &egressLog{hosts: map[string]int{}, refused: map[string]string{}}
-	dir := filepath.Join(config.GetZdevHome(), "agent", "logs", project)
+	logs := filepath.Join(config.GetZdevHome(), "agent", "logs")
+	old, _ := filepath.Glob(filepath.Join(logs, "*", "*.log"))
+	for _, f := range old {
+		if fi, err := os.Stat(f); err == nil && time.Since(fi.ModTime()) > egressLogKeep {
+			_ = os.Remove(f)
+		}
+	}
+	dir := filepath.Join(logs, project)
 	if err := os.MkdirAll(dir, 0o700); err == nil {
 		l.path = filepath.Join(dir, time.Now().Format("20060102-150405")+"-"+sessionID+".log")
 		l.f, _ = os.OpenFile(l.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)

@@ -178,6 +178,18 @@ func (p *Project) ensureBuiltImage(ctx context.Context, name string, svc config.
 	return true, nil
 }
 
+// pruneReplacedBuilds removes the images that rebuilds replaced (untagged,
+// zdev's build label, no container left on them): after a start or update,
+// whose recreates moved the services onto the new builds. Images of any
+// project are zdev's own builds, so earlier leftovers go too; one a
+// container still uses stays until a later run. Best effort.
+func (p *Project) pruneReplacedBuilds(ctx context.Context) {
+	if len(p.builtImages) == 0 {
+		return
+	}
+	_ = p.Runtime.PruneDanglingImages(context.WithoutCancel(ctx), BuildHashLabel)
+}
+
 // ensureServiceImage makes the service's image available locally - built
 // (when stale) for a `dockerfile:` service, pulled when missing otherwise -
 // so callers can do it BEFORE removing a container: a Dockerfile typo or a

@@ -435,6 +435,7 @@ func (p *Project) start(ctx context.Context, filter map[string]bool) error {
 	if err := p.checkProjectIdentity(); err != nil {
 		return err
 	}
+	defer p.pruneReplacedBuilds(ctx)
 
 	// Check port availability before starting anything
 	if err := p.checkPortAvailability(ctx, filter); err != nil {
@@ -1010,6 +1011,7 @@ func (p *Project) Update(ctx context.Context) (bool, error) {
 	if err := p.checkProjectIdentity(); err != nil {
 		return false, err
 	}
+	defer p.pruneReplacedBuilds(ctx)
 
 	updated, err := p.removeStaleProjectContainers(ctx)
 	if err != nil {

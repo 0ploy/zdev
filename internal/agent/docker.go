@@ -86,3 +86,19 @@ func (d Docker) ServerArch(ctx context.Context) (string, error) {
 func (d Docker) ImageID(ctx context.Context, image string) (string, error) {
 	return d.Output(ctx, "image", "inspect", "--format", "{{.Id}}", image)
 }
+
+// removeOtherTags removes the other tags of image's repository: the builds of
+// a helper image that a new zdev replaced (its tag is its Dockerfile's
+// hash). Best effort: one a container still uses stays.
+func removeOtherTags(ctx context.Context, d Docker, image string) {
+	repo, _, _ := strings.Cut(image, ":")
+	out, err := d.Output(ctx, "images", repo, "--format", "{{.Repository}}:{{.Tag}}")
+	if err != nil {
+		return
+	}
+	for _, other := range strings.Fields(out) {
+		if other != image && strings.HasPrefix(other, repo+":") {
+			_, _ = d.Output(ctx, "image", "rm", other)
+		}
+	}
+}

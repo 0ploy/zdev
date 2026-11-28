@@ -59,7 +59,7 @@ type Request struct {
 
 const (
 	OpRunning    = "running"     // exit 0 when the container runs, 1 when not
-	OpTurnEnd    = "turn-end"    // Claude finished a turn (its Stop hook)
+	OpTurnEnd    = "turn-end"    // the agent finished a turn (Args: its session id, when it says)
 	OpExecStream = "exec-stream" // run Argv in Container with the caller's streams
 )
 
@@ -302,7 +302,7 @@ func forward(client *ssh.Client, lc net.Conn, channelType string) {
 func stopContainer() { _ = syscall.Kill(1, syscall.SIGTERM) }
 
 // ErrNotConnected means the in-container zdev found no relay.
-var ErrNotConnected = errors.New("host side not connected: zdev commands work in this sandbox only while its `zdev claude` session runs on the host")
+var ErrNotConnected = errors.New("host side not connected: zdev commands work in this sandbox only while its session (zdev claude, zdev pi) runs on the host")
 
 // Call runs a zdev command on the host through the relay socket and returns
 // its exit code. Interrupts are passed on as signals.

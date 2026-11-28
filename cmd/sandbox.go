@@ -74,15 +74,21 @@ var sandboxRelayCmd = &cobra.Command{
 	},
 }
 
-// sandboxTurnEndCmd is Claude's Stop hook (managed settings): it tells the
-// host a turn ended, the moment a sandbox can be replaced without cutting
-// into Claude's work. Always quiet and exit 0: a hook error shows in Claude.
+// sandboxTurnEndCmd is Claude's Stop hook (managed settings) and what zdev's
+// pi extension runs when pi settled (with pi's session id, which a replaced
+// sandbox resumes): it tells the host a turn ended, the moment a sandbox can
+// be replaced without cutting into the agent's work. Always quiet and exit
+// 0: a hook error shows in Claude.
 var sandboxTurnEndCmd = &cobra.Command{
-	Use:   "turn-end",
-	Short: "Tell the host that Claude finished a turn",
+	Use:   "turn-end [session-id]",
+	Short: "Tell the host that the agent finished a turn",
 	Args:  cobra.ArbitraryArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		_, _ = agent.Call(os.Getenv("ZDEV_RELAY"), agent.Request{Op: agent.OpTurnEnd}, strings.NewReader(""), io.Discard, io.Discard)
+		req := agent.Request{Op: agent.OpTurnEnd}
+		if len(args) == 1 {
+			req.Args = args
+		}
+		_, _ = agent.Call(os.Getenv("ZDEV_RELAY"), req, strings.NewReader(""), io.Discard, io.Discard)
 		return nil
 	},
 }

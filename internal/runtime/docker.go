@@ -728,6 +728,20 @@ func (d *DockerCLI) BuildImage(ctx context.Context, cfg ImageBuildConfig) error 
 	return cmd.Run()
 }
 
+// PruneDanglingImages removes untagged images with the label that no
+// container (running or not) uses.
+func (d *DockerCLI) PruneDanglingImages(ctx context.Context, label string) error {
+	_, err := d.run(ctx, "image", "prune", "--force", "--filter", "label="+label)
+	return err
+}
+
+// RemoveImage removes an image reference (never forced: an image a
+// container uses stays).
+func (d *DockerCLI) RemoveImage(ctx context.Context, image string) error {
+	_, err := d.run(ctx, "image", "rm", image)
+	return err
+}
+
 func sortedKeys(m map[string]string) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {

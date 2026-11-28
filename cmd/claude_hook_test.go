@@ -14,7 +14,7 @@ func TestAgentHookGetsEventPayloadAndPID(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "out")
 	cmd := fmt.Sprintf(`{ echo "$ZDEV_AGENT_EVENT $ZDEV_AGENT_PID $ZDEV_PROJECT"; cat; echo; } >> %q`, out)
 
-	end := startAgentHook(cmd, "shop", "/Users/dev/shop", "sid-1", true)
+	end := startAgentHook(cmd, "claude", "shop", "/Users/dev/shop", "sid-1", true)
 	end()
 
 	data, err := os.ReadFile(out)
@@ -40,11 +40,11 @@ func TestAgentHookGetsEventPayloadAndPID(t *testing.T) {
 }
 
 func TestAgentHookEmptyCommandIsNoop(t *testing.T) {
-	startAgentHook("  ", "shop", "/x", "sid", true)()
+	startAgentHook("  ", "claude", "shop", "/x", "sid", true)()
 }
 
 func TestAgentHookFailureNamesLastStderrLine(t *testing.T) {
-	err := runAgentHook(`echo noise >&2; echo "cmux: no socket" >&2; exit 3`, "SessionStart", "shop", agentHookPayload{})
+	err := runAgentHook(`echo noise >&2; echo "cmux: no socket" >&2; exit 3`, "SessionStart", "claude", "shop", agentHookPayload{})
 	if err == nil || !strings.Contains(err.Error(), "exit status 3: cmux: no socket") {
 		t.Fatalf("err = %v", err)
 	}
@@ -57,7 +57,7 @@ func TestAgentHookTimeoutKillsProcessGroup(t *testing.T) {
 
 	start := time.Now()
 	// The grandchild sleep holds stderr open: only killing the group ends it.
-	err := runAgentHook(`sleep 30 & wait`, "SessionStart", "shop", agentHookPayload{})
+	err := runAgentHook(`sleep 30 & wait`, "SessionStart", "claude", "shop", agentHookPayload{})
 	if err == nil || !strings.Contains(err.Error(), "timed out") {
 		t.Fatalf("err = %v", err)
 	}
