@@ -264,3 +264,17 @@ func TestEgressRefusesSSH(t *testing.T) {
 		t.Errorf("status %d reason %q dialed %q", res.StatusCode, res.Header.Get("X-Zdev-Refused"), *dialed)
 	}
 }
+
+// A placeholder with a prefix (pi's Anthropic subscription token must look
+// like sk-ant-oat...) is swapped whole: the header gets the real token once,
+// not prefix + token.
+func TestSwapCredentialWithPrefix(t *testing.T) {
+	cred := &Credential{Name: "anthropic", Placeholder: "sk-ant-oat01-" + NewPlaceholder("anthropic"), Value: "sk-ant-oat01-REALTOKEN"}
+	h := http.Header{"Authorization": {"Bearer " + cred.Placeholder}}
+	if !swapCredential(h, cred) {
+		t.Fatal("not swapped")
+	}
+	if got := h.Get("Authorization"); got != "Bearer sk-ant-oat01-REALTOKEN" {
+		t.Errorf("Authorization = %q", got)
+	}
+}

@@ -34,7 +34,7 @@ zdev agent run claude [service] [args]  # the same, spelled out
 zdev agent update [claude]     # download the newest Claude Code release for the sandboxes now
 zdev agent setup               # check the login, give this project's sandbox a GitHub or GitLab token
 zdev agent credentials         # list the tokens sandboxes get, and which projects get them
-zdev agent credentials add NAME  # add a token (asks, or: --host, --env, --command/--secret/--file, --preset npm)
+zdev agent credentials add NAME  # add a token (asks, or: --host, --env, --command/--secret/--file, --placeholder-prefix, --preset npm|anthropic)
 zdev agent credentials grant|revoke NAME [--all]  # for this project, or every project
 zdev agent credentials test NAME  # read it as a session would (prints its length, never the value)
 zdev agent credentials remove NAME

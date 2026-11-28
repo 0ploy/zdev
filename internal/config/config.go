@@ -46,6 +46,11 @@ type AgentCredential struct {
 	Command string   `yaml:"command,omitempty"` // e.g. "gh auth token"
 	Secret  string   `yaml:"secret,omitempty"`  // op://<vault>/<item>/<field> or op-env://<environment-id>/<VARIABLE>
 	File    string   `yaml:"file,omitempty"`    // e.g. ~/.zdev/agent/credentials/github-app (mode 0600)
+	// PlaceholderPrefix starts the placeholder the sandbox sees, for tools
+	// that judge a token by its shape: pi sends an Anthropic token as a
+	// subscription login only when it contains sk-ant-oat. The proxy swaps
+	// the whole placeholder, prefix included, for the real value.
+	PlaceholderPrefix string `yaml:"placeholder_prefix,omitempty"`
 }
 
 // AgentClaudeConfig is what applies to Claude Code in every sandbox.

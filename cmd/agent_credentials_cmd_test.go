@@ -67,6 +67,7 @@ func runCreds(t *testing.T, args ...string) (string, error) {
 	credAddFlags = struct {
 		hosts, env               []string
 		command, secret, file    string
+		placeholderPfx           string
 		preset                   string
 		grant, noGrant, grantAll bool
 	}{}
@@ -224,5 +225,23 @@ agent:
 	}
 	if _, err := os.Stat(file); !os.IsNotExist(err) {
 		t.Errorf("the token file zdev stored is still there: %v", err)
+	}
+}
+
+func TestCredentialsAnthropicPreset(t *testing.T) {
+	credTestEnv(t, "version: 1\n")
+	if _, err := runCreds(t, "add", "pi-anthropic", "--preset", "anthropic", "--command", "echo x", "--no-grant"); err != nil {
+		t.Fatal(err)
+	}
+	c := loadAgent(t).Credentials["pi-anthropic"]
+	if strings.Join(c.Hosts, ",") != "api.anthropic.com" || strings.Join(c.Env, ",") != "ANTHROPIC_OAUTH_TOKEN" || c.PlaceholderPrefix != "sk-ant-oat01-" {
+		t.Errorf("anthropic preset: %+v", c)
+	}
+	out, _ := runCreds(t, "list")
+	if !strings.Contains(out, "placeholder starts with: sk-ant-oat01-") {
+		t.Errorf("list doesn't show the prefix:\n%s", out)
+	}
+	if _, err := runCreds(t, "add", "bad-prefix", "--host", "x.com", "--command", "echo x", "--placeholder-prefix", "has space", "--no-grant"); err == nil {
+		t.Error("a prefix with a space was accepted")
 	}
 }

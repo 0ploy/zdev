@@ -212,6 +212,9 @@ func validateAgentConfig(a *AgentConfig) error {
 		if c.Secret != "" && !strings.HasPrefix(c.Secret, "op-env://") && !(strings.HasPrefix(c.Secret, "op://") && strings.Count(c.Secret, "/") >= 4) {
 			return fmt.Errorf("%s.secret must be op://<vault>/<item>/<field> or op-env://<environment-id>/<VARIABLE>", where)
 		}
+		if !regexp.MustCompile(`^[A-Za-z0-9_.-]{0,64}$`).MatchString(c.PlaceholderPrefix) {
+			return fmt.Errorf("%s.placeholder_prefix: letters, digits, _ . - only (at most 64)", where)
+		}
 		if c.File != "" && !strings.HasPrefix(c.File, "/") && !strings.HasPrefix(c.File, "~/") {
 			return fmt.Errorf("%s.file must be an absolute path (or start with ~/)", where)
 		}

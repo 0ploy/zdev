@@ -33,12 +33,17 @@ var credentialName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 type credentialPreset struct {
 	Name, Title string
 	Hosts, Env  []string
+	Prefix      string // placeholder prefix
 	Note        string
 }
 
 var credentialPresets = []credentialPreset{
 	{Name: "npm", Title: "npm registry", Hosts: []string{"registry.npmjs.org"}, Env: []string{"NPM_TOKEN"},
 		Note: "npm reads it when the project's .npmrc has: //registry.npmjs.org/:_authToken=${NPM_TOKEN}"},
+	{Name: "anthropic", Title: "Anthropic subscription token for pi (from claude setup-token)",
+		Hosts: []string{"api.anthropic.com"}, Env: []string{"ANTHROPIC_OAUTH_TOKEN"}, Prefix: "sk-ant-oat01-",
+		Note: "The token comes from `claude setup-token` on this machine (a long-lived Claude Pro/Max token). " +
+			"pi uses it as a subscription login only when it looks like one, so the sandbox's placeholder starts with sk-ant-oat01-."},
 }
 
 var agentCredentialsCmd = &cobra.Command{
@@ -70,6 +75,7 @@ var agentCredentialsListCmd = &cobra.Command{
 var credAddFlags struct {
 	hosts, env               []string
 	command, secret, file    string
+	placeholderPfx           string
 	preset                   string
 	grant, noGrant, grantAll bool
 }
@@ -133,6 +139,7 @@ func init() {
 	f.StringVar(&credAddFlags.command, "command", "", "command that prints the token (e.g. \"gh auth token\")")
 	f.StringVar(&credAddFlags.secret, "secret", "", "1Password reference: op://<vault>/<item>/<field> or op-env://<environment-id>/<VARIABLE>")
 	f.StringVar(&credAddFlags.file, "file", "", "file holding the token (mode 0600, yours)")
+	f.StringVar(&credAddFlags.placeholderPfx, "placeholder-prefix", "", "start of the placeholder, for tools that check a token's shape (e.g. sk-ant-oat01-)")
 	f.StringVar(&credAddFlags.preset, "preset", "", "fill hosts and variables for a known service: "+presetNames())
 	f.BoolVar(&credAddFlags.grant, "grant", false, "grant it to this project without asking")
 	f.BoolVar(&credAddFlags.noGrant, "no-grant", false, "don't grant it")
@@ -198,6 +205,9 @@ func runCredentialsList(w io.Writer) error {
 		if len(c.Env) > 0 {
 			fmt.Fprintf(w, "  env:     %s\n", strings.Join(c.Env, ", "))
 		}
+		if c.PlaceholderPrefix != "" {
+			fmt.Fprintf(w, "  placeholder starts with: %s\n", c.PlaceholderPrefix)
+		}
 		fmt.Fprintf(w, "  source:  %s\n", describeSource(c))
 		fmt.Fprintf(w, "  granted: %s\n", describeGrants(gcfg, n))
 	}
@@ -255,7 +265,7 @@ func runCredentialsAdd(ctx context.Context, name string) error {
 		return fmt.Errorf("credential %s exists already: zdev agent credentials remove %s first", name, name)
 	}
 	f := credAddFlags
-	cred := config.AgentCredential{Hosts: f.hosts, Env: f.env, Command: f.command, Secret: f.secret, File: f.file}
+	cred := config.AgentCredential{Hosts: f.hosts, Env: f.env, Command: f.command, Secret: f.secret, File: f.file, PlaceholderPrefix: f.placeholderPfx}
 	var note string
 	if f.preset != "" {
 		p, ok := findPreset(f.preset)
@@ -267,6 +277,9 @@ func runCredentialsAdd(ctx context.Context, name string) error {
 		}
 		if len(cred.Env) == 0 {
 			cred.Env = p.Env
+		}
+		if cred.PlaceholderPrefix == "" {
+			cred.PlaceholderPrefix = p.Prefix
 		}
 		note = p.Note
 	}
@@ -358,6 +371,9 @@ func askCredential(ctx context.Context, in *bufio.Reader, name string, cred *con
 			cred.Hosts, *note = p.Hosts, p.Note
 			if len(cred.Env) == 0 {
 				cred.Env = p.Env
+			}
+			if cred.PlaceholderPrefix == "" {
+				cred.PlaceholderPrefix = p.Prefix
 			}
 		} else {
 			fmt.Println(`The proxy swaps the token in only for these hosts, and only in request headers.`)

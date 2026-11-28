@@ -43,7 +43,7 @@ func resolveCredentials(ctx context.Context, gcfg *config.GlobalConfig, names []
 			fmt.Fprintf(os.Stderr, "Warning: credential %s: %v; the sandbox runs without it\n", name, err)
 			continue
 		}
-		out = append(out, agent.Credential{Name: name, Hosts: c.Hosts, Placeholder: agent.NewPlaceholder(name), Value: value})
+		out = append(out, agent.Credential{Name: name, Hosts: c.Hosts, Placeholder: c.PlaceholderPrefix + agent.NewPlaceholder(name), Value: value})
 	}
 	return out
 }

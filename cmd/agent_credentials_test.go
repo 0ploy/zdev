@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -92,5 +93,23 @@ func TestTrustSessionCA(t *testing.T) {
 	}
 	if cfg.Env["NODE_EXTRA_CA_CERTS"] != "/etc/claude-code/extra-ca.pem" {
 		t.Errorf("env = %v", cfg.Env)
+	}
+}
+
+func TestResolveCredentialsPlaceholderPrefix(t *testing.T) {
+	gcfg := &config.GlobalConfig{Agent: config.AgentConfig{Credentials: map[string]config.AgentCredential{
+		"pi-anthropic": {Hosts: []string{"api.anthropic.com"}, Env: []string{"ANTHROPIC_OAUTH_TOKEN"},
+			Command: "printf %s sk-ant-oat01-real", PlaceholderPrefix: "sk-ant-oat01-"},
+	}}}
+	creds := resolveCredentials(context.Background(), gcfg, []string{"pi-anthropic"})
+	if len(creds) != 1 {
+		t.Fatalf("resolved %d credentials", len(creds))
+	}
+	ph := creds[0].Placeholder
+	if !strings.HasPrefix(ph, "sk-ant-oat01-zdev-placeholder-pi-anthropic-") {
+		t.Errorf("placeholder %q lacks the prefix", ph)
+	}
+	if env := credentialEnv(gcfg, creds); env["ANTHROPIC_OAUTH_TOKEN"] != ph || strings.Contains(env["ANTHROPIC_OAUTH_TOKEN"], "real") {
+		t.Errorf("sandbox env = %q", env["ANTHROPIC_OAUTH_TOKEN"])
 	}
 }
